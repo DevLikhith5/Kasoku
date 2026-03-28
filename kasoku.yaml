@@ -1,0 +1,28 @@
+data_dir: ./data
+port: 9000
+http_port: 9001
+log_level: info
+log_file: ""
+lsm:
+    levels: 7
+    level_ratio: 10
+    l0_base_size: 67108864
+compaction:
+    threshold: 4
+    max_concurrent: 2
+    l0_size_threshold: 134217728
+memory:
+    memtable_size: 67108864
+    max_memtable_bytes: 268435456
+    bloom_fp_rate: 0.01
+    block_cache_size: 134217728
+wal:
+    sync: true
+    sync_interval: 100ms
+    max_file_size: 67108864
+cluster:
+    enabled: false
+    node_id: node-1
+    peers: []
+    gossip_port: 9002
+    raft_port: 9003

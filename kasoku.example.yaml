@@ -1,0 +1,109 @@
+# Kasoku Configuration File
+# =========================
+# Copy this file to kasoku.yaml and customize for your environment.
+
+# ------------------------------------------------------------------
+# Server Settings
+# ------------------------------------------------------------------
+
+# Data directory for LSM storage (SSTables, WAL, manifests)
+# Can also be set via KASOKU_DATA_DIR environment variable
+data_dir: /var/lib/kasoku
+
+# gRPC server port (for client connections)
+# Can also be set via KASOKU_PORT environment variable
+port: 9000
+
+# HTTP server port (for REST API)
+# Can also be set via KASOKU_HTTP_PORT environment variable
+http_port: 9001
+
+# Log level: debug, info, warn, error
+# Can also be set via KASOKU_LOG_LEVEL environment variable
+log_level: info
+
+# Log file path (empty = stdout)
+# Can also be set via KASOKU_LOG_FILE environment variable
+log_file: /var/log/kasoku/server.log
+
+# ------------------------------------------------------------------
+# LSM Engine Settings
+# ------------------------------------------------------------------
+
+lsm:
+  # Number of levels in LSM tree
+  levels: 7
+
+  # Size ratio between consecutive levels
+  level_ratio: 10.0
+
+  # Base size for L0 (bytes) - 64MB default
+  l0_base_size: 67108864
+
+# ------------------------------------------------------------------
+# Compaction Settings
+# ------------------------------------------------------------------
+
+compaction:
+  # Number of SSTables to trigger compaction
+  threshold: 4
+
+  # Maximum concurrent compactions
+  max_concurrent: 2
+
+  # Size threshold for L0 compaction (bytes) - 128MB default
+  l0_size_threshold: 134217728
+
+# ------------------------------------------------------------------
+# Memory Settings
+# ------------------------------------------------------------------
+
+memory:
+  # MemTable size in bytes (64MB default)
+  # Can also be set via KASOKU_MEMTABLE_SIZE environment variable
+  memtable_size: 67108864
+
+  # Maximum memory for all memtables (256MB default)
+  max_memtable_bytes: 268435456
+
+  # Bloom filter false positive rate (0.01 = 1%)
+  bloom_fp_rate: 0.01
+
+  # Block cache size (128MB default)
+  block_cache_size: 134217728
+
+# ------------------------------------------------------------------
+# WAL (Write-Ahead Log) Settings
+# ------------------------------------------------------------------
+
+wal:
+  # Sync every write (safer but slower)
+  sync: true
+
+  # Sync interval in milliseconds (if sync=false)
+  sync_interval: 100ms
+
+  # WAL file size before rotation (64MB default)
+  max_file_size: 67108864
+
+# ------------------------------------------------------------------
+# Cluster Settings (for distributed mode)
+# ------------------------------------------------------------------
+
+cluster:
+  # Enable cluster mode
+  enabled: false
+
+  # Unique node ID
+  node_id: node-1
+
+  # Peer node addresses
+  peers:
+    - node-2:9000
+    - node-3:9000
+
+  # Gossip port (for node discovery)
+  gossip_port: 9002
+
+  # Raft port (for consensus)
+  raft_port: 9003
