@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/golang/snappy"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
+	"github.com/golang/snappy"
 )
 
 const (
@@ -25,17 +25,15 @@ type indexEntry struct {
 }
 
 type SSTableWriter struct {
-	file       *os.File
-	filter     *BloomFilter
-	index      []indexEntry
-	offset     int64
-	count      int
-	blockSize  int
-	blockBuf   []byte
-	compress   bool
+	file      *os.File
+	filter    *BloomFilter
+	index     []indexEntry
+	offset    int64
+	count     int
+	blockSize int
+	blockBuf  []byte
+	compress  bool
 }
-
-
 
 func NewSSTableWriter(path string, expectedEntries int) (*SSTableWriter, error) {
 	f, err := os.Create(path)
@@ -50,7 +48,6 @@ func NewSSTableWriter(path string, expectedEntries int) (*SSTableWriter, error) 
 		compress:  true, // enable compression by default
 	}, nil
 }
-
 
 func (w *SSTableWriter) WriteEntry(entry storage.Entry) error {
 	data, err := json.Marshal(entry)
@@ -144,20 +141,20 @@ func (w *SSTableWriter) Close() error {
 }
 
 type SSTableReader struct {
-	file      *os.File
-	filter    *BloomFilter
-	index     []indexEntry
-	path      string
+	file       *os.File
+	filter     *BloomFilter
+	index      []indexEntry
+	path       string
 	blockCache *BlockCache
-	mu        sync.RWMutex
+	mu         sync.RWMutex
 }
 
 // BlockCache is an LRU cache for data blocks
 type BlockCache struct {
-	mu      sync.RWMutex
-	cache   map[string][]byte
-	keys    []string
-	maxSize int
+	mu          sync.RWMutex
+	cache       map[string][]byte
+	keys        []string
+	maxSize     int
 	currentSize int
 }
 
@@ -226,7 +223,7 @@ func GetBlockCache() *BlockCache {
 	}
 	return globalBlockCache
 }
- 
+
 // OpenSSTable loads the footer, bloom filter, and index from disk
 // Data blocks are NOT loaded until Get() is called — lazy loading
 func OpenSSTable(path string) (*SSTableReader, error) {
@@ -271,7 +268,7 @@ func OpenSSTable(path string) (*SSTableReader, error) {
 
 	return r, nil
 }
- 
+
 // Get retrieves an entry by key
 // Returns storage.ErrKeyNotFound if key is not in this SSTable
 func (r *SSTableReader) Get(key string) (storage.Entry, error) {

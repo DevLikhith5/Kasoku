@@ -1,18 +1,16 @@
 package lsmengine
 
 import (
-	"math/rand"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
+	"math/rand"
+	"sync"
 	"time"
 )
-
 
 type node struct {
 	entry   storage.Entry
 	forward []*node
 }
-
-
 
 type SkipList struct {
 	head     *node
@@ -21,13 +19,12 @@ type SkipList struct {
 	p        float64
 	size     int
 	rng      *rand.Rand
+	mu       sync.RWMutex  // protects the skiplist structure
+	rngMu    sync.Mutex    // protects RNG (separate to avoid deadlock)
 }
-
-
 
 func NewSkipList(maxLevel int, p float64) *SkipList {
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-
 
 	head := &node{
 		forward: make([]*node, maxLevel),
@@ -38,13 +35,13 @@ func NewSkipList(maxLevel int, p float64) *SkipList {
 		level:    1,
 		maxLevel: maxLevel,
 		p:        p,
-		rng:      rng, 
+		rng:      rng,
 	}
 }
 
-
-
 func (s *SkipList) randomLevel() int {
+	s.rngMu.Lock()
+	defer s.rngMu.Unlock()
 	lvl := 1
 	for s.rng.Float64() < s.p && lvl < s.maxLevel {
 		lvl++
@@ -52,8 +49,10 @@ func (s *SkipList) randomLevel() int {
 	return lvl
 }
 
-
 func (s *SkipList) Get(key string) (storage.Entry, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	curr := s.head
 
 	for i := s.level - 1; i >= 0; i-- {
@@ -71,9 +70,10 @@ func (s *SkipList) Get(key string) (storage.Entry, bool) {
 	return storage.Entry{}, false
 }
 
-
-
 func (s *SkipList) Put(entry storage.Entry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	update := make([]*node, s.maxLevel)
 	curr := s.head
 
@@ -116,9 +116,10 @@ func (s *SkipList) Put(entry storage.Entry) {
 	s.size++
 }
 
-
-
 func (s *SkipList) Seek(key string) *node {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	curr := s.head
 
 	for i := s.level - 1; i >= 0; i-- {
@@ -130,9 +131,10 @@ func (s *SkipList) Seek(key string) *node {
 	return curr.forward[0]
 }
 
-
-
 func (s *SkipList) Entries() []storage.Entry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	result := make([]storage.Entry, 0, s.size)
 	curr := s.head.forward[0]
 
@@ -144,8 +146,8 @@ func (s *SkipList) Entries() []storage.Entry {
 	return result
 }
 
-
-
 func (s *SkipList) Size() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.size
 }

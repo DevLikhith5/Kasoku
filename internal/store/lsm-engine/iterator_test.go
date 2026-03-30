@@ -34,18 +34,18 @@ func TestIterator_Basic(t *testing.T) {
 			{Key: "key3", Value: []byte("value3")},
 		}
 		it := NewIterator(entries, "")
-		
+
 		// First
 		assert.True(t, it.First())
 		assert.Equal(t, "key1", it.Key())
-		
+
 		// Next
 		assert.True(t, it.Next())
 		assert.Equal(t, "key2", it.Key())
-		
+
 		assert.True(t, it.Next())
 		assert.Equal(t, "key3", it.Key())
-		
+
 		// No more entries
 		assert.False(t, it.Next())
 		assert.False(t, it.Valid())
@@ -103,18 +103,18 @@ func TestIterator_Prev(t *testing.T) {
 	}
 
 	it := NewIterator(entries, "")
-	
+
 	// Go to last
 	assert.True(t, it.Last())
 	assert.Equal(t, "key3", it.Key())
-	
+
 	// Previous
 	assert.True(t, it.Prev())
 	assert.Equal(t, "key2", it.Key())
-	
+
 	assert.True(t, it.Prev())
 	assert.Equal(t, "key1", it.Key())
-	
+
 	// No more previous
 	assert.False(t, it.Prev())
 	assert.False(t, it.Valid())
@@ -157,16 +157,16 @@ func TestIterator_Prefix(t *testing.T) {
 	t.Run("prefix filter", func(t *testing.T) {
 		it := NewIterator(entries, "user:")
 		assert.Equal(t, 3, it.Total())
-		
+
 		assert.True(t, it.First())
 		assert.Equal(t, "user:1", it.Key())
-		
+
 		assert.True(t, it.Next())
 		assert.Equal(t, "user:2", it.Key())
-		
+
 		assert.True(t, it.Next())
 		assert.Equal(t, "user:3", it.Key())
-		
+
 		assert.False(t, it.Next())
 	})
 
@@ -179,10 +179,10 @@ func TestIterator_Prefix(t *testing.T) {
 func TestIterator_Close(t *testing.T) {
 	entries := []storage.Entry{{Key: "key1", Value: []byte("value1")}}
 	it := NewIterator(entries, "")
-	
+
 	assert.True(t, it.First())
 	assert.NoError(t, it.Close())
-	
+
 	assert.False(t, it.Valid())
 	assert.False(t, it.Next())
 }
@@ -192,7 +192,7 @@ func TestIterator_Entry(t *testing.T) {
 		{Key: "key1", Value: []byte("value1"), Version: 1},
 	}
 	it := NewIterator(entries, "")
-	
+
 	assert.True(t, it.First())
 	entry := it.Entry()
 	assert.Equal(t, "key1", entry.Key)
@@ -208,11 +208,11 @@ func TestIterator_SeekToFirstLast(t *testing.T) {
 	}
 
 	it := NewIterator(entries, "")
-	
+
 	// SeekToFirst
 	assert.True(t, it.SeekToFirst())
 	assert.Equal(t, "a", it.Key())
-	
+
 	// SeekToLast
 	assert.True(t, it.SeekToLast())
 	assert.Equal(t, "c", it.Key())
@@ -237,16 +237,16 @@ func TestBlockCache_Basic(t *testing.T) {
 		cache := NewBlockCache(2)
 		cache.Put("key1", []byte("v1"))
 		cache.Put("key2", []byte("v2"))
-		
+
 		// Add third key - should evict key1
 		cache.Put("key3", []byte("v3"))
-		
+
 		_, ok := cache.Get("key1")
 		assert.False(t, ok) // evicted
-		
+
 		_, ok = cache.Get("key2")
 		assert.True(t, ok)
-		
+
 		_, ok = cache.Get("key3")
 		assert.True(t, ok)
 	})
@@ -255,17 +255,17 @@ func TestBlockCache_Basic(t *testing.T) {
 		cache := NewBlockCache(2)
 		cache.Put("key1", []byte("v1"))
 		cache.Put("key2", []byte("v2"))
-		
+
 		// Update key1
 		cache.Put("key1", []byte("v1-updated"))
-		
+
 		// Add key3 - should evict key2 (least recently used)
 		cache.Put("key3", []byte("v3"))
-		
+
 		val, ok := cache.Get("key1")
 		assert.True(t, ok)
 		assert.Equal(t, []byte("v1-updated"), val)
-		
+
 		_, ok = cache.Get("key2")
 		assert.False(t, ok) // evicted
 	})

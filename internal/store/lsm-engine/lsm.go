@@ -82,8 +82,6 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 	return e, nil
 }
 
-
-
 func (e *LSMEngine) Put(key string, value []byte) error {
 	if e.closed.Load() {
 		return storage.ErrEngineClosed
@@ -121,8 +119,6 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 
 	return nil
 }
-
-
 
 func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 	if e.closed.Load() {
@@ -173,8 +169,6 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 
 	return storage.Entry{}, storage.ErrKeyNotFound
 }
-
-
 
 func (e *LSMEngine) flushLoop() {
 	defer e.wg.Done()
@@ -314,8 +308,6 @@ func (e *LSMEngine) compactLevel(level int) {
 	fmt.Printf("[COMPACTION] done: level %d -> %d (%d entries)\n", level, nextLevel, len(deduped))
 }
 
-
-
 // Flush forces a flush of the active memtable to disk
 func (e *LSMEngine) Flush() error {
 	return e.flushMemTable()
@@ -391,8 +383,6 @@ func (e *LSMEngine) flushMemTable() error {
 	return nil
 }
 
-
-
 func (e *LSMEngine) loadSSTables() error {
 	files, err := os.ReadDir(e.dir)
 	if err != nil {
@@ -451,14 +441,10 @@ func (e *LSMEngine) loadSSTables() error {
 	return nil
 }
 
-
-
 func (e *LSMEngine) replayWAL() error {
 
 	return e.wal.Replay(e)
 }
-
-
 
 func (e *LSMEngine) Delete(key string) error {
 	if e.closed.Load() {
@@ -491,8 +477,6 @@ func (e *LSMEngine) Delete(key string) error {
 
 	return nil
 }
-
-
 
 func (e *LSMEngine) Scan(prefix string) ([]storage.Entry, error) {
 	if e.closed.Load() {
@@ -557,8 +541,6 @@ func (e *LSMEngine) Scan(prefix string) ([]storage.Entry, error) {
 	return entries, nil
 }
 
-
-
 func (e *LSMEngine) Keys() ([]string, error) {
 	entries, err := e.Scan("")
 	if err != nil {
@@ -586,8 +568,6 @@ func (e *LSMEngine) Iter(prefix string) (*Iterator, error) {
 
 	return NewIterator(entries, prefix), nil
 }
-
-
 
 func (e *LSMEngine) Stats() storage.EngineStats {
 	e.mu.RLock()
@@ -630,7 +610,6 @@ func (e *LSMEngine) Stats() storage.EngineStats {
 		BloomFPRate: 0.01,
 	}
 }
-
 
 func (e *LSMEngine) Close() error {
 	if e.closed.Swap(true) {

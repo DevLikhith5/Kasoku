@@ -114,11 +114,11 @@ type ClusterConfig struct {
 // DefaultConfig returns a Config with default values
 func DefaultConfig() *Config {
 	return &Config{
-		DataDir:    "./data",
-		Port:       9000,
-		HTTPPort:   9001,
-		LogLevel:   "info",
-		LogFile:    "",
+		DataDir:  "./data",
+		Port:     9000,
+		HTTPPort: 9001,
+		LogLevel: "info",
+		LogFile:  "",
 		LSM: LSMConfig{
 			Levels:     7,
 			LevelRatio: 10.0,

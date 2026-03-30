@@ -14,7 +14,7 @@ func TestSkipList_Basic(t *testing.T) {
 	t.Run("new skiplist is empty", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
 		assert.Equal(t, 0, sl.Size())
-		
+
 		_, found := sl.Get("nonexistent")
 		assert.False(t, found)
 	})
@@ -27,9 +27,9 @@ func TestSkipList_Basic(t *testing.T) {
 			Version:   1,
 			TimeStamp: time.Now(),
 		}
-		
+
 		sl.Put(entry)
-		
+
 		retrieved, found := sl.Get("testkey")
 		require.True(t, found)
 		assert.Equal(t, "testkey", retrieved.Key)
@@ -40,13 +40,13 @@ func TestSkipList_Basic(t *testing.T) {
 
 	t.Run("update existing entry", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		sl.Put(storage.Entry{Key: "key", Value: []byte("v1"), Version: 1})
 		sl.Put(storage.Entry{Key: "key", Value: []byte("v2"), Version: 2})
 		sl.Put(storage.Entry{Key: "key", Value: []byte("v3"), Version: 3})
-		
+
 		assert.Equal(t, 1, sl.Size()) // size should not increase on update
-		
+
 		entry, found := sl.Get("key")
 		require.True(t, found)
 		assert.Equal(t, []byte("v3"), entry.Value)
@@ -57,7 +57,7 @@ func TestSkipList_Basic(t *testing.T) {
 func TestSkipList_MultipleEntries(t *testing.T) {
 	t.Run("insert multiple entries in random order", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		// Insert in random order
 		keys := []string{"zebra", "apple", "mango", "banana", "cherry"}
 		for i, key := range keys {
@@ -68,9 +68,9 @@ func TestSkipList_MultipleEntries(t *testing.T) {
 				TimeStamp: time.Now(),
 			})
 		}
-		
+
 		assert.Equal(t, 5, sl.Size())
-		
+
 		// Verify all entries
 		for i, key := range keys {
 			entry, found := sl.Get(key)
@@ -81,16 +81,16 @@ func TestSkipList_MultipleEntries(t *testing.T) {
 
 	t.Run("entries are sorted by key", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		sl.Put(storage.Entry{Key: "c", Value: []byte("3")})
 		sl.Put(storage.Entry{Key: "a", Value: []byte("1")})
 		sl.Put(storage.Entry{Key: "e", Value: []byte("5")})
 		sl.Put(storage.Entry{Key: "b", Value: []byte("2")})
 		sl.Put(storage.Entry{Key: "d", Value: []byte("4")})
-		
+
 		entries := sl.Entries()
 		require.Len(t, entries, 5)
-		
+
 		expectedOrder := []string{"a", "b", "c", "d", "e"}
 		for i, entry := range entries {
 			assert.Equal(t, expectedOrder[i], entry.Key)
@@ -101,11 +101,11 @@ func TestSkipList_MultipleEntries(t *testing.T) {
 func TestSkipList_Seek(t *testing.T) {
 	t.Run("seek to existing key", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		sl.Put(storage.Entry{Key: "apple", Value: []byte("1")})
 		sl.Put(storage.Entry{Key: "banana", Value: []byte("2")})
 		sl.Put(storage.Entry{Key: "cherry", Value: []byte("3")})
-		
+
 		node := sl.Seek("banana")
 		require.NotNil(t, node)
 		assert.Equal(t, "banana", node.entry.Key)
@@ -114,10 +114,10 @@ func TestSkipList_Seek(t *testing.T) {
 
 	t.Run("seek to non-existing key", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		sl.Put(storage.Entry{Key: "apple", Value: []byte("1")})
 		sl.Put(storage.Entry{Key: "cherry", Value: []byte("3")})
-		
+
 		// Seek to "banana" should return "cherry" (next greater)
 		node := sl.Seek("banana")
 		require.NotNil(t, node)
@@ -126,10 +126,10 @@ func TestSkipList_Seek(t *testing.T) {
 
 	t.Run("seek to key greater than all", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		sl.Put(storage.Entry{Key: "apple", Value: []byte("1")})
 		sl.Put(storage.Entry{Key: "banana", Value: []byte("2")})
-		
+
 		node := sl.Seek("zebra")
 		assert.Nil(t, node)
 	})
@@ -142,13 +142,13 @@ func TestSkipList_Seek(t *testing.T) {
 
 	t.Run("seek to prefix for scan", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		sl.Put(storage.Entry{Key: "app:1", Value: []byte("1")})
 		sl.Put(storage.Entry{Key: "app:2", Value: []byte("2")})
 		sl.Put(storage.Entry{Key: "app:3", Value: []byte("3")})
 		sl.Put(storage.Entry{Key: "user:1", Value: []byte("4")})
 		sl.Put(storage.Entry{Key: "user:2", Value: []byte("5")})
-		
+
 		node := sl.Seek("app:")
 		require.NotNil(t, node)
 		assert.Equal(t, "app:1", node.entry.Key)
@@ -164,17 +164,17 @@ func TestSkipList_Entries(t *testing.T) {
 
 	t.Run("entries returns all in sorted order", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		for i := 10; i >= 1; i-- {
 			sl.Put(storage.Entry{
 				Key:   fmt.Sprintf("key:%02d", i),
 				Value: []byte(fmt.Sprintf("val:%d", i)),
 			})
 		}
-		
+
 		entries := sl.Entries()
 		require.Len(t, entries, 10)
-		
+
 		for i := 0; i < 10; i++ {
 			assert.Equal(t, fmt.Sprintf("key:%02d", i+1), entries[i].Key)
 			assert.Equal(t, []byte(fmt.Sprintf("val:%d", i+1)), entries[i].Value)
@@ -185,7 +185,7 @@ func TestSkipList_Entries(t *testing.T) {
 func TestSkipList_LargeDataset(t *testing.T) {
 	t.Run("insert 1000 entries", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		for i := 0; i < 1000; i++ {
 			sl.Put(storage.Entry{
 				Key:       fmt.Sprintf("key:%05d", i),
@@ -194,9 +194,9 @@ func TestSkipList_LargeDataset(t *testing.T) {
 				TimeStamp: time.Now(),
 			})
 		}
-		
+
 		assert.Equal(t, 1000, sl.Size())
-		
+
 		// Verify random samples
 		samples := []int{0, 50, 100, 500, 999}
 		for _, i := range samples {
@@ -205,7 +205,7 @@ func TestSkipList_LargeDataset(t *testing.T) {
 			require.True(t, found, "key %s not found", key)
 			assert.Equal(t, []byte(fmt.Sprintf("value:%d", i)), entry.Value)
 		}
-		
+
 		// Verify all entries are sorted
 		entries := sl.Entries()
 		require.Len(t, entries, 1000)
@@ -218,25 +218,25 @@ func TestSkipList_LargeDataset(t *testing.T) {
 func TestSkipList_Tombstones(t *testing.T) {
 	t.Run("handle tombstone entries", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		// Insert normal entry
 		sl.Put(storage.Entry{
 			Key:       "testkey",
 			Value:     []byte("value"),
 			Tombstone: false,
 		})
-		
+
 		entry, found := sl.Get("testkey")
 		require.True(t, found)
 		assert.False(t, entry.Tombstone)
-		
+
 		// Update with tombstone
 		sl.Put(storage.Entry{
 			Key:       "testkey",
 			Value:     nil,
 			Tombstone: true,
 		})
-		
+
 		entry, found = sl.Get("testkey")
 		require.True(t, found)
 		assert.True(t, entry.Tombstone)
@@ -247,14 +247,14 @@ func TestSkipList_Tombstones(t *testing.T) {
 func TestSkipList_DeterministicLevel(t *testing.T) {
 	t.Run("test with p=0 (all level 1)", func(t *testing.T) {
 		sl := NewSkipList(4, 0.0)
-		
+
 		for i := 0; i < 100; i++ {
 			sl.Put(storage.Entry{Key: fmt.Sprintf("key:%d", i)})
 		}
-		
+
 		// All nodes should be at level 1
 		assert.Equal(t, 1, sl.level)
-		
+
 		// Still should work correctly
 		for i := 0; i < 100; i++ {
 			_, found := sl.Get(fmt.Sprintf("key:%d", i))
@@ -264,11 +264,11 @@ func TestSkipList_DeterministicLevel(t *testing.T) {
 
 	t.Run("test with p=1 (all max level)", func(t *testing.T) {
 		sl := NewSkipList(4, 1.0)
-		
+
 		for i := 0; i < 100; i++ {
 			sl.Put(storage.Entry{Key: fmt.Sprintf("key:%d", i)})
 		}
-		
+
 		// All nodes should be at max level
 		assert.Equal(t, 4, sl.level)
 	})
@@ -278,7 +278,7 @@ func TestSkipList_EdgeCases(t *testing.T) {
 	t.Run("empty key", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
 		sl.Put(storage.Entry{Key: "", Value: []byte("empty key value")})
-		
+
 		entry, found := sl.Get("")
 		require.True(t, found)
 		assert.Equal(t, "", entry.Key)
@@ -291,9 +291,9 @@ func TestSkipList_EdgeCases(t *testing.T) {
 		for i := range longKey {
 			longKey = string(rune('a' + i%26))
 		}
-		
+
 		sl.Put(storage.Entry{Key: longKey, Value: []byte("long key value")})
-		
+
 		entry, found := sl.Get(longKey)
 		require.True(t, found)
 		assert.Equal(t, longKey, entry.Key)
@@ -305,9 +305,9 @@ func TestSkipList_EdgeCases(t *testing.T) {
 		for i := range largeValue {
 			largeValue[i] = byte(i % 256)
 		}
-		
+
 		sl.Put(storage.Entry{Key: "large", Value: largeValue})
-		
+
 		entry, found := sl.Get("large")
 		require.True(t, found)
 		assert.Equal(t, largeValue, entry.Value)
@@ -323,11 +323,11 @@ func TestSkipList_EdgeCases(t *testing.T) {
 			"key-with-dashes",
 			"key_with_underscores",
 		}
-		
+
 		for i, key := range specialKeys {
 			sl.Put(storage.Entry{Key: key, Value: []byte(fmt.Sprintf("val:%d", i))})
 		}
-		
+
 		for i, key := range specialKeys {
 			entry, found := sl.Get(key)
 			require.True(t, found, "key '%s' not found", key)
@@ -341,14 +341,14 @@ func TestSkipList_Concurrent(t *testing.T) {
 	// This test documents that behavior
 	t.Run("concurrent access without locks", func(t *testing.T) {
 		sl := NewSkipList(16, 0.5)
-		
+
 		// Insert initial data
 		for i := 0; i < 100; i++ {
 			sl.Put(storage.Entry{Key: fmt.Sprintf("key:%d", i), Value: []byte("initial")})
 		}
-		
+
 		done := make(chan bool)
-		
+
 		// Start multiple goroutines reading
 		for i := 0; i < 10; i++ {
 			go func() {
@@ -358,7 +358,7 @@ func TestSkipList_Concurrent(t *testing.T) {
 				done <- true
 			}()
 		}
-		
+
 		// Wait for all readers
 		for i := 0; i < 10; i++ {
 			<-done

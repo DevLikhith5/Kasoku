@@ -1,0 +1,114 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+kasoku-server
+kvctl
+kvctl-new
+kasoku-server-new
+
+# Test binaries
+*.test
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# Build output
+dist/
+build/
+
+# Data directories (LSM storage)
+data/
+*.sst
+*.log
+wal.log
+L0_*.sst
+L1_*.sst
+L2_*.sst
+L3_*.sst
+L4_*.sst
+L5_*.sst
+L6_*.sst
+
+# Log files
+*.log
+logs/
+
+# Configuration (optional - uncomment if you want to ignore)
+# kasoku.yaml
+# kasoku.example.yaml
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Go build cache
+.cache/
+go-cache/
+
+# Coverage reports
+coverage.txt
+coverage.out
+cover.out
+
+# Benchmark results
+*.bench
+benchmarks/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Debug files
+*.pdb
+*.idb
+
+# Profiling data
+*.pprof
+cpu.pprof
+mem.pprof
+block.pprof
+mutex.pprof
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Cluster state (if you enable clustering later)
+cluster-state/
+gossip-state.json
+
+# Backup files
+*.backup
+*.bak
+backups/
+
+# Export/Import data
+*.json
+!kasoku.example.yaml
+
+# Docker
+docker-compose.override.yml
+.docker/
+
+# Documentation build output
+docs/_build/
+site/

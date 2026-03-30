@@ -10,13 +10,12 @@ import (
 )
 
 type WALRecord struct {
-	Op 		string 		`json:"op"`
-	Key 	string 		`json:"key"`
-	Value 	[]byte		`json:"value,omitempty"`
-	Version uint64 		`json:"ver"`
-	TimeStamp int64 	`json:"ts"`
+	Op        string `json:"op"`
+	Key       string `json:"key"`
+	Value     []byte `json:"value,omitempty"`
+	Version   uint64 `json:"ver"`
+	TimeStamp int64  `json:"ts"`
 }
-
 
 // WALReplayHandler defines how replayed entries are processed
 // Different engines can implement this for custom replay logic
@@ -52,9 +51,9 @@ type WALConfig struct {
 }
 
 type WAL struct {
-	mu sync.Mutex
+	mu   sync.Mutex
 	file *os.File
-	enc *json.Encoder
+	enc  *json.Encoder
 	path string
 
 	// background sync
@@ -70,12 +69,14 @@ func OpenWAL(path string) (*WAL, error) {
 
 func OpenWALWithConfig(path string, cfg WALConfig) (*WAL, error) {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
-    if err != nil { return nil, fmt.Errorf("open WAL %s: %w", path, err) }
+	if err != nil {
+		return nil, fmt.Errorf("open WAL %s: %w", path, err)
+	}
 
 	w := &WAL{
-		file: f,
-		enc: json.NewEncoder(f),
-		path: path,
+		file:   f,
+		enc:    json.NewEncoder(f),
+		path:   path,
 		config: cfg,
 	}
 
@@ -111,22 +112,24 @@ func (w *WAL) Append(entry Entry) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	op := "PUT"
-	if entry.Tombstone { op = "DEL"}
+	if entry.Tombstone {
+		op = "DEL"
+	}
 	rec := WALRecord{
-		Op: op,
-		Key: entry.Key,
-		Value: entry.Value,
-		Version: entry.Version,
+		Op:        op,
+		Key:       entry.Key,
+		Value:     entry.Value,
+		Version:   entry.Version,
 		TimeStamp: entry.TimeStamp.UnixNano(),
 	}
 	if err := w.enc.Encode(rec); err != nil {
-        return fmt.Errorf("WAL write: %w", err)
-    }
-    // If background sync is enabled, skip immediate fsync
-    // (background goroutine handles it at SyncInterval)
-    if w.config.SyncInterval == 0 {
-    	// fsync: flush OS buffer to physical disk
-    	// Without this, data in OS buffer is lost on power failure
+		return fmt.Errorf("WAL write: %w", err)
+	}
+	// If background sync is enabled, skip immediate fsync
+	// (background goroutine handles it at SyncInterval)
+	if w.config.SyncInterval == 0 {
+		// fsync: flush OS buffer to physical disk
+		// Without this, data in OS buffer is lost on power failure
 		return w.file.Sync()
 	}
 	return nil
@@ -154,7 +157,7 @@ func (w *WAL) Replay(handler WALReplayHandler) error {
 	for scanner.Scan() {
 		var rec WALRecord
 		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
-			continue  // Skip corrupt records
+			continue // Skip corrupt records
 		}
 
 		entry := Entry{
@@ -185,7 +188,7 @@ func (w *WAL) Replay(handler WALReplayHandler) error {
 	_, err := w.file.Seek(0, 2)
 	return err
 }
- 
+
 func (w *WAL) Close() error {
 	// Stop background sync if running
 	if w.stopCh != nil {
@@ -195,8 +198,7 @@ func (w *WAL) Close() error {
 	return w.file.Close()
 }
 
-
-func(w *WAL) Reset() error {
+func (w *WAL) Reset() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err := w.file.Truncate(0); err != nil {

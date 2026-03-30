@@ -10,12 +10,12 @@ import (
 
 // Iterator provides a cursor-based range scan over the LSM store
 type Iterator struct {
-	mu        sync.RWMutex
-	entries   []storage.Entry
-	pos       int
-	prefix    string
-	closed    bool
-	err       error
+	mu      sync.RWMutex
+	entries []storage.Entry
+	pos     int
+	prefix  string
+	closed  bool
+	err     error
 }
 
 // NewIterator creates a new iterator over the given entries

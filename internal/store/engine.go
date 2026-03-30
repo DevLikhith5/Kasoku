@@ -1,4 +1,4 @@
-package storage 
+package storage
 
 import (
 	"errors"
@@ -6,29 +6,29 @@ import (
 )
 
 type Entry struct {
-	Key string
-	Value []byte
-	Version uint64
+	Key       string
+	Value     []byte
+	Version   uint64
 	TimeStamp time.Time
-	Tombstone bool 
+	Tombstone bool
 }
 
 var (
-	ErrKeyNotFound = errors.New("key not found")
-	ErrKeyTooLong = errors.New("key exceeds 1KB limit")
+	ErrKeyNotFound   = errors.New("key not found")
+	ErrKeyTooLong    = errors.New("key exceeds 1KB limit")
 	ErrValueTooLarge = errors.New("value exceeds 1MB limit")
-	ErrEngineClosed = errors.New("engine is closed")
+	ErrEngineClosed  = errors.New("engine is closed")
 )
 
 const (
-	MaxKeyLen = 1024 // 1KB
-	MaxValueLen = 1024*1024 // 1MB
+	MaxKeyLen   = 1024        // 1KB
+	MaxValueLen = 1024 * 1024 // 1MB
 )
 
 type EngineStats struct {
-	KeyCount int64
-	DiskBytes int64
-	MemBytes int64
+	KeyCount    int64
+	DiskBytes   int64
+	MemBytes    int64
 	BloomFPRate float64
 }
 
@@ -39,7 +39,7 @@ type StorageEngine interface {
 	// Keys returns all non-deleted keys
 	Keys() ([]string, error)
 	// Scan returns all non-deleted entries with the given prefix
-	Scan(prefix string)([]Entry, error)
+	Scan(prefix string) ([]Entry, error)
 	Stats() EngineStats
 	Close() error
 }

@@ -26,8 +26,6 @@ func NewMemTable(maxBytes int64) *MemTable {
 	}
 }
 
-
-
 func (m *MemTable) Put(entry storage.Entry) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -44,14 +42,11 @@ func (m *MemTable) Put(entry storage.Entry) {
 	m.sizeBytes += int64(len(entry.Key) + len(entry.Value))
 }
 
-
 func (m *MemTable) Get(key string) (storage.Entry, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.list.Get(key)
 }
-
-
 
 func (m *MemTable) Scan(prefix string) []storage.Entry {
 	m.mu.RLock()
@@ -72,7 +67,6 @@ func (m *MemTable) Scan(prefix string) []storage.Entry {
 	return result
 }
 
-
 func (m *MemTable) IsFull() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -90,8 +84,6 @@ func (m *MemTable) Len() int {
 	defer m.mu.RUnlock()
 	return m.list.Size()
 }
-
-
 
 func (m *MemTable) Entries() []storage.Entry {
 	m.mu.RLock()

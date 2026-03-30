@@ -180,12 +180,12 @@ func TestIterator_EdgeCases(t *testing.T) {
 	t.Run("iterator after close", func(t *testing.T) {
 		it, err := engine.Iter("")
 		require.NoError(t, err)
-		
+
 		engine.Close()
-		
+
 		_, err = engine.Iter("")
 		assert.Error(t, err)
-		
+
 		it.Close()
 	})
 }

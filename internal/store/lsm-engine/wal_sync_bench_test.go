@@ -151,7 +151,7 @@ func Benchmark10KWrites(b *testing.B) {
 // TestWALBackgroundSync verifies background sync doesn't break functionality
 func TestWALBackgroundSync(t *testing.T) {
 	dir := t.TempDir()
-	
+
 	wal, err := storage.OpenWALWithConfig(dir+"/wal.log", storage.WALConfig{
 		SyncInterval: 50 * time.Millisecond,
 	})
@@ -203,7 +203,7 @@ func TestWALBackgroundSync(t *testing.T) {
 
 // WALReplayHandlerFuncs is a helper for testing
 type WALReplayHandlerFuncs struct {
-	PutEntryFunc func(storage.Entry) error
+	PutEntryFunc   func(storage.Entry) error
 	SetVersionFunc func(uint64)
 }
 

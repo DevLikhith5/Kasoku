@@ -30,7 +30,7 @@ func TestCrashDurability(t *testing.T) {
 				fmt.Fprintf(os.Stderr, "failed to put key-%d: %v\n", i, err)
 				os.Exit(1)
 			}
-			
+
 			// Kill ourselves exactly after 500 writes are completed and synced
 			if i == 499 {
 				// syscall.Kill(pid, SIGKILL) is the same as 'kill -9'
@@ -63,11 +63,11 @@ func TestCrashDurability(t *testing.T) {
 	keys, _ := engine.Keys()
 	t.Logf("Successfully recovered %d keys from crashed WAL", len(keys))
 
-	// We expect at least 500 keys. 
+	// We expect at least 500 keys.
 	// It could be 501 if the 501st write reached the kernel but the process died before Sync returned,
 	// though usually it will be exactly 500 because of the sequential nature.
 	assert.GreaterOrEqual(t, len(keys), 500)
-	
+
 	// Verify the last synced key
 	val, err := engine.Get("key-499")
 	require.NoError(t, err)
