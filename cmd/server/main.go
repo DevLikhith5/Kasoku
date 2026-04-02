@@ -1,171 +1,105 @@
 package main
 
-// import (
-// 	"flag"
-// 	"fmt"
-// 	"log"
-// 	"os"
-// 	"os/signal"
-// 	"path/filepath"
-// 	"syscall"
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-// 	"github.com/DevLikhith5/kasoku/internal/config"
-// 	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
-// )
+	"github.com/DevLikhith5/kasoku/cmd/server/handler"
+	"github.com/DevLikhith5/kasoku/cmd/server/metrics"
+	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
+)
 
-// var (
-// 	version   = "dev"
-// 	buildTime = "unknown"
-// 	gitCommit = "unknown"
-// )
+// Config holds server configuration
+type Config struct {
+	Addr   string `yaml:"addr"`
+	NodeID string `yaml:"node_id"`
+	WALDir string `yaml:"wal_dir"`
+}
 
-// func main() {
-// 	// Command-line flags
-// 	configFile := flag.String("config", "", "Path to configuration file (YAML)")
-// 	dataDir := flag.String("dir", "", "Data directory (overrides config file)")
-// 	port := flag.Int("port", 0, "Server port (overrides config file)")
-// 	showVersion := flag.Bool("version", false, "Show version information")
-// 	initConfig := flag.Bool("init-config", false, "Generate default configuration file")
-// 	flag.Parse()
+func main() {
+	// Default config
+	cfg := Config{
+		Addr:   ":8080",
+		NodeID: "node-1",
+		WALDir: "./data", // Same as CLI
+	}
 
-// 	// Show version
-// 	if *showVersion {
-// 		fmt.Printf("Kasoku Server %s\n", version)
-// 		fmt.Printf("Build time: %s\n", buildTime)
-// 		fmt.Printf("Git commit: %s\n", gitCommit)
-// 		os.Exit(0)
-// 	}
+	// Override with environment variables if set
+	if addr := os.Getenv("KASOKU_ADDR"); addr != "" {
+		cfg.Addr = addr
+	}
+	if nodeID := os.Getenv("KASOKU_NODE_ID"); nodeID != "" {
+		cfg.NodeID = nodeID
+	}
+	if walDir := os.Getenv("KASOKU_WAL_DIR"); walDir != "" {
+		cfg.WALDir = walDir
+	}
 
-// 	// Generate default config
-// 	if *initConfig {
-// 		cfg := config.DefaultConfig()
-// 		cfgPath := "kasoku.yaml"
-// 		if *configFile != "" {
-// 			cfgPath = *configFile
-// 		}
-// 		if err := cfg.Save(cfgPath); err != nil {
-// 			log.Fatalf("Failed to save config: %v", err)
-// 		}
-// 		fmt.Printf("Generated default configuration: %s\n", cfgPath)
-// 		os.Exit(0)
-// 	}
+	// Initialize logger
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level:     slog.LevelInfo,
+		AddSource: true,
+	}))
 
-// 	// Load configuration
-// 	cfg, err := config.Load(*configFile)
-// 	if err != nil {
-// 		log.Fatalf("Failed to load configuration: %v", err)
-// 	}
+	// Initialize storage engine (LSM Engine - same as CLI)
+	store, err := lsmengine.NewLSMEngine(cfg.WALDir)
+	if err != nil {
+		logger.Error("failed to create storage engine", "error", err)
+		fmt.Fprintf(os.Stderr, "failed to create storage engine: %v\n", err)
+		os.Exit(1)
+	}
 
-// 	// Override with CLI flags
-// 	if *dataDir != "" {
-// 		cfg.DataDir = *dataDir
-// 	}
-// 	if *port != 0 {
-// 		cfg.Port = *port
-// 	}
+	// Initialize metrics
+	m := metrics.New()
 
-// 	// Ensure data directory exists
-// 	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
-// 		log.Fatalf("Failed to create data directory: %v", err)
-// 	}
+	// Create HTTP server
+	server := handler.New(store, cfg.NodeID, cfg.Addr, logger, m)
 
-// 	// Setup logging
-// 	if err := setupLogging(cfg); err != nil {
-// 		log.Fatalf("Failed to setup logging: %v", err)
-// 	}
+	// Setup routes
+	mux := http.NewServeMux()
+	server.RegisterRoutes(mux)
 
-// 	// Print startup banner
-// 	printBanner(cfg)
+	// Apply middleware
+	httpHandler := handler.WithLogging(logger)(handler.WithRecovery(logger)(mux))
 
-// 	// Initialize LSM engine with WAL config
-// 	log.Printf("Initializing LSM engine with data directory: %s", cfg.DataDir)
-// 	log.Printf("  - WAL sync: %v", cfg.WAL.Sync)
-// 	log.Printf("  - WAL sync interval: %v", cfg.WAL.SyncInterval)
+	logger.Info("starting HTTP server", "addr", cfg.Addr, "node_id", cfg.NodeID)
 
-// 	lsmCfg := lsmengine.LSMConfig{
-// 		WALSyncInterval: cfg.WAL.SyncInterval,
-// 	}
+	httpServer := &http.Server{
+		Addr:         cfg.Addr,
+		Handler:      httpHandler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 
-// 	engine, err := lsmengine.NewLSMEngineWithConfig(cfg.DataDir, lsmCfg)
-// 	if err != nil {
-// 		log.Fatalf("Failed to create LSM engine: %v", err)
-// 	}
-// 	defer engine.Close()
+	// Graceful shutdown
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-sig
 
-// 	log.Printf("LSM engine initialized successfully")
-// 	log.Printf("  - MemTable size: %d MB", cfg.Memory.MemTableSize/(1024*1024))
-// 	log.Printf("  - Bloom filter FP rate: %.2f%%", cfg.Memory.BloomFPRate*100)
-// 	log.Printf("  - Compaction threshold: %d SSTables", cfg.Compaction.Threshold)
+		logger.Info("shutting down server")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 
-// 	// TODO: Start HTTP/gRPC server here
-// 	// For now, just wait for shutdown signal
-// 	log.Printf("Server listening on port %d (HTTP: %d)", cfg.Port, cfg.HTTPPort)
-// 	log.Printf("Press Ctrl+C to shutdown")
+		if err := httpServer.Shutdown(ctx); err != nil {
+			logger.Error("server shutdown error", "error", err)
+		}
 
-// 	// Wait for shutdown signal
-// 	sigCh := make(chan os.Signal, 1)
-// 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+		if err := store.Close(); err != nil {
+			logger.Error("store close error", "error", err)
+		}
+	}()
 
-// 	sig := <-sigCh
-// 	log.Printf("Received signal %v, shutting down...", sig)
-
-// 	// Graceful shutdown
-// 	log.Printf("Closing LSM engine...")
-// 	if err := engine.Close(); err != nil {
-// 		log.Printf("Error closing engine: %v", err)
-// 	}
-
-// 	// Cleanup WAL files
-// 	cleanupWAL(cfg.DataDir)
-
-// 	log.Printf("Server stopped gracefully")
-// }
-
-// // setupLogging configures logging based on config
-// func setupLogging(cfg *config.Config) error {
-// 	if cfg.LogFile != "" {
-// 		// Ensure log directory exists
-// 		logDir := filepath.Dir(cfg.LogFile)
-// 		if err := os.MkdirAll(logDir, 0755); err != nil {
-// 			return fmt.Errorf("failed to create log directory: %w", err)
-// 		}
-
-// 		f, err := os.OpenFile(cfg.LogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-// 		if err != nil {
-// 			return fmt.Errorf("failed to open log file: %w", err)
-// 		}
-// 		log.SetOutput(f)
-// 		log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-// 	}
-
-// 	// Set log level (implementation would filter log output)
-// 	log.Printf("Log level: %s", cfg.LogLevel)
-// 	return nil
-// }
-
-// // printBanner prints the startup banner
-// func printBanner(cfg *config.Config) {
-// 	fmt.Println()
-// 	fmt.Println("╔══════════════════════════════════════════════════════════╗")
-// 	fmt.Println("║                    Kasoku Server                         ║")
-// 	fmt.Println("║          High-Performance LSM Key-Value Store            ║")
-// 	fmt.Println("╚══════════════════════════════════════════════════════════╝")
-// 	fmt.Println()
-// 	fmt.Printf("  Version:     %s (%s)\n", version, gitCommit)
-// 	fmt.Printf("  Data Dir:    %s\n", cfg.DataDir)
-// 	fmt.Printf("  Port:        %d\n", cfg.Port)
-// 	fmt.Printf("  HTTP Port:   %d\n", cfg.HTTPPort)
-// 	fmt.Printf("  Log Level:   %s\n", cfg.LogLevel)
-// 	fmt.Println()
-// }
-
-// // cleanupWAL removes old WAL files after clean shutdown
-// func cleanupWAL(dataDir string) {
-// 	// Archive or remove old WAL files
-// 	// This is a placeholder - actual implementation would depend on WAL package
-// 	walPath := filepath.Join(dataDir, "wal.log")
-// 	if _, err := os.Stat(walPath); err == nil {
-// 		// WAL exists - could archive it instead of deleting
-// 		log.Printf("WAL file preserved: %s", walPath)
-// 	}
-// }
+	if err := httpServer.ListenAndServe(); err != nil {
+		logger.Error("server error", "error", err)
+		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+		os.Exit(1)
+	}
+}

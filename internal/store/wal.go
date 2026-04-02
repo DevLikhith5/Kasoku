@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -48,6 +49,11 @@ type WALConfig struct {
 	// If 0, sync happens on every write (default, safest).
 	// If > 0, background goroutine fsyncs at this interval (faster, ~SyncInterval data loss on crash).
 	SyncInterval time.Duration
+
+	// OnSyncError is called when background fsync fails.
+	// If not set, errors are logged to stderr.
+	// Use this to handle errors gracefully (e.g., stop accepting writes).
+	OnSyncError func(error)
 }
 
 type WAL struct {
@@ -57,10 +63,9 @@ type WAL struct {
 	path string
 
 	// background sync
-	syncChan chan struct{}
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
-	config   WALConfig
+	stopCh chan struct{}
+	wg     sync.WaitGroup
+	config WALConfig
 }
 
 func OpenWAL(path string) (*WAL, error) {
@@ -68,6 +73,10 @@ func OpenWAL(path string) (*WAL, error) {
 }
 
 func OpenWALWithConfig(path string, cfg WALConfig) (*WAL, error) {
+	if cfg.SyncInterval < 0 {
+		return nil, fmt.Errorf("WAL SyncInterval cannot be negative")
+	}
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open WAL %s: %w", path, err)
@@ -82,7 +91,6 @@ func OpenWALWithConfig(path string, cfg WALConfig) (*WAL, error) {
 
 	// Start background sync if interval is configured
 	if cfg.SyncInterval > 0 {
-		w.syncChan = make(chan struct{}, 1)
 		w.stopCh = make(chan struct{})
 		w.wg.Add(1)
 		go w.backgroundSync()
@@ -100,7 +108,13 @@ func (w *WAL) backgroundSync() {
 		select {
 		case <-ticker.C:
 			w.mu.Lock()
-			w.file.Sync()
+			if err := w.file.Sync(); err != nil {
+				if w.config.OnSyncError != nil {
+					w.config.OnSyncError(err)
+				} else {
+					fmt.Fprintf(os.Stderr, "WAL fsync error: %v\n", err)
+				}
+			}
 			w.mu.Unlock()
 		case <-w.stopCh:
 			return
@@ -135,6 +149,9 @@ func (w *WAL) Append(entry Entry) error {
 	return nil
 }
 
+// File returns the underlying file handle.
+// Deprecated: This exposes internal state and may be removed in a future version.
+// Most operations should use Append(), Replay(), or other WAL methods directly.
 func (w *WAL) File() *os.File {
 	return w.file
 }
@@ -147,6 +164,11 @@ func (w *WAL) Replay(handler WALReplayHandler) error {
 	if _, err := w.file.Seek(0, 0); err != nil {
 		return err
 	}
+
+	// Ensure file position is reset to end on exit (for subsequent Appends)
+	defer func() {
+		_, _ = w.file.Seek(0, io.SeekEnd)
+	}()
 
 	scanner := bufio.NewScanner(w.file)
 	// Set max line size to 2MB (handles large values)
@@ -185,8 +207,7 @@ func (w *WAL) Replay(handler WALReplayHandler) error {
 	// Let handler decide what to do with max version
 	handler.SetVersion(maxVersion)
 
-	_, err := w.file.Seek(0, 2)
-	return err
+	return nil
 }
 
 func (w *WAL) Close() error {
@@ -208,6 +229,10 @@ func (w *WAL) Reset() error {
 		return err
 	}
 	w.enc = json.NewEncoder(w.file)
+	// Sync to ensure truncate is persisted
+	if err := w.file.Sync(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -221,6 +246,7 @@ func (w *WAL) Size() (int64, error) {
 
 // Checkpoint creates a checkpoint of the current WAL state
 // Returns the current file offset as the checkpoint marker
+// The checkpoint is also persisted to a .checkpoint file
 func (w *WAL) Checkpoint() (uint64, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -231,86 +257,224 @@ func (w *WAL) Checkpoint() (uint64, error) {
 	}
 
 	// Get current position
-	pos, err := w.file.Seek(0, 1)
+	pos, err := w.file.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return 0, err
 	}
 
-	return uint64(pos), nil
+	checkpoint := uint64(pos)
+
+	// Persist checkpoint to file
+	if err := w.saveCheckpoint(checkpoint); err != nil {
+		return 0, fmt.Errorf("save checkpoint: %w", err)
+	}
+
+	return checkpoint, nil
+}
+
+// saveCheckpoint persists the checkpoint marker to disk
+func (w *WAL) saveCheckpoint(checkpoint uint64) error {
+	tmpPath := w.path + ".checkpoint.tmp"
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(f, "%d", checkpoint)
+	if err != nil {
+		f.Close()
+		return err
+	}
+
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+
+	if err := f.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpPath, w.path+".checkpoint")
+}
+
+// LoadCheckpoint loads the last checkpoint marker from disk
+// Returns 0 if no checkpoint exists
+func (w *WAL) LoadCheckpoint() (uint64, error) {
+	checkpointPath := w.path + ".checkpoint"
+	data, err := os.ReadFile(checkpointPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil // No checkpoint yet
+		}
+		return 0, err
+	}
+
+	var checkpoint uint64
+	_, err = fmt.Sscanf(string(data), "%d", &checkpoint)
+	if err != nil {
+		return 0, fmt.Errorf("parse checkpoint: %w", err)
+	}
+
+	return checkpoint, nil
 }
 
 // TruncateBefore removes WAL entries before the given checkpoint
 // This prevents the WAL from growing forever
+// Uses a temp file to avoid loading all entries into memory
+// Assumes caller holds the lock (use truncateBeforeUnlocked for internal calls)
 func (w *WAL) TruncateBefore(checkpoint uint64) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	return w.truncateBeforeUnlocked(checkpoint)
+}
 
+// truncateBeforeUnlocked is the internal version that assumes lock is held
+func (w *WAL) truncateBeforeUnlocked(checkpoint uint64) error {
 	// Read all entries after checkpoint
-	if _, err := w.file.Seek(int64(checkpoint), 0); err != nil {
+	if _, err := w.file.Seek(int64(checkpoint), io.SeekStart); err != nil {
 		return err
 	}
 
 	scanner := bufio.NewScanner(w.file)
 	scanner.Buffer(make([]byte, 2*1024*1024), 2*1024*1024)
 
-	var entries []WALRecord
+	// Create temp file for atomic write
+	tmpPath := w.path + ".tmp"
+	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpEnc := json.NewEncoder(tmpFile)
+	defer func() {
+		tmpFile.Close()
+		if err != nil {
+			os.Remove(tmpPath) // Clean up on error
+		}
+	}()
+
 	for scanner.Scan() {
 		var rec WALRecord
 		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
 			continue // Skip corrupt records
 		}
-		entries = append(entries, rec)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-
-	// Truncate and rewrite
-	if err := w.file.Truncate(0); err != nil {
-		return err
-	}
-
-	if _, err := w.file.Seek(0, 0); err != nil {
-		return err
-	}
-
-	// Re-encode entries
-	w.enc = json.NewEncoder(w.file)
-	for _, rec := range entries {
-		if err := w.enc.Encode(rec); err != nil {
-			return err
+		if err := tmpEnc.Encode(rec); err != nil {
+			tmpFile.Close()
+			return fmt.Errorf("write temp file: %w", err)
 		}
 	}
 
-	return w.file.Sync()
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scan WAL: %w", err)
+	}
+
+	// Sync temp file before replacing
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("sync temp file: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+
+	// Close original file before rename (required on Windows)
+	if err := w.file.Close(); err != nil {
+		return fmt.Errorf("close original file: %w", err)
+	}
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, w.path); err != nil {
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+
+	// Reopen file
+	f, err := os.OpenFile(w.path, os.O_APPEND|os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("reopen WAL: %w", err)
+	}
+	w.file = f
+	w.enc = json.NewEncoder(f)
+
+	return nil
 }
 
-// Compact performs checkpoint and truncate in one operation
-// Returns the number of entries removed
+// Compact rewrites the WAL to remove gaps and reclaim space
+// Returns the number of entries kept after compaction
+// Uses a temp file to avoid loading all entries into memory
 func (w *WAL) Compact() (int, error) {
-	// Count entries before
-	countBefore, err := w.Count()
-	if err != nil {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Seek to beginning for reading
+	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
 
-	// Create checkpoint
-	_, err = w.Checkpoint()
+	scanner := bufio.NewScanner(w.file)
+	scanner.Buffer(make([]byte, 2*1024*1024), 2*1024*1024)
+
+	// Create temp file for atomic write
+	tmpPath := w.path + ".compact.tmp"
+	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("create temp file: %w", err)
+	}
+	tmpEnc := json.NewEncoder(tmpFile)
+
+	entryCount := 0
+	for scanner.Scan() {
+		var rec WALRecord
+		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
+			continue // Skip corrupt records
+		}
+		if err := tmpEnc.Encode(rec); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			return 0, fmt.Errorf("write temp file: %w", err)
+		}
+		entryCount++
 	}
 
-	// Truncate (in this case, just sync since we're at end)
-	// The real compaction happens when we replay and create a new WAL
-
-	// Count entries after
-	countAfter, err := w.Count()
-	if err != nil {
-		return 0, err
+	if err := scanner.Err(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return 0, fmt.Errorf("scan WAL: %w", err)
 	}
 
-	return countBefore - countAfter, nil
+	// Sync temp file before replacing
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return 0, fmt.Errorf("sync temp file: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return 0, fmt.Errorf("close temp file: %w", err)
+	}
+
+	// Close original file before rename
+	if err := w.file.Close(); err != nil {
+		os.Remove(tmpPath)
+		return 0, fmt.Errorf("close original file: %w", err)
+	}
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, w.path); err != nil {
+		os.Remove(tmpPath)
+		return 0, fmt.Errorf("rename temp file: %w", err)
+	}
+
+	// Reopen file
+	f, err := os.OpenFile(w.path, os.O_APPEND|os.O_RDWR, 0644)
+	if err != nil {
+		return 0, fmt.Errorf("reopen WAL: %w", err)
+	}
+	w.file = f
+	w.enc = json.NewEncoder(f)
+
+	return entryCount, nil
 }
 
 // Count returns the number of entries in the WAL
@@ -339,6 +503,6 @@ func (w *WAL) Count() (int, error) {
 	}
 
 	// Seek back to end for appends
-	_, err := w.file.Seek(0, 2)
+	_, err := w.file.Seek(0, io.SeekEnd)
 	return count, err
 }
