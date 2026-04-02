@@ -112,3 +112,5 @@ docker-compose.override.yml
 # Documentation build output
 docs/_build/
 site/
+*.md
+.qwen/
