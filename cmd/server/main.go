@@ -43,8 +43,16 @@ func main() {
 		AddSource: true,
 	}))
 
-	// Initialize storage engine (LSM Engine - same as CLI)
-	store, err := lsmengine.NewLSMEngine(cfg.DataDir)
+	// Initialize storage engine (LSM Engine)
+	store, err := lsmengine.NewLSMEngineWithConfig(cfg.DataDir, lsmengine.LSMConfig{
+		MemTableSize:        cfg.Memory.MemTableSize,
+		MaxMemtableBytes:    cfg.Memory.MaxMemtableBytes,
+		WALSyncInterval:     cfg.WAL.SyncInterval,
+		CompactionThreshold: cfg.Compaction.Threshold,
+		L0SizeThreshold:     cfg.Compaction.L0SizeThreshold,
+		BloomFPRate:         cfg.Memory.BloomFPRate,
+		LevelRatio:          cfg.LSM.LevelRatio,
+	})
 	if err != nil {
 		logger.Error("failed to create storage engine", "error", err)
 		fmt.Fprintf(os.Stderr, "failed to create storage engine: %v\n", err)

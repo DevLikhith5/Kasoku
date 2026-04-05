@@ -29,7 +29,13 @@ type LSMEngine struct {
 }
 
 type LSMConfig struct {
-	WALSyncInterval time.Duration
+	MemTableSize        int64 //soft limit for memtable
+	MaxMemtableBytes    int64//hard limit for memtable
+	WALSyncInterval     time.Duration
+	CompactionThreshold int
+	L0SizeThreshold     int64
+	BloomFPRate         float64
+	LevelRatio          float64
 }
 
 // PutEntry implements WALReplayHandler for LSMEngine
@@ -52,6 +58,26 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 		return nil, err
 	}
 
+	// Apply defaults for zero values
+	if cfg.MemTableSize <= 0 {
+		cfg.MemTableSize = DefaultMemTableSize
+	}
+	if cfg.MaxMemtableBytes <= 0 {
+		cfg.MaxMemtableBytes = DefaultMemTableSize * 4 // 256MB
+	}
+	if cfg.CompactionThreshold <= 0 {
+		cfg.CompactionThreshold = 4
+	}
+	if cfg.L0SizeThreshold <= 0 {
+		cfg.L0SizeThreshold = DefaultMemTableSize * 2 // 128MB
+	}
+	if cfg.BloomFPRate <= 0 {
+		cfg.BloomFPRate = 0.01
+	}
+	if cfg.LevelRatio <= 0 {
+		cfg.LevelRatio = 2.0
+	}
+
 	wal, err := storage.OpenWALWithConfig(filepath.Join(dir, "wal.log"), storage.WALConfig{
 		SyncInterval: cfg.WALSyncInterval,
 	})
@@ -60,7 +86,7 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 	}
 
 	e := &LSMEngine{
-		active:    NewMemTable(DefaultMemTableSize),
+		active:    NewMemTable(cfg.MemTableSize),
 		wal:       wal,
 		dir:       dir,
 		flushCh:   make(chan struct{}, 1),
@@ -110,8 +136,8 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	e.mu.Lock()
 	e.active.Put(entry)
 	full := e.active.IsFull()
-	// Hard limit: block writes if active exceeds 2x target size
-	overHardLimit := e.active.Size() >= DefaultMemTableSize*2
+	// Hard limit: block writes if active exceeds L0SizeThreshold
+	overHardLimit := e.active.Size() >= e.config.L0SizeThreshold
 	e.mu.Unlock()
 
 	if full {
@@ -123,7 +149,7 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 
 	// Backpressure: wait for at least one flush to complete
 	if overHardLimit {
-		fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", DefaultMemTableSize*2)
+		fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", e.config.L0SizeThreshold)
 		<-e.flushDone
 		fmt.Printf("[BACKPRESSURE] flush completed, resuming writes\n")
 	}
@@ -195,6 +221,17 @@ func (e *LSMEngine) flushLoop() {
 	}
 }
 
+// maxFilesForLevel returns the max SSTables allowed at a given level.
+// Creates a pyramid using level_ratio: L0=4, L1=4*ratio, L2=4*ratio^2, ...
+func (e *LSMEngine) maxFilesForLevel(level int) int {
+	ratio := e.config.LevelRatio
+	result := float64(e.config.CompactionThreshold)
+	for i := 0; i < level; i++ {
+		result *= ratio
+	}
+	return int(result)
+}
+
 func (e *LSMEngine) compactLoop() {
 	defer e.wg.Done()
 
@@ -203,12 +240,11 @@ func (e *LSMEngine) compactLoop() {
 			return
 		}
 
-		// Collect levels that need compaction
-		// Non-adjacent levels can be compacted concurrently
+		// Collect levels that need compaction (no hard cap — pyramid grows)
 		e.mu.RLock()
 		var levelsToCompact []int
-		for level := 0; level < 10; level++ {
-			if level < len(e.levels) && len(e.levels[level]) >= 4 {
+		for level := 0; level < len(e.levels); level++ {
+			if len(e.levels[level]) >= e.maxFilesForLevel(level) {
 				levelsToCompact = append(levelsToCompact, level)
 			} else {
 				break // Stop at first level that doesn't need compaction
@@ -235,7 +271,7 @@ func (e *LSMEngine) compactLoop() {
 
 func (e *LSMEngine) compactLevel(level int) {
 	e.mu.Lock()
-	if level >= len(e.levels) || len(e.levels[level]) < 4 {
+	if level >= len(e.levels) || len(e.levels[level]) < e.maxFilesForLevel(level) {
 		e.mu.Unlock()
 		return
 	}
@@ -339,7 +375,7 @@ func (e *LSMEngine) flushMemTable() error {
 
 	// Rotate: push active to immutable queue, create new active
 	e.immutable = append(e.immutable, e.active)
-	e.active = NewMemTable(DefaultMemTableSize)
+	e.active = NewMemTable(e.config.MemTableSize)
 	e.mu.Unlock()
 
 	// Signal flushDone so any blocked writers can retry
@@ -404,7 +440,7 @@ func (e *LSMEngine) flushMemTable() error {
 	e.mu.RLock()
 	l0Count := len(e.levels[0])
 	e.mu.RUnlock()
-	if l0Count >= 4 {
+	if l0Count >= e.maxFilesForLevel(0) {
 		select {
 		case e.compCh <- struct{}{}:
 		default:
@@ -497,7 +533,7 @@ func (e *LSMEngine) Delete(key string) error {
 	e.mu.Lock()
 	e.active.Put(entry)
 	full := e.active.IsFull()
-	overHardLimit := e.active.Size() >= DefaultMemTableSize*2
+	overHardLimit := e.active.Size() >= e.config.L0SizeThreshold
 	e.mu.Unlock()
 
 	if full {
@@ -508,7 +544,7 @@ func (e *LSMEngine) Delete(key string) error {
 	}
 
 	if overHardLimit {
-		fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", DefaultMemTableSize*2)
+		fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", e.config.L0SizeThreshold)
 		<-e.flushDone
 		fmt.Printf("[BACKPRESSURE] flush completed, resuming writes\n")
 	}
