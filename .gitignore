@@ -114,5 +114,6 @@ docker-compose.override.yml
 docs/_build/
 site/
 *.md
+!README.md
 .qwen/
 *.docx
