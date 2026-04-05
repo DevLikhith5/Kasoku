@@ -31,6 +31,7 @@ func (m *MemTable) Put(entry storage.Entry) {
 	defer m.mu.Unlock()
 
 	// SkipList.Put returns old value size if key existed (avoids separate Get call)
+	// SkipList has no lock of its own — caller (MemTable) must hold the lock
 	oldSize := m.list.Put(entry)
 	if oldSize > 0 {
 		m.sizeBytes -= oldSize

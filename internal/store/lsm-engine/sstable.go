@@ -35,7 +35,7 @@ type SSTableWriter struct {
 	compress  bool
 }
 
-func NewSSTableWriter(path string, expectedEntries int) (*SSTableWriter, error) {
+func NewSSTableWriter(path string, expectedEntries int, bloomFPRate float64) (*SSTableWriter, error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return nil,
@@ -43,7 +43,7 @@ func NewSSTableWriter(path string, expectedEntries int) (*SSTableWriter, error) 
 	}
 	return &SSTableWriter{
 		file:      f,
-		filter:    NewBloomFilter(expectedEntries, 0.01),
+		filter:    NewBloomFilter(expectedEntries, bloomFPRate),
 		blockSize: DefaultBlockSize,
 		compress:  true, // enable compression by default
 	}, nil
@@ -96,6 +96,7 @@ func (w *SSTableWriter) WriteEntry(entry storage.Entry) error {
 
 func (w *SSTableWriter) Finalize() error {
 	// Defensive: ensure index is sorted (MemTable should already be sorted)
+	//Safety net required even though this is redundant, negligible delta increase in tc than disk io
 	sort.Slice(w.index, func(i, j int) bool {
 		return w.index[i].Key < w.index[j].Key
 	})
@@ -169,10 +170,24 @@ func NewBlockCache(maxBlocks int) *BlockCache {
 
 // Get retrieves a block from cache
 func (bc *BlockCache) Get(key string) ([]byte, bool) {
-	bc.mu.RLock()
-	defer bc.mu.RUnlock()
+	bc.mu.Lock() // Write lock needed because we update LRU order
+	defer bc.mu.Unlock()
+
 	data, ok := bc.cache[key]
-	return data, ok
+	if !ok {
+		return nil, false
+	}
+
+	// Move to end (most recently used)
+	for i, k := range bc.keys {
+		if k == key {
+			bc.keys = append(bc.keys[:i], bc.keys[i+1:]...)
+			bc.keys = append(bc.keys, key)
+			break
+		}
+	}
+
+	return data, true
 }
 
 // Put adds a block to cache with LRU eviction

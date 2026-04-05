@@ -18,10 +18,8 @@ type SkipList struct {
 	p        uint32 // threshold for randomLevel (replaces float64)
 	size     int
 
-	// Fast RNG — xorshift64, protected by mu (no separate lock needed)
+	// Fast RNG — xorshift64, protected by caller's lock
 	seed uint64
-
-	mu sync.RWMutex
 
 	// Pool for update arrays to reduce allocations
 	updatePool sync.Pool
@@ -79,9 +77,6 @@ func (s *SkipList) randomLevel() int {
 }
 
 func (s *SkipList) Get(key string) (storage.Entry, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	curr := s.head
 
 	for i := s.level - 1; i >= 0; i-- {
@@ -101,9 +96,6 @@ func (s *SkipList) Get(key string) (storage.Entry, bool) {
 
 // Put inserts or updates an entry. Returns old value size if key existed (for size tracking).
 func (s *SkipList) Put(entry storage.Entry) int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	updatePtr := s.updatePool.Get().(*[]*node)
 	update := *updatePtr
 	defer s.updatePool.Put(updatePtr)
@@ -152,9 +144,6 @@ func (s *SkipList) Put(entry storage.Entry) int64 {
 }
 
 func (s *SkipList) Seek(key string) *node {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	curr := s.head
 
 	for i := s.level - 1; i >= 0; i-- {
@@ -167,9 +156,6 @@ func (s *SkipList) Seek(key string) *node {
 }
 
 func (s *SkipList) Entries() []storage.Entry {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	result := make([]storage.Entry, 0, s.size)
 	curr := s.head.forward[0]
 
@@ -182,8 +168,5 @@ func (s *SkipList) Entries() []storage.Entry {
 }
 
 func (s *SkipList) Size() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	return s.size
 }
-

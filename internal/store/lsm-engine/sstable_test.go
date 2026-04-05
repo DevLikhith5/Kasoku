@@ -18,7 +18,7 @@ func TestSSTableWriter(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, err := NewSSTableWriter(path, 100)
+		writer, err := NewSSTableWriter(path, 100, 0.01)
 		require.NoError(t, err)
 		require.NotNil(t, writer)
 
@@ -35,7 +35,7 @@ func TestSSTableWriter(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, err := NewSSTableWriter(path, 10)
+		writer, err := NewSSTableWriter(path, 10, 0.01)
 		require.NoError(t, err)
 
 		entry := storage.Entry{
@@ -65,7 +65,7 @@ func TestSSTableWriter(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, err := NewSSTableWriter(path, 100)
+		writer, err := NewSSTableWriter(path, 100, 0.01)
 		require.NoError(t, err)
 
 		for i := 0; i < 10; i++ {
@@ -89,7 +89,7 @@ func TestSSTableWriter(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, err := NewSSTableWriter(path, 10)
+		writer, err := NewSSTableWriter(path, 10, 0.01)
 		require.NoError(t, err)
 
 		writer.WriteEntry(storage.Entry{Key: "key1", Value: []byte("val1")})
@@ -111,7 +111,7 @@ func TestSSTableWriter(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, err := NewSSTableWriter(path, 100)
+		writer, err := NewSSTableWriter(path, 100, 0.01)
 		require.NoError(t, err)
 
 		// Write in random order
@@ -136,7 +136,7 @@ func TestSSTableWriter(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, err := NewSSTableWriter(path, 100)
+		writer, err := NewSSTableWriter(path, 100, 0.01)
 		require.NoError(t, err)
 
 		writer.WriteEntry(storage.Entry{Key: "testkey", Value: []byte("value")})
@@ -163,7 +163,7 @@ func TestSSTableReader(t *testing.T) {
 		path := filepath.Join(tmpDir, "test.sst")
 
 		// Create SSTable
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.WriteEntry(storage.Entry{
 			Key:     "mykey",
 			Value:   []byte("myvalue"),
@@ -186,7 +186,7 @@ func TestSSTableReader(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.WriteEntry(storage.Entry{Key: "key1", Value: []byte("val1")})
 		writer.Finalize()
 
@@ -202,7 +202,7 @@ func TestSSTableReader(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, _ := NewSSTableWriter(path, 100)
+		writer, _ := NewSSTableWriter(path, 100, 0.01)
 		writer.WriteEntry(storage.Entry{Key: "existing", Value: []byte("value")})
 		writer.Finalize()
 
@@ -219,7 +219,7 @@ func TestSSTableReader(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, _ := NewSSTableWriter(path, 100)
+		writer, _ := NewSSTableWriter(path, 100, 0.01)
 		writer.WriteEntry(storage.Entry{Key: "user:1", Value: []byte("Alice")})
 		writer.WriteEntry(storage.Entry{Key: "user:2", Value: []byte("Bob")})
 		writer.WriteEntry(storage.Entry{Key: "user:3", Value: []byte("Charlie")})
@@ -243,7 +243,7 @@ func TestSSTableReader(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.WriteEntry(storage.Entry{Key: "key1", Value: []byte("val1")})
 		writer.Finalize()
 
@@ -260,7 +260,7 @@ func TestSSTableReader(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.WriteEntry(storage.Entry{Key: "a", Value: []byte("1")})
 		writer.WriteEntry(storage.Entry{Key: "b", Value: []byte("2")})
 		writer.Finalize()
@@ -278,7 +278,7 @@ func TestSSTableReader(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, _ := NewSSTableWriter(path, 100)
+		writer, _ := NewSSTableWriter(path, 100, 0.01)
 		// Write in random order
 		keys := []string{"z", "a", "m", "b", "y"}
 		for _, key := range keys {
@@ -303,7 +303,7 @@ func TestSSTableReader(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.WriteEntry(storage.Entry{
 			Key:       "deleted",
 			Value:     nil,
@@ -336,7 +336,7 @@ func TestSSTable_RoundTrip(t *testing.T) {
 			Tombstone: false,
 		}
 
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.WriteEntry(original)
 		writer.Finalize()
 
@@ -364,7 +364,7 @@ func TestSSTable_RoundTrip(t *testing.T) {
 			largeValue[i] = byte(i % 256)
 		}
 
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.WriteEntry(storage.Entry{Key: "large", Value: largeValue})
 		writer.Finalize()
 
@@ -382,7 +382,7 @@ func TestSSTable_RoundTrip(t *testing.T) {
 		path := filepath.Join(tmpDir, "test.sst")
 
 		count := 1000
-		writer, _ := NewSSTableWriter(path, count)
+		writer, _ := NewSSTableWriter(path, count, 0.01)
 
 		for i := 0; i < count; i++ {
 			writer.WriteEntry(storage.Entry{
@@ -420,7 +420,7 @@ func TestSSTable_EdgeCases(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "empty.sst")
 
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.Finalize()
 
 		reader, err := OpenSSTable(path)
@@ -449,7 +449,7 @@ func TestSSTable_EdgeCases(t *testing.T) {
 			"key\twith\ttabs",
 		}
 
-		writer, _ := NewSSTableWriter(path, 100)
+		writer, _ := NewSSTableWriter(path, 100, 0.01)
 		for i, key := range specialKeys {
 			writer.WriteEntry(storage.Entry{
 				Key:   key,
@@ -476,7 +476,7 @@ func TestSSTable_EdgeCases(t *testing.T) {
 		// Binary data that might not be valid UTF-8
 		binaryValue := []byte{0x00, 0x01, 0xFF, 0xFE, 0x80, 0x7F}
 
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.WriteEntry(storage.Entry{Key: "binary", Value: binaryValue})
 		writer.Finalize()
 
@@ -493,7 +493,7 @@ func TestSSTable_EdgeCases(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.WriteEntry(storage.Entry{Key: "key", Value: []byte("first"), Version: 1})
 		writer.WriteEntry(storage.Entry{Key: "key", Value: []byte("second"), Version: 2})
 		writer.WriteEntry(storage.Entry{Key: "key", Value: []byte("third"), Version: 3})
@@ -542,7 +542,7 @@ func TestSSTable_FileSize(t *testing.T) {
 
 		for count := 1; count <= 10; count++ {
 			path := filepath.Join(tmpDir, fmt.Sprintf("test_%d.sst", count))
-			writer, _ := NewSSTableWriter(path, 100)
+			writer, _ := NewSSTableWriter(path, 100, 0.01)
 
 			for i := 0; i < count; i++ {
 				writer.WriteEntry(storage.Entry{
@@ -569,7 +569,7 @@ func TestSSTable_Close(t *testing.T) {
 		tmpDir := t.TempDir()
 		path := filepath.Join(tmpDir, "test.sst")
 
-		writer, _ := NewSSTableWriter(path, 10)
+		writer, _ := NewSSTableWriter(path, 10, 0.01)
 		writer.WriteEntry(storage.Entry{Key: "key", Value: []byte("value")})
 		writer.Finalize()
 

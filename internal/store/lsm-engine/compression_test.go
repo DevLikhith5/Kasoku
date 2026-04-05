@@ -13,7 +13,7 @@ func TestSSTable_Compression(t *testing.T) {
 	tmpFile := t.TempDir() + "/test.sst"
 
 	t.Run("compressible data", func(t *testing.T) {
-		writer, err := NewSSTableWriter(tmpFile, 10)
+		writer, err := NewSSTableWriter(tmpFile, 10, 0.01)
 		require.NoError(t, err)
 
 		// Write repetitive data (highly compressible)
@@ -42,7 +42,7 @@ func TestSSTable_Compression(t *testing.T) {
 
 	t.Run("incompressible data", func(t *testing.T) {
 		tmpFile2 := t.TempDir() + "/test2.sst"
-		writer, err := NewSSTableWriter(tmpFile2, 10)
+		writer, err := NewSSTableWriter(tmpFile2, 10, 0.01)
 		require.NoError(t, err)
 
 		// Write random data (not compressible)
@@ -74,7 +74,7 @@ func TestSSTable_BlockCache(t *testing.T) {
 	tmpFile := t.TempDir() + "/test.sst"
 
 	// Create SSTable
-	writer, err := NewSSTableWriter(tmpFile, 5)
+	writer, err := NewSSTableWriter(tmpFile, 5, 0.01)
 	require.NoError(t, err)
 
 	for i := 0; i < 5; i++ {
@@ -214,7 +214,7 @@ func TestCompressionRatio(t *testing.T) {
 	tmpFile := t.TempDir() + "/test.sst"
 
 	// Write highly compressible data
-	writer, err := NewSSTableWriter(tmpFile, 100)
+	writer, err := NewSSTableWriter(tmpFile, 100, 0.01)
 	require.NoError(t, err)
 
 	repetitiveValue := []byte("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")

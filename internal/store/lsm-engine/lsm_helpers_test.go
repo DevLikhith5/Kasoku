@@ -16,7 +16,7 @@ func TestMergeSSTables(t *testing.T) {
 
 	// Create first SSTable
 	path1 := filepath.Join(tmpDir, "L0_1.sst")
-	writer1, err := NewSSTableWriter(path1, 10)
+	writer1, err := NewSSTableWriter(path1, 10, 0.01)
 	require.NoError(t, err)
 	writer1.WriteEntry(storage.Entry{Key: "a", Value: []byte("v1"), Version: 1, TimeStamp: time.Now()})
 	writer1.WriteEntry(storage.Entry{Key: "b", Value: []byte("v1"), Version: 1, TimeStamp: time.Now()})
@@ -24,7 +24,7 @@ func TestMergeSSTables(t *testing.T) {
 
 	// Create second SSTable
 	path2 := filepath.Join(tmpDir, "L0_2.sst")
-	writer2, err := NewSSTableWriter(path2, 10)
+	writer2, err := NewSSTableWriter(path2, 10, 0.01)
 	require.NoError(t, err)
 	writer2.WriteEntry(storage.Entry{Key: "c", Value: []byte("v1"), Version: 1, TimeStamp: time.Now()})
 	writer2.WriteEntry(storage.Entry{Key: "d", Value: []byte("v1"), Version: 1, TimeStamp: time.Now()})
@@ -55,14 +55,14 @@ func TestMergeSSTables_MultipleVersions(t *testing.T) {
 
 	// Create first SSTable with older versions
 	path1 := filepath.Join(tmpDir, "L0_1.sst")
-	writer1, err := NewSSTableWriter(path1, 10)
+	writer1, err := NewSSTableWriter(path1, 10, 0.01)
 	require.NoError(t, err)
 	writer1.WriteEntry(storage.Entry{Key: "key", Value: []byte("old"), Version: 1, TimeStamp: time.Now()})
 	writer1.Finalize()
 
 	// Create second SSTable with newer version
 	path2 := filepath.Join(tmpDir, "L0_2.sst")
-	writer2, err := NewSSTableWriter(path2, 10)
+	writer2, err := NewSSTableWriter(path2, 10, 0.01)
 	require.NoError(t, err)
 	writer2.WriteEntry(storage.Entry{Key: "key", Value: []byte("new"), Version: 2, TimeStamp: time.Now()})
 	writer2.Finalize()
@@ -261,13 +261,13 @@ func TestLSMEngine_LoadSSTables_WithFiles(t *testing.T) {
 
 	// Create SSTable files
 	path1 := filepath.Join(tmpDir, "L0_1.sst")
-	writer1, err := NewSSTableWriter(path1, 10)
+	writer1, err := NewSSTableWriter(path1, 10, 0.01)
 	require.NoError(t, err)
 	writer1.WriteEntry(storage.Entry{Key: "a", Value: []byte("v"), Version: 1, TimeStamp: time.Now()})
 	writer1.Finalize()
 
 	path2 := filepath.Join(tmpDir, "L1_1.sst")
-	writer2, err := NewSSTableWriter(path2, 10)
+	writer2, err := NewSSTableWriter(path2, 10, 0.01)
 	require.NoError(t, err)
 	writer2.WriteEntry(storage.Entry{Key: "b", Value: []byte("v"), Version: 1, TimeStamp: time.Now()})
 	writer2.Finalize()
@@ -392,7 +392,7 @@ func TestLSMEngine_CompactLoop(t *testing.T) {
 
 func TestSSTableWriter_ErrorCases(t *testing.T) {
 	// Try to create writer in invalid directory
-	_, err := NewSSTableWriter("/nonexistent/dir/test.sst", 10)
+	_, err := NewSSTableWriter("/nonexistent/dir/test.sst", 10, 0.01)
 	assert.Error(t, err)
 }
 

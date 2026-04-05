@@ -30,10 +30,10 @@ type LSMEngine struct {
 
 type LSMConfig struct {
 	MemTableSize        int64 //soft limit for memtable
-	MaxMemtableBytes    int64//hard limit for memtable
+	MaxMemtableBytes    int64
 	WALSyncInterval     time.Duration
 	CompactionThreshold int
-	L0SizeThreshold     int64
+	L0SizeThreshold     int64 //hard limit for memtable
 	BloomFPRate         float64
 	LevelRatio          float64
 }
@@ -128,7 +128,7 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 		Version:   e.version.Add(1),
 		TimeStamp: time.Now(),
 	}
-
+	//
 	if err := e.wal.Append(entry); err != nil {
 		return err
 	}
@@ -138,6 +138,12 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	full := e.active.IsFull()
 	// Hard limit: block writes if active exceeds L0SizeThreshold
 	overHardLimit := e.active.Size() >= e.config.L0SizeThreshold
+	// System cap: block if total memtable memory exceeds MaxMemtableBytes
+	totalMem := e.active.Size()
+	for _, mem := range e.immutable {
+		totalMem += mem.Size()
+	}
+	overSystemCap := totalMem >= e.config.MaxMemtableBytes
 	e.mu.Unlock()
 
 	if full {
@@ -148,10 +154,22 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	}
 
 	// Backpressure: wait for at least one flush to complete
-	if overHardLimit {
-		fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", e.config.L0SizeThreshold)
+	for overHardLimit || overSystemCap {
+		if overSystemCap {
+			fmt.Printf("[BACKPRESSURE] total memtable memory exceeded system cap (%d bytes), blocking writes\n", e.config.MaxMemtableBytes)
+		} else {
+			fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", e.config.L0SizeThreshold)
+		}
 		<-e.flushDone
-		fmt.Printf("[BACKPRESSURE] flush completed, resuming writes\n")
+		// Re-check after flush
+		e.mu.RLock()
+		totalMem = e.active.Size()
+		for _, mem := range e.immutable {
+			totalMem += mem.Size()
+		}
+		overHardLimit = e.active.Size() >= e.config.L0SizeThreshold
+		overSystemCap = totalMem >= e.config.MaxMemtableBytes
+		e.mu.RUnlock()
 	}
 
 	return nil
@@ -226,7 +244,7 @@ func (e *LSMEngine) flushLoop() {
 func (e *LSMEngine) maxFilesForLevel(level int) int {
 	ratio := e.config.LevelRatio
 	result := float64(e.config.CompactionThreshold)
-	for i := 0; i < level; i++ {
+	for range level {
 		result *= ratio
 	}
 	return int(result)
@@ -309,7 +327,7 @@ func (e *LSMEngine) compactLevel(level int) {
 	nextLevel := level + 1
 	sstPath := filepath.Join(e.dir,
 		fmt.Sprintf("L%d_%d.sst", nextLevel, time.Now().UnixNano()))
-	writer, err := NewSSTableWriter(sstPath, len(deduped))
+	writer, err := NewSSTableWriter(sstPath, len(deduped), e.config.BloomFPRate)
 	if err != nil {
 		fmt.Printf("[COMPACTION] error creating writer: %v\n", err)
 		return
@@ -405,7 +423,7 @@ func (e *LSMEngine) flushMemTable() error {
 			fmt.Sprintf("L0_%d.sst", time.Now().UnixNano()),
 		)
 
-		writer, err := NewSSTableWriter(sstPath, len(entries))
+		writer, err := NewSSTableWriter(sstPath, len(entries), e.config.BloomFPRate)
 		if err != nil {
 			return err
 		}
@@ -417,9 +435,6 @@ func (e *LSMEngine) flushMemTable() error {
 		}
 
 		if err := writer.Finalize(); err != nil {
-			return err
-		}
-		if err := e.wal.Reset(); err != nil {
 			return err
 		}
 
@@ -434,6 +449,11 @@ func (e *LSMEngine) flushMemTable() error {
 		}
 		e.levels[0] = append([]*SSTableReader{reader}, e.levels[0]...)
 		e.mu.Unlock()
+	}
+
+	// WAL is only safe to reset after ALL pending memtables are flushed
+	if err := e.wal.Reset(); err != nil {
+		return err
 	}
 
 	// Trigger compaction if L0 has too many SSTables
@@ -534,6 +554,11 @@ func (e *LSMEngine) Delete(key string) error {
 	e.active.Put(entry)
 	full := e.active.IsFull()
 	overHardLimit := e.active.Size() >= e.config.L0SizeThreshold
+	totalMem := e.active.Size()
+	for _, mem := range e.immutable {
+		totalMem += mem.Size()
+	}
+	overSystemCap := totalMem >= e.config.MaxMemtableBytes
 	e.mu.Unlock()
 
 	if full {
@@ -543,10 +568,21 @@ func (e *LSMEngine) Delete(key string) error {
 		}
 	}
 
-	if overHardLimit {
-		fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", e.config.L0SizeThreshold)
+	for overHardLimit || overSystemCap {
+		if overSystemCap {
+			fmt.Printf("[BACKPRESSURE] total memtable memory exceeded system cap (%d bytes), blocking writes\n", e.config.MaxMemtableBytes)
+		} else {
+			fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", e.config.L0SizeThreshold)
+		}
 		<-e.flushDone
-		fmt.Printf("[BACKPRESSURE] flush completed, resuming writes\n")
+		e.mu.RLock()
+		totalMem = e.active.Size()
+		for _, mem := range e.immutable {
+			totalMem += mem.Size()
+		}
+		overHardLimit = e.active.Size() >= e.config.L0SizeThreshold
+		overSystemCap = totalMem >= e.config.MaxMemtableBytes
+		e.mu.RUnlock()
 	}
 
 	return nil
