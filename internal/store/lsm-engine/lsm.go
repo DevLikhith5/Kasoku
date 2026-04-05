@@ -15,7 +15,7 @@ import (
 type LSMEngine struct {
 	mu        sync.RWMutex
 	active    *MemTable
-	immutable *MemTable
+	immutable []*MemTable // queue of memtables waiting to flush
 	wal       *storage.WAL
 	levels    [][]*SSTableReader
 	version   atomic.Uint64
@@ -23,6 +23,7 @@ type LSMEngine struct {
 	closed    atomic.Bool
 	flushCh   chan struct{}
 	compCh    chan struct{}
+	flushDone chan struct{} // signaled when a flush completes, used for backpressure
 	wg        sync.WaitGroup
 	config    LSMConfig
 }
@@ -59,12 +60,13 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 	}
 
 	e := &LSMEngine{
-		active:  NewMemTable(DefaultMemTableSize),
-		wal:     wal,
-		dir:     dir,
-		flushCh: make(chan struct{}, 1),
-		compCh:  make(chan struct{}, 1),
-		config:  cfg,
+		active:    NewMemTable(DefaultMemTableSize),
+		wal:       wal,
+		dir:       dir,
+		flushCh:   make(chan struct{}, 1),
+		compCh:    make(chan struct{}, 1),
+		flushDone: make(chan struct{}, 1),
+		config:    cfg,
 	}
 
 	if err := e.loadSSTables(); err != nil {
@@ -108,6 +110,8 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	e.mu.Lock()
 	e.active.Put(entry)
 	full := e.active.IsFull()
+	// Hard limit: block writes if active exceeds 2x target size
+	overHardLimit := e.active.Size() >= DefaultMemTableSize*2
 	e.mu.Unlock()
 
 	if full {
@@ -115,6 +119,13 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 		case e.flushCh <- struct{}{}:
 		default:
 		}
+	}
+
+	// Backpressure: wait for at least one flush to complete
+	if overHardLimit {
+		fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", DefaultMemTableSize*2)
+		<-e.flushDone
+		fmt.Printf("[BACKPRESSURE] flush completed, resuming writes\n")
 	}
 
 	return nil
@@ -135,8 +146,8 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 		return entry, nil
 	}
 
-	if e.immutable != nil {
-		if entry, ok := e.immutable.Get(key); ok {
+	for _, mem := range e.immutable {
+		if entry, ok := mem.Get(key); ok {
 			if entry.Tombstone {
 				return storage.Entry{}, storage.ErrKeyNotFound
 			}
@@ -318,56 +329,76 @@ func (e *LSMEngine) flushMemTable() error {
 	e.mu.Lock()
 	if e.active.Len() == 0 {
 		e.mu.Unlock()
+		// Signal flushDone even for no-op so blocked writers can proceed
+		select {
+		case e.flushDone <- struct{}{}:
+		default:
+		}
 		return nil
 	}
 
-	e.immutable = e.active
+	// Rotate: push active to immutable queue, create new active
+	e.immutable = append(e.immutable, e.active)
 	e.active = NewMemTable(DefaultMemTableSize)
 	e.mu.Unlock()
 
-	entries := e.immutable.Entries()
-	if len(entries) == 0 {
+	// Signal flushDone so any blocked writers can retry
+	select {
+	case e.flushDone <- struct{}{}:
+	default:
+	}
+
+	// Flush all immutable memtables in order
+	for {
 		e.mu.Lock()
-		e.immutable = nil
+		if len(e.immutable) == 0 {
+			e.mu.Unlock()
+			break
+		}
+		mem := e.immutable[0]
+		e.immutable = e.immutable[1:]
 		e.mu.Unlock()
-		return nil
-	}
 
-	sstPath := filepath.Join(
-		e.dir,
-		fmt.Sprintf("L0_%d.sst", time.Now().UnixNano()),
-	)
+		entries := mem.Entries()
+		if len(entries) == 0 {
+			continue
+		}
 
-	writer, err := NewSSTableWriter(sstPath, len(entries))
-	if err != nil {
-		return err
-	}
+		sstPath := filepath.Join(
+			e.dir,
+			fmt.Sprintf("L0_%d.sst", time.Now().UnixNano()),
+		)
 
-	for _, entry := range entries {
-		if err := writer.WriteEntry(entry); err != nil {
+		writer, err := NewSSTableWriter(sstPath, len(entries))
+		if err != nil {
 			return err
 		}
-	}
 
-	if err := writer.Finalize(); err != nil {
-		return err
-	}
-	if err := e.wal.Reset(); err != nil {
-		return err
-	}
+		for _, entry := range entries {
+			if err := writer.WriteEntry(entry); err != nil {
+				return err
+			}
+		}
 
-	reader, err := OpenSSTable(sstPath)
-	if err != nil {
-		return err
-	}
+		if err := writer.Finalize(); err != nil {
+			return err
+		}
+		if err := e.wal.Reset(); err != nil {
+			return err
+		}
 
-	e.mu.Lock()
-	if len(e.levels) == 0 {
-		e.levels = append(e.levels, nil)
+		reader, err := OpenSSTable(sstPath)
+		if err != nil {
+			return err
+		}
+
+		e.mu.Lock()
+		if len(e.levels) == 0 {
+			e.levels = append(e.levels, nil)
+		}
+		e.levels[0] = append([]*SSTableReader{reader}, e.levels[0]...)
+		e.mu.Unlock()
 	}
-	e.levels[0] = append([]*SSTableReader{reader}, e.levels[0]...)
-	e.immutable = nil
-	e.mu.Unlock()
 
 	// Trigger compaction if L0 has too many SSTables
 	e.mu.RLock()
@@ -466,6 +497,7 @@ func (e *LSMEngine) Delete(key string) error {
 	e.mu.Lock()
 	e.active.Put(entry)
 	full := e.active.IsFull()
+	overHardLimit := e.active.Size() >= DefaultMemTableSize*2
 	e.mu.Unlock()
 
 	if full {
@@ -473,6 +505,12 @@ func (e *LSMEngine) Delete(key string) error {
 		case e.flushCh <- struct{}{}:
 		default:
 		}
+	}
+
+	if overHardLimit {
+		fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", DefaultMemTableSize*2)
+		<-e.flushDone
+		fmt.Printf("[BACKPRESSURE] flush completed, resuming writes\n")
 	}
 
 	return nil
@@ -508,9 +546,9 @@ func (e *LSMEngine) Scan(prefix string) ([]storage.Entry, error) {
 		}
 	}
 
-	// Scan immutable memtable
-	if e.immutable != nil {
-		for _, entry := range e.immutable.Scan(prefix) {
+	// Scan immutable memtables (newest first - last in queue is newest)
+	for i := len(e.immutable) - 1; i >= 0; i-- {
+		for _, entry := range e.immutable[i].Scan(prefix) {
 			if !entry.Tombstone {
 				result[entry.Key] = entry
 			} else {
@@ -580,9 +618,9 @@ func (e *LSMEngine) Stats() storage.EngineStats {
 		memBytes += e.active.Size()
 		keyCount += int64(e.active.Len())
 	}
-	if e.immutable != nil {
-		memBytes += e.immutable.Size()
-		keyCount += int64(e.immutable.Len())
+	for _, mem := range e.immutable {
+		memBytes += mem.Size()
+		keyCount += int64(mem.Len())
 	}
 
 	var diskBytes int64
