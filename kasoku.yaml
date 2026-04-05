@@ -17,7 +17,7 @@ memory:
     bloom_fp_rate: 0.01
     block_cache_size: 134217728
 wal:
-    sync: falsee
+    sync: false
     sync_interval: 100ms
     max_file_size: 67108864
 cluster:

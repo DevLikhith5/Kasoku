@@ -30,15 +30,11 @@ func (m *MemTable) Put(entry storage.Entry) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check if key exists (for size adjustment)
-	// Memory optimization to reduce the no of sst's created
-	// if key already exists, we update the value and reduce the sizeBytes by the old value size
-	old, exists := m.list.Get(entry.Key)
-	if exists {
-		m.sizeBytes -= int64(len(old.Value))
+	// SkipList.Put returns old value size if key existed (avoids separate Get call)
+	oldSize := m.list.Put(entry)
+	if oldSize > 0 {
+		m.sizeBytes -= oldSize
 	}
-
-	m.list.Put(entry)
 	m.sizeBytes += int64(len(entry.Key) + len(entry.Value))
 }
 

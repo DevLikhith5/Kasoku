@@ -6,6 +6,7 @@
 *.dylib
 kasoku-server
 kvctl
+server
 kvctl-new
 kasoku-server-new
 
@@ -114,3 +115,4 @@ docs/_build/
 site/
 *.md
 .qwen/
+*.docx

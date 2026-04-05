@@ -12,33 +12,29 @@ import (
 
 	"github.com/DevLikhith5/kasoku/cmd/server/handler"
 	"github.com/DevLikhith5/kasoku/cmd/server/metrics"
+	"github.com/DevLikhith5/kasoku/internal/cluster"
+	"github.com/DevLikhith5/kasoku/internal/config"
+	"github.com/DevLikhith5/kasoku/internal/ring"
 	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
 )
 
-// Config holds server configuration
-type Config struct {
-	Addr   string `yaml:"addr"`
-	NodeID string `yaml:"node_id"`
-	WALDir string `yaml:"wal_dir"`
-}
-
 func main() {
-	// Default config
-	cfg := Config{
-		Addr:   ":8080",
-		NodeID: "node-1",
-		WALDir: "./data", // Same as CLI
+	// Load configuration
+	cfgPath := os.Getenv("KASOKU_CONFIG")
+	if cfgPath == "" {
+		cfgPath = "kasoku.yaml"
 	}
 
-	// Override with environment variables if set
-	if addr := os.Getenv("KASOKU_ADDR"); addr != "" {
-		cfg.Addr = addr
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
 	}
-	if nodeID := os.Getenv("KASOKU_NODE_ID"); nodeID != "" {
-		cfg.NodeID = nodeID
-	}
-	if walDir := os.Getenv("KASOKU_WAL_DIR"); walDir != "" {
-		cfg.WALDir = walDir
+
+	// Default config
+	nodeAddr := cfg.Cluster.NodeAddr
+	if nodeAddr == "" {
+		nodeAddr = fmt.Sprintf("http://localhost:%d", cfg.Port)
 	}
 
 	// Initialize logger
@@ -48,7 +44,7 @@ func main() {
 	}))
 
 	// Initialize storage engine (LSM Engine - same as CLI)
-	store, err := lsmengine.NewLSMEngine(cfg.WALDir)
+	store, err := lsmengine.NewLSMEngine(cfg.DataDir)
 	if err != nil {
 		logger.Error("failed to create storage engine", "error", err)
 		fmt.Fprintf(os.Stderr, "failed to create storage engine: %v\n", err)
@@ -59,7 +55,48 @@ func main() {
 	m := metrics.New()
 
 	// Create HTTP server
-	server := handler.New(store, cfg.NodeID, cfg.Addr, logger, m)
+	var server *handler.Server
+
+	if cfg.Cluster.Enabled {
+		// Distributed mode with consistent hashing
+		logger.Info("starting in distributed mode",
+			"node_id", cfg.Cluster.NodeID,
+			"node_addr", nodeAddr,
+			"replication_factor", cfg.Cluster.ReplicationFactor,
+			"vnodes", cfg.Cluster.VNodes,
+		)
+
+		// Create consistent hashing ring
+		r := ring.New(cfg.Cluster.VNodes)
+
+		// Create cluster config
+		clusterCfg := cluster.Config{
+			NodeID:            cfg.Cluster.NodeID,
+			NodeAddr:          nodeAddr,
+			Ring:              r,
+			Store:             store,
+			ReplicationFactor: cfg.Cluster.ReplicationFactor,
+			QuorumSize:        cfg.Cluster.QuorumSize,
+			RPCTimeout:        time.Duration(cfg.Cluster.RPCTimeoutMs) * time.Millisecond,
+			Logger:            logger,
+			Peers:             cfg.Cluster.Peers,
+		}
+
+		server = handler.NewDistributed(store, cfg.Cluster.NodeID, nodeAddr, logger, m, &clusterCfg)
+
+		// Add peer nodes to the ring
+		for _, peer := range cfg.Cluster.Peers {
+			r.AddNode(peer)
+		}
+	} else {
+		// Single-node mode
+		logger.Info("starting in single-node mode",
+			"node_id", cfg.Cluster.NodeID,
+			"addr", nodeAddr,
+		)
+
+		server = handler.New(store, cfg.Cluster.NodeID, nodeAddr, logger, m)
+	}
 
 	// Setup routes
 	mux := http.NewServeMux()
@@ -68,10 +105,11 @@ func main() {
 	// Apply middleware
 	httpHandler := handler.WithLogging(logger)(handler.WithRecovery(logger)(mux))
 
-	logger.Info("starting HTTP server", "addr", cfg.Addr, "node_id", cfg.NodeID)
+	addr := fmt.Sprintf(":%d", cfg.Port)
+	logger.Info("starting HTTP server", "addr", addr, "node_id", cfg.Cluster.NodeID)
 
 	httpServer := &http.Server{
-		Addr:         cfg.Addr,
+		Addr:         addr,
 		Handler:      httpHandler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,

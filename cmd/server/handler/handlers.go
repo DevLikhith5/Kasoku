@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 )
@@ -34,124 +33,6 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 			"status": "ready",
 			"stats":  stats,
 		},
-	})
-}
-
-// handleGet handles GET /api/v1/get/:key
-func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	key := extractKeyFromPath(r.URL.Path, "/api/v1/get/")
-	if key == "" {
-		s.writeError(w, http.StatusBadRequest, "key is required")
-		return
-	}
-
-	start := s.metrics.RecordGetStart()
-	entry, err := s.store.Get(key)
-	s.metrics.RecordGetEnd(start, err == nil)
-
-	if err != nil {
-		if isKeyNotFound(err) {
-			s.writeError(w, http.StatusNotFound, "key not found")
-		} else {
-			s.logger.Error("get error", "key", key, "error", err)
-			s.writeError(w, http.StatusInternalServerError, "internal error")
-		}
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, APIResponse{
-		Success: true,
-		Data: GetResponse{
-			Key:       entry.Key,
-			Value:     entry.Value,
-			Version:   entry.Version,
-			Timestamp: entry.TimeStamp.UnixNano(),
-		},
-	})
-}
-
-// handlePut handles PUT /api/v1/put/:key
-func (s *Server) handlePut(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPut {
-		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	key := extractKeyFromPath(r.URL.Path, "/api/v1/put/")
-	if key == "" {
-		s.writeError(w, http.StatusBadRequest, "key is required")
-		return
-	}
-
-	var req PutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
-	}
-
-	value := []byte(req.Value)
-	if len(value) == 0 {
-		s.writeError(w, http.StatusBadRequest, "value is required")
-		return
-	}
-
-	start := s.metrics.RecordPutStart()
-	err := s.store.Put(key, value)
-	s.metrics.RecordPutEnd(start, err == nil)
-
-	if err != nil {
-		s.logger.Error("put error", "key", key, "error", err)
-		if isKeyTooLong(err) {
-			s.writeError(w, http.StatusBadRequest, "key too long (max 1KB)")
-		} else if isValueTooLarge(err) {
-			s.writeError(w, http.StatusBadRequest, "value too large (max 1MB)")
-		} else {
-			s.writeError(w, http.StatusInternalServerError, "internal error")
-		}
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, APIResponse{
-		Success: true,
-		Data:    map[string]string{"status": "ok"},
-	})
-}
-
-// handleDelete handles DELETE /api/v1/delete/:key
-func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	key := extractKeyFromPath(r.URL.Path, "/api/v1/delete/")
-	if key == "" {
-		s.writeError(w, http.StatusBadRequest, "key is required")
-		return
-	}
-
-	start := s.metrics.RecordDeleteStart()
-	err := s.store.Delete(key)
-	s.metrics.RecordDeleteEnd(start, err == nil)
-
-	if err != nil {
-		if isKeyNotFound(err) {
-			s.writeError(w, http.StatusNotFound, "key not found")
-		} else {
-			s.logger.Error("delete error", "key", key, "error", err)
-			s.writeError(w, http.StatusInternalServerError, "internal error")
-		}
-		return
-	}
-
-	s.writeJSON(w, http.StatusOK, APIResponse{
-		Success: true,
-		Data:    map[string]string{"status": "deleted"},
 	})
 }
 

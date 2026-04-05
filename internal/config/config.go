@@ -101,6 +101,9 @@ type ClusterConfig struct {
 	// Node ID
 	NodeID string `yaml:"node_id" env:"KASOKU_NODE_ID" default:"node-1"`
 
+	// Node address (for inter-node communication)
+	NodeAddr string `yaml:"node_addr" env:"KASOKU_NODE_ADDR" default:"http://localhost:9000"`
+
 	// Peer nodes
 	Peers []string `yaml:"peers" env:"KASOKU_PEERS" default:""`
 
@@ -109,6 +112,18 @@ type ClusterConfig struct {
 
 	// Raft port
 	RaftPort int `yaml:"raft_port" env:"KASOKU_RAFT_PORT" default:"9003"`
+
+	// Replication factor (number of replicas)
+	ReplicationFactor int `yaml:"replication_factor" env:"KASOKU_REPLICATION_FACTOR" default:"3"`
+
+	// Quorum size (minimum acks for write)
+	QuorumSize int `yaml:"quorum_size" env:"KASOKU_QUORUM_SIZE" default:"2"`
+
+	// Virtual nodes per physical node (for consistent hashing)
+	VNodes int `yaml:"vnodes" env:"KASOKU_VNODES" default:"150"`
+
+	// RPC timeout for inter-node communication
+	RPCTimeoutMs int `yaml:"rpc_timeout_ms" env:"KASOKU_RPC_TIMEOUT_MS" default:"5000"`
 }
 
 // DefaultConfig returns a Config with default values
@@ -141,11 +156,16 @@ func DefaultConfig() *Config {
 			MaxFileSize:  64 * 1024 * 1024,
 		},
 		Cluster: ClusterConfig{
-			Enabled:    false,
-			NodeID:     "node-1",
-			Peers:      []string{},
-			GossipPort: 9002,
-			RaftPort:   9003,
+			Enabled:           false,
+			NodeID:            "node-1",
+			NodeAddr:          "http://localhost:9000",
+			Peers:             []string{},
+			GossipPort:        9002,
+			RaftPort:          9003,
+			ReplicationFactor: 3,
+			QuorumSize:        2,
+			VNodes:            150,
+			RPCTimeoutMs:      5000,
 		},
 	}
 }

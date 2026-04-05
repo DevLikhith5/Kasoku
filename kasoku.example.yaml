@@ -97,13 +97,28 @@ cluster:
   # Unique node ID
   node_id: node-1
 
+  # Node address (for inter-node communication)
+  node_addr: http://localhost:9000
+
   # Peer node addresses
   peers:
-    - node-2:9000
-    - node-3:9000
+    - http://localhost:9001
+    - http://localhost:9002
 
   # Gossip port (for node discovery)
   gossip_port: 9002
 
   # Raft port (for consensus)
   raft_port: 9003
+
+  # Replication factor (number of replicas per key)
+  replication_factor: 3
+
+  # Quorum size (minimum acks required for write)
+  quorum_size: 2
+
+  # Virtual nodes per physical node (for consistent hashing)
+  vnodes: 150
+
+  # RPC timeout for inter-node communication (milliseconds)
+  rpc_timeout_ms: 5000

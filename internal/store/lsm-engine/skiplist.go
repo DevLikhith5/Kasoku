@@ -1,10 +1,9 @@
 package lsmengine
 
 import (
-	storage "github.com/DevLikhith5/kasoku/internal/store"
-	"math/rand"
 	"sync"
-	"time"
+
+	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
 type node struct {
@@ -16,34 +15,64 @@ type SkipList struct {
 	head     *node
 	level    int
 	maxLevel int
-	p        float64
+	p        uint32 // threshold for randomLevel (replaces float64)
 	size     int
-	rng      *rand.Rand
-	mu       sync.RWMutex  // protects the skiplist structure
-	rngMu    sync.Mutex    // protects RNG (separate to avoid deadlock)
+
+	// Fast RNG — xorshift64, protected by mu (no separate lock needed)
+	seed uint64
+
+	mu sync.RWMutex
+
+	// Pool for update arrays to reduce allocations
+	updatePool sync.Pool
 }
 
 func NewSkipList(maxLevel int, p float64) *SkipList {
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-
 	head := &node{
 		forward: make([]*node, maxLevel),
 	}
 
-	return &SkipList{
+	// Convert float probability to uint32 threshold
+	// p=1.0 → always max level, p=0.5 → 50% chance
+	var threshold uint32
+	if p >= 1.0 {
+		threshold = ^uint32(0) // max uint32, always passes
+	} else if p <= 0.0 {
+		threshold = 0 // never passes
+	} else {
+		threshold = uint32(p * float64(1<<32))
+	}
+
+	sl := &SkipList{
 		head:     head,
 		level:    1,
 		maxLevel: maxLevel,
-		p:        p,
-		rng:      rng,
+		p:        threshold,
+		seed:     0x1234567890ABCDEF,
 	}
+
+	sl.updatePool.New = func() interface{} {
+		s := make([]*node, maxLevel)
+		return &s
+	}
+
+	return sl
+}
+
+// fastRand returns a pseudo-random uint32 using xorshift64
+// MUST be called while holding s.mu.Lock
+func (s *SkipList) fastRand() uint32 {
+	x := s.seed
+	x ^= x << 13
+	x ^= x >> 7
+	x ^= x << 17
+	s.seed = x
+	return uint32(x)
 }
 
 func (s *SkipList) randomLevel() int {
-	s.rngMu.Lock()
-	defer s.rngMu.Unlock()
 	lvl := 1
-	for s.rng.Float64() < s.p && lvl < s.maxLevel {
+	for s.fastRand() < s.p && lvl < s.maxLevel {
 		lvl++
 	}
 	return lvl
@@ -70,11 +99,15 @@ func (s *SkipList) Get(key string) (storage.Entry, bool) {
 	return storage.Entry{}, false
 }
 
-func (s *SkipList) Put(entry storage.Entry) {
+// Put inserts or updates an entry. Returns old value size if key existed (for size tracking).
+func (s *SkipList) Put(entry storage.Entry) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	update := make([]*node, s.maxLevel)
+	updatePtr := s.updatePool.Get().(*[]*node)
+	update := *updatePtr
+	defer s.updatePool.Put(updatePtr)
+
 	curr := s.head
 
 	// Find insertion points
@@ -89,8 +122,9 @@ func (s *SkipList) Put(entry storage.Entry) {
 
 	// Update if exists
 	if curr != nil && curr.entry.Key == entry.Key {
+		oldSize := int64(len(curr.entry.Value))
 		curr.entry = entry
-		return
+		return oldSize
 	}
 
 	// Insert new node
@@ -114,6 +148,7 @@ func (s *SkipList) Put(entry storage.Entry) {
 	}
 
 	s.size++
+	return 0
 }
 
 func (s *SkipList) Seek(key string) *node {
@@ -151,3 +186,4 @@ func (s *SkipList) Size() int {
 	defer s.mu.RUnlock()
 	return s.size
 }
+
