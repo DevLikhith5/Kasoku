@@ -59,6 +59,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize block cache from config
+	lsmengine.InitBlockCache(cfg.Memory.BlockCacheSize)
+	logger.Info("block cache initialized", "size_bytes", cfg.Memory.BlockCacheSize)
+
 	// Initialize metrics
 	m := metrics.New()
 

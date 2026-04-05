@@ -152,7 +152,7 @@ type SSTableReader struct {
 
 // BlockCache is an LRU cache for data blocks
 type BlockCache struct {
-	mu          sync.RWMutex
+	mu          sync.Mutex
 	cache       map[string][]byte
 	keys        []string
 	maxSize     int
@@ -224,9 +224,10 @@ func (bc *BlockCache) Put(key string, data []byte) {
 var globalBlockCache *BlockCache
 var blockCacheOnce sync.Once
 
-// InitBlockCache initializes the global block cache
-func InitBlockCache(maxBlocks int) {
+// InitBlockCache initializes the global block cache from config (size in bytes)
+func InitBlockCache(sizeBytes int64) {
 	blockCacheOnce.Do(func() {
+		maxBlocks := max(int(sizeBytes) / DefaultBlockSize, 1)
 		globalBlockCache = NewBlockCache(maxBlocks)
 	})
 }
@@ -234,7 +235,8 @@ func InitBlockCache(maxBlocks int) {
 // GetBlockCache returns the global block cache
 func GetBlockCache() *BlockCache {
 	if globalBlockCache == nil {
-		globalBlockCache = NewBlockCache(1024) // default 1024 blocks
+		// Default: 128MB / 4KB = 32768 blocks
+		globalBlockCache = NewBlockCache(134217728 / DefaultBlockSize)
 	}
 	return globalBlockCache
 }
