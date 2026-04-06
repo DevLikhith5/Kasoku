@@ -92,7 +92,7 @@ func TestCluster_ReplicatedPut(t *testing.T) {
 	r.AddNode("node-2")
 	r.AddNode("node-3")
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID:            "node-1",
 		NodeAddr:          "http://localhost:8080",
 		Ring:              r,
@@ -136,7 +136,7 @@ func TestCluster_IsPrimary(t *testing.T) {
 	r.AddNode("node-2")
 	r.AddNode("node-3")
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID: "node-1",
 		Ring:   r,
 		Store:  store,
@@ -173,7 +173,7 @@ func TestCluster_GetReplicas(t *testing.T) {
 	r.AddNode("node-2")
 	r.AddNode("node-3")
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID:            "node-1",
 		Ring:              r,
 		Store:             store,
@@ -207,7 +207,7 @@ func TestCluster_NodeOperations(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID: "node-1",
 		Ring:   r,
 		Store:  store,
@@ -216,8 +216,8 @@ func TestCluster_NodeOperations(t *testing.T) {
 	c := New(cfg)
 
 	// Add peers
-	c.AddPeer("http://localhost:8081")
-	c.AddPeer("http://localhost:8082")
+	c.AddPeer("http://localhost:8081", "http://localhost:8081")
+	c.AddPeer("http://localhost:8082", "http://localhost:8082")
 
 	if r.NodeCount() != 1 {
 		// Node count only tracks nodes added via AddNode, not peers
@@ -225,7 +225,7 @@ func TestCluster_NodeOperations(t *testing.T) {
 	}
 
 	// Remove peer
-	c.RemovePeer("http://localhost:8081")
+	c.RemovePeer("http://localhost:8081", "http://localhost:8081")
 }
 
 // TestCluster_QuorumSize tests quorum configuration
@@ -236,7 +236,7 @@ func TestCluster_QuorumSize(t *testing.T) {
 	r.AddNode("node-1")
 
 	// Test with quorum size 1 (single node)
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID:            "node-1",
 		Ring:              r,
 		Store:             store,
@@ -263,7 +263,7 @@ func TestCluster_Distribution(t *testing.T) {
 		r.AddNode(fmt.Sprintf("node-%d", i))
 	}
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID: "node-1",
 		Ring:   r,
 		Store:  store,
@@ -288,7 +288,7 @@ func TestCluster_EmptyRing(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID: "node-1",
 		Ring:   r,
 		Store:  store,
@@ -309,7 +309,7 @@ func TestCluster_EmptyRing(t *testing.T) {
 func TestCluster_NilRing(t *testing.T) {
 	store := NewMockStore()
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID: "node-1",
 		Ring:   nil, // No ring
 		Store:  store,
@@ -333,7 +333,7 @@ func TestCluster_ConcurrentAccess(t *testing.T) {
 	r.AddNode("node-2")
 	r.AddNode("node-3")
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID:            "node-1",
 		Ring:              r,
 		Store:             store,
@@ -389,7 +389,7 @@ func TestCluster_GetNodeID(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID: "test-node-123",
 		Ring:   r,
 		Store:  store,
@@ -407,7 +407,7 @@ func TestCluster_GetRing(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID: "node-1",
 		Ring:   r,
 		Store:  store,
@@ -426,7 +426,7 @@ func TestCluster_SetNodeAddr(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID: "node-1",
 		Ring:   r,
 		Store:  store,
@@ -447,7 +447,7 @@ func BenchmarkCluster_ReplicatedPut(b *testing.B) {
 	r.AddNode("node-2")
 	r.AddNode("node-3")
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID:            "node-1",
 		Ring:              r,
 		Store:             store,
@@ -473,7 +473,7 @@ func BenchmarkCluster_ReplicatedGet(b *testing.B) {
 
 	r.AddNode("node-1")
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID: "node-1",
 		Ring:   r,
 		Store:  store,

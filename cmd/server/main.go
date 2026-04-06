@@ -82,7 +82,7 @@ func main() {
 		r := ring.New(cfg.Cluster.VNodes)
 
 		// Create cluster config
-		clusterCfg := cluster.Config{
+		clusterCfg := cluster.ClusterConfig{
 			NodeID:            cfg.Cluster.NodeID,
 			NodeAddr:          nodeAddr,
 			Ring:              r,

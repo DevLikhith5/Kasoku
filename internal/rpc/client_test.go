@@ -36,8 +36,8 @@ func TestClient_ReplicatedPut(t *testing.T) {
 		if r.Method != http.MethodPut {
 			t.Errorf("expected PUT, got %s", r.Method)
 		}
-		if r.URL.Path != "/internal/replicate/put" {
-			t.Errorf("expected /internal/replicate/put, got %s", r.URL.Path)
+		if r.URL.Path != "/internal/replicate" {
+			t.Errorf("expected /internal/replicate, got %s", r.URL.Path)
 		}
 
 		var req ReplicatedWriteRequest
@@ -72,8 +72,8 @@ func TestClient_ReplicatedPut(t *testing.T) {
 // TestClient_ReplicatedGet tests replicated get via HTTP mock server
 func TestClient_ReplicatedGet(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST, got %s", r.Method)
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
 		}
 
 		var req ReplicatedReadRequest
@@ -246,9 +246,9 @@ func TestClient_InvalidJSON(t *testing.T) {
 	ctx := context.Background()
 
 	var resp ReplicatedReadResponse
-	err := client.doRequest(ctx, http.MethodPost, server.URL+"/internal/replicate/get", 
+	err := client.doRequest(ctx, http.MethodPost, server.URL+"/internal/replicate/get",
 		ReplicatedReadRequest{Key: "test"}, &resp)
-	
+
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -308,7 +308,7 @@ func TestClient_DoRequestWithNilResult(t *testing.T) {
 	client := NewClient(server.URL)
 	ctx := context.Background()
 
-	err := client.doRequest(ctx, http.MethodPost, server.URL, 
+	err := client.doRequest(ctx, http.MethodPost, server.URL,
 		ReplicatedWriteRequest{Key: "test", Value: []byte("value")}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -324,10 +324,10 @@ func TestClient_MarshalingError(t *testing.T) {
 	type BadRequest struct {
 		Chan chan int `json:"chan"`
 	}
-	
-	err := client.doRequest(ctx, http.MethodPost, "http://localhost:8080", 
+
+	err := client.doRequest(ctx, http.MethodPost, "http://localhost:8080",
 		BadRequest{Chan: make(chan int)}, nil)
-	
+
 	if err == nil {
 		t.Fatal("expected error for unmarshalable data")
 	}

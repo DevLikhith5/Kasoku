@@ -45,9 +45,9 @@ type ReplicatedReadRequest struct {
 
 // ReplicatedReadResponse is the response from a replicated read
 type ReplicatedReadResponse struct {
-	Found   bool   `json:"found"`
-	Value   []byte `json:"value,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Found bool   `json:"found"`
+	Value []byte `json:"value,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 // ReplicatedDeleteRequest represents a delete request to be replicated
@@ -69,7 +69,7 @@ func (c *Client) ReplicatedPut(ctx context.Context, key string, value []byte) er
 		Value: value,
 	}
 
-	url := fmt.Sprintf("%s/internal/replicate/put", c.baseURL)
+	url := fmt.Sprintf("%s/internal/replicate", c.baseURL)
 	return c.doRequest(ctx, http.MethodPut, url, reqBody, nil)
 }
 
@@ -79,10 +79,10 @@ func (c *Client) ReplicatedGet(ctx context.Context, key string) ([]byte, bool, e
 		Key: key,
 	}
 
-	url := fmt.Sprintf("%s/internal/replicate/get", c.baseURL)
+	url := fmt.Sprintf("%s/internal/replicate", c.baseURL)
 
 	var resp ReplicatedReadResponse
-	err := c.doRequest(ctx, http.MethodPost, url, reqBody, &resp)
+	err := c.doRequest(ctx, http.MethodGet, url, reqBody, &resp)
 	if err != nil {
 		return nil, false, err
 	}
@@ -100,7 +100,7 @@ func (c *Client) ReplicatedDelete(ctx context.Context, key string) (bool, error)
 		Key: key,
 	}
 
-	url := fmt.Sprintf("%s/internal/replicate/delete", c.baseURL)
+	url := fmt.Sprintf("%s/internal/replicate", c.baseURL)
 
 	var resp ReplicatedDeleteResponse
 	err := c.doRequest(ctx, http.MethodDelete, url, reqBody, &resp)
@@ -152,6 +152,33 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body, result
 	}
 
 	return nil
+}
+
+// GossipRequest represents a gossip exchange
+type GossipRequest struct {
+	Members []string `json:"members"`
+}
+
+// GossipResponse is the response from a gossip exchange
+type GossipResponse struct {
+	Members []string `json:"members"`
+}
+
+// Gossip exchanges membership info with a peer. Returns the peer's member list.
+func (c *Client) Gossip(ctx context.Context, ourMembers []string) ([]string, error) {
+	reqBody := GossipRequest{
+		Members: ourMembers,
+	}
+
+	url := fmt.Sprintf("%s/internal/gossip", c.baseURL)
+
+	var resp GossipResponse
+	err := c.doRequest(ctx, http.MethodPost, url, reqBody, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Members, nil
 }
 
 // HealthCheck checks if a remote node is healthy

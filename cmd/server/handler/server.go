@@ -37,7 +37,7 @@ func New(store storage.StorageEngine, nodeID, addr string, logger *slog.Logger, 
 }
 
 // NewDistributed creates a new distributed HTTP server with consistent hashing
-func NewDistributed(store storage.StorageEngine, nodeID, addr string, logger *slog.Logger, metrics *metrics.Metrics, cfg *cluster.Config) *Server {
+func NewDistributed(store storage.StorageEngine, nodeID, addr string, logger *slog.Logger, metrics *metrics.Metrics, cfg *cluster.ClusterConfig) *Server {
 	r := cfg.Ring
 	if r == nil {
 		r = ring.New(ring.DefaultVNodes)

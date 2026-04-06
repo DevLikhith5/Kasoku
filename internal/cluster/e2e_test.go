@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -9,7 +10,7 @@ import (
 	"time"
 
 	"github.com/DevLikhith5/kasoku/internal/ring"
-
+	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
 // TestCluster_E2E_SingleNode tests basic operations with a single node
@@ -19,7 +20,7 @@ func TestCluster_E2E_SingleNode(t *testing.T) {
 	r := ring.New(150)
 	r.AddNode("node-1")
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID:            "node-1",
 		NodeAddr:          "http://localhost:8080",
 		Ring:              r,
@@ -54,13 +55,13 @@ func TestCluster_E2E_SingleNode(t *testing.T) {
 		t.Fatalf("delete failed: %v", err)
 	}
 
-	// Verify deletion
+	// Verify deletion — should return ErrKeyNotFound
 	value, err = c.ReplicatedGet(ctx, "key1")
-	if err != nil {
-		t.Fatalf("get after delete failed: %v", err)
+	if !errors.Is(err, storage.ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound after delete, got: %v", err)
 	}
 	if value != nil {
-		t.Errorf("expected nil after delete, got %s", string(value))
+		t.Errorf("expected nil value after delete, got %s", string(value))
 	}
 }
 
@@ -75,7 +76,7 @@ func TestCluster_E2E_ConsistentHashing(t *testing.T) {
 		r.AddNode(fmt.Sprintf("node-%d", i))
 	}
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID:            "node-1",
 		NodeAddr:          "http://localhost:8080",
 		Ring:              r,
@@ -117,7 +118,7 @@ func TestCluster_E2E_NodeFailure(t *testing.T) {
 	r.AddNode("node-2")
 	r.AddNode("node-3")
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID:            "node-1",
 		NodeAddr:          "http://localhost:8080",
 		Ring:              r,
@@ -154,7 +155,7 @@ func TestCluster_E2E_ConcurrentOperations(t *testing.T) {
 	r := ring.New(150)
 	r.AddNode("node-1")
 
-	cfg := Config{
+	cfg := ClusterConfig{
 		NodeID:            "node-1",
 		NodeAddr:          "http://localhost:8080",
 		Ring:              r,
@@ -252,7 +253,7 @@ func TestCluster_E2E_ReplicationFactor(t *testing.T) {
 				r.AddNode(fmt.Sprintf("node-%d", i))
 			}
 
-			cfg := Config{
+			cfg := ClusterConfig{
 				NodeID:            "node-1",
 				NodeAddr:          "http://localhost:8080",
 				Ring:              r,

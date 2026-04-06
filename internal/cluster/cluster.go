@@ -36,7 +36,8 @@ type Cluster struct {
 	nodeAddr          string
 	ring              *ring.Ring
 	store             storage.StorageEngine
-	clients           map[string]*rpc.Client
+	clients           map[string]*rpc.Client // keyed by node address
+	nodeAddrMap       map[string]string      // nodeID -> address
 	replicationFactor int
 	quorumSize        int
 	rpcTimeout        time.Duration
@@ -44,8 +45,8 @@ type Cluster struct {
 	peers             []string
 }
 
-// Config holds cluster configuration
-type Config struct {
+// ClusterConfig holds cluster configuration
+type ClusterConfig struct {
 	NodeID            string
 	NodeAddr          string // Base URL for this node (e.g., "http://localhost:8080")
 	Ring              *ring.Ring
@@ -58,7 +59,7 @@ type Config struct {
 }
 
 // New creates a new Cluster instance
-func New(cfg Config) *Cluster {
+func New(cfg ClusterConfig) *Cluster {
 	rf := cfg.ReplicationFactor
 	if rf <= 0 {
 		rf = DefaultReplicationFactor
@@ -90,35 +91,41 @@ func New(cfg Config) *Cluster {
 		logger:            logger,
 		peers:             cfg.Peers,
 		clients:           make(map[string]*rpc.Client),
+		nodeAddrMap:       make(map[string]string),
 	}
+
+	// Register this node's address
+	c.nodeAddrMap[cfg.NodeID] = cfg.NodeAddr
 
 	// Initialize RPC clients for peers
 	for _, peer := range cfg.Peers {
 		c.clients[peer] = rpc.NewClient(peer)
+		// Try to derive node ID from peer address for mapping
+		peerNodeID := extractNodeID(peer)
+		c.nodeAddrMap[peerNodeID] = peer
 	}
 
 	return c
 }
 
-// AddPeer adds a new peer to the cluster
-func (c *Cluster) AddPeer(peerAddr string) {
+// AddPeer adds a new peer to the cluster with an explicit node ID
+func (c *Cluster) AddPeer(nodeID, peerAddr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	c.clients[peerAddr] = rpc.NewClient(peerAddr)
 	c.peers = append(c.peers, peerAddr)
+	c.nodeAddrMap[nodeID] = peerAddr
 
 	if c.ring != nil {
-		// Extract node ID from peer address (assumes format like "http://localhost:8080")
-		nodeID := extractNodeID(peerAddr)
 		c.ring.AddNode(nodeID)
 	}
 
-	c.logger.Info("peer added", "peer", peerAddr)
+	c.logger.Info("peer added", "node_id", nodeID, "addr", peerAddr)
 }
 
 // RemovePeer removes a peer from the cluster
-func (c *Cluster) RemovePeer(peerAddr string) {
+func (c *Cluster) RemovePeer(nodeID, peerAddr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -134,11 +141,11 @@ func (c *Cluster) RemovePeer(peerAddr string) {
 	c.peers = newPeers
 
 	if c.ring != nil {
-		nodeID := extractNodeID(peerAddr)
 		c.ring.RemoveNode(nodeID)
 	}
+	delete(c.nodeAddrMap, nodeID)
 
-	c.logger.Info("peer removed", "peer", peerAddr)
+	c.logger.Info("peer removed", "node_id", nodeID, "addr", peerAddr)
 }
 
 // ReplicatedPut writes a key-value pair to the cluster with replication
@@ -152,15 +159,7 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 		return ErrNoNodesAvailable
 	}
 
-	// Determine if this node is the primary (coordinator)
-	isPrimary := replicas[0] == c.nodeID
-
-	c.logger.Debug("replicated put", "key", key, "replicas", replicas, "is_primary", isPrimary)
-
-	// Write to local store if this node is a replica
-	successCount := 0
-	var mu sync.Mutex
-	var wg sync.WaitGroup
+	c.logger.Debug("replicated put", "key", key, "replicas", replicas)
 
 	// Check if current node is in replica set
 	isReplica := false
@@ -171,23 +170,25 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 		}
 	}
 
+	// Write to local store first — if this fails, the whole operation fails
 	if isReplica {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := c.store.Put(key, value); err != nil {
-				c.logger.Error("local write failed", "key", key, "error", err)
-				return
-			}
-			mu.Lock()
-			successCount++
-			mu.Unlock()
-		}()
+		if err := c.store.Put(key, value); err != nil {
+			c.logger.Error("local write failed", "key", key, "error", err)
+			return fmt.Errorf("local write failed: %w", err)
+		}
 	}
 
 	// Replicate to other nodes
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
 	defer cancel()
+
+	successCount := 0
+	if isReplica {
+		successCount = 1 // local write succeeded
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
 	for _, replica := range replicas {
 		if replica == c.nodeID {
@@ -243,25 +244,28 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 		entry, err := c.store.Get(key)
 		if err != nil {
 			if errors.Is(err, storage.ErrKeyNotFound) {
-				return nil, nil
+				return nil, storage.ErrKeyNotFound
 			}
 			return nil, err
 		}
 		return entry.Value, nil
 	}
 
-	// Otherwise, forward to the primary
+	// Otherwise, forward to the primary with timeout
+	timeoutCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
+	defer cancel()
+
 	client, ok := c.getClient(primary)
 	if !ok {
 		return nil, fmt.Errorf("no client for primary node: %s", primary)
 	}
 
-	value, found, err := client.ReplicatedGet(ctx, key)
+	value, found, err := client.ReplicatedGet(timeoutCtx, key)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
-		return nil, nil
+		return nil, storage.ErrKeyNotFound
 	}
 
 	return value, nil
@@ -277,10 +281,6 @@ func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
 		return ErrNoNodesAvailable
 	}
 
-	successCount := 0
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
 	// Check if current node is in replica set
 	isReplica := false
 	for _, replica := range replicas {
@@ -290,24 +290,25 @@ func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
 		}
 	}
 
+	// Delete locally first — if this fails, the whole operation fails
 	if isReplica {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			err := c.store.Delete(key)
-			if err != nil {
-				c.logger.Error("local delete failed", "key", key, "error", err)
-				return
-			}
-			mu.Lock()
-			successCount++
-			mu.Unlock()
-		}()
+		if err := c.store.Delete(key); err != nil {
+			c.logger.Error("local delete failed", "key", key, "error", err)
+			return fmt.Errorf("local delete failed: %w", err)
+		}
 	}
 
 	// Replicate to other nodes
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
 	defer cancel()
+
+	successCount := 0
+	if isReplica {
+		successCount = 1 // local delete succeeded
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
 	for _, replica := range replicas {
 		if replica == c.nodeID {
@@ -354,14 +355,31 @@ func (c *Cluster) getReplicasForKey(key string) []string {
 
 // getClient returns the RPC client for a node
 func (c *Cluster) getClient(nodeID string) (*rpc.Client, bool) {
-	// Try to find client by node ID (peer address)
+	// First try direct lookup by node ID (in case nodeID == address)
+	c.mu.RLock()
 	if client, ok := c.clients[nodeID]; ok {
+		c.mu.RUnlock()
 		return client, true
 	}
 
-	// If not found, the nodeID might be just an identifier
-	// In a real implementation, you'd have a nodeID -> address mapping
-	return nil, false
+	// Resolve nodeID -> address -> client
+	addr, ok := c.nodeAddrMap[nodeID]
+	if !ok {
+		c.mu.RUnlock()
+		return nil, false
+	}
+	if client, ok := c.clients[addr]; ok {
+		c.mu.RUnlock()
+		return client, true
+	}
+	c.mu.RUnlock()
+
+	// Client doesn't exist yet — create one on demand
+	client := rpc.NewClient(addr)
+	c.mu.Lock()
+	c.clients[addr] = client
+	c.mu.Unlock()
+	return client, true
 }
 
 // GetNodeID returns this node's ID
@@ -405,4 +423,5 @@ func (c *Cluster) SetNodeAddr(nodeID, addr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.clients[addr] = rpc.NewClient(addr)
+	c.nodeAddrMap[nodeID] = addr
 }
