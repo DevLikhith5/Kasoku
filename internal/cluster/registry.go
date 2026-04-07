@@ -47,6 +47,7 @@ type NodeInfo struct {
 // NodeRegistry maintains the state of all nodes in the cluster
 type NodeRegistry struct {
 	mu              sync.RWMutex
+	stopOnce        sync.Once    // Bug 5 fix: prevents double-close panic on Stop()
 	nodes           map[string]*NodeInfo
 	nodeIDByAddr    map[string]string
 	healthCheckFunc func(ctx context.Context, addr string) error
@@ -234,19 +235,23 @@ func (r *NodeRegistry) StartHealthChecks() {
 	r.logger.Info("health checks started", "interval", r.healthInterval)
 }
 
-// Stop stops the health check loop
+// Stop stops the health check loop.
+// Bug 5 fix: uses sync.Once to prevent double-close panic.
 func (r *NodeRegistry) Stop() {
-	close(r.stopCh)
+	r.stopOnce.Do(func() {
+		close(r.stopCh)
+	})
 }
 
 // runHealthChecks performs health checks on all nodes
 func (r *NodeRegistry) runHealthChecks() {
-	r.mu.Lock()
+	r.mu.RLock()
 	nodes := make([]*NodeInfo, 0, len(r.nodes))
 	for _, node := range r.nodes {
-		nodes = append(nodes, node)
+		nodeCopy := *node // take a value copy to avoid holding reference to map entry
+		nodes = append(nodes, &nodeCopy)
 	}
-	r.mu.Unlock()
+	r.mu.RUnlock()
 
 	for _, node := range nodes {
 		if node.State == NodeStateLeaving || node.State == NodeStateDown {
@@ -258,13 +263,18 @@ func (r *NodeRegistry) runHealthChecks() {
 		cancel()
 
 		r.mu.Lock()
-		if err != nil {
-			r.nodes[node.NodeID].State = NodeStateUnhealthy
-			r.nodes[node.NodeID].LastSeen = time.Now()
-			r.logger.Warn("node unhealthy", "node_id", node.NodeID, "address", node.Address, "error", err)
-		} else {
-			r.nodes[node.NodeID].State = NodeStateHealthy
-			r.nodes[node.NodeID].LastSeen = time.Now()
+		// Bug 11 fix: re-check that node wasn't unregistered between the snapshot
+		// and this write. Access via SetNodeState (which is nil-safe) instead of
+		// indexing directly, which would panic if the node was deleted.
+		if _, exists := r.nodes[node.NodeID]; exists {
+			if err != nil {
+				r.nodes[node.NodeID].State = NodeStateUnhealthy
+				r.nodes[node.NodeID].LastSeen = time.Now()
+				r.logger.Warn("node unhealthy", "node_id", node.NodeID, "address", node.Address, "error", err)
+			} else {
+				r.nodes[node.NodeID].State = NodeStateHealthy
+				r.nodes[node.NodeID].LastSeen = time.Now()
+			}
 		}
 		r.mu.Unlock()
 	}

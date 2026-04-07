@@ -347,33 +347,36 @@ func (w *WAL) truncateBeforeUnlocked(checkpoint uint64) error {
 	if _, err := w.file.Seek(int64(checkpoint), io.SeekStart); err != nil {
 		return err
 	}
-	scanner := bufio.NewScanner(w.file)
-	scanner.Buffer(make([]byte, 2*1024*1024), 2*1024*1024)
 	tmpPath := w.path + ".tmp"
 	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
-	tmpEnc := json.NewEncoder(tmpFile)
 	defer func() {
 		tmpFile.Close()
 		if err != nil {
 			os.Remove(tmpPath)
 		}
 	}()
-	for scanner.Scan() {
-		var rec WALRecord
-		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
-			continue
+
+	// Read binary records from checkpoint position, skipping corrupt data
+	for {
+		rec, readErr := w.readBinaryRecord()
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			// Corrupt record — try to resync by scanning forward
+			if !w.resyncForward(tmpFile) {
+				break // no valid records found
+			}
+			break // resync consumed remaining data, we're done
 		}
-		if err := tmpEnc.Encode(rec); err != nil {
-			tmpFile.Close()
-			return fmt.Errorf("write temp file: %w", err)
+		if encErr := json.NewEncoder(tmpFile).Encode(rec); encErr != nil {
+			return fmt.Errorf("write temp file: %w", encErr)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scan WAL: %w", err)
-	}
+
 	if err := tmpFile.Sync(); err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("sync temp file: %w", err)
@@ -396,53 +399,269 @@ func (w *WAL) truncateBeforeUnlocked(checkpoint uint64) error {
 	return nil
 }
 
+// readBinaryRecord reads a single binary record from the current file position.
+// Returns io.EOF when no more data, or an error if the record is corrupt.
+func (w *WAL) readBinaryRecord() (WALRecord, error) {
+	var hdr [4]byte
+	if _, err := io.ReadFull(w.file, hdr[:]); err != nil {
+		return WALRecord{}, err
+	}
+	keyLen := binary.LittleEndian.Uint32(hdr[:])
+	// Sanity check: key length shouldn't exceed reasonable bounds
+	if keyLen > 1024*1024 {
+		return WALRecord{}, fmt.Errorf("key too large: %d", keyLen)
+	}
+	keyBuf := make([]byte, keyLen)
+	if _, err := io.ReadFull(w.file, keyBuf); err != nil {
+		return WALRecord{}, err
+	}
+	if _, err := io.ReadFull(w.file, hdr[:]); err != nil {
+		return WALRecord{}, err
+	}
+	valLen := binary.LittleEndian.Uint32(hdr[:])
+	if valLen > 10*1024*1024 {
+		return WALRecord{}, fmt.Errorf("value too large: %d", valLen)
+	}
+	var value []byte
+	if valLen > 0 {
+		value = make([]byte, valLen)
+		if _, err := io.ReadFull(w.file, value); err != nil {
+			return WALRecord{}, err
+		}
+	}
+	var verBuf [8]byte
+	if _, err := io.ReadFull(w.file, verBuf[:]); err != nil {
+		return WALRecord{}, err
+	}
+	version := binary.LittleEndian.Uint64(verBuf[:])
+	var tsBuf [8]byte
+	if _, err := io.ReadFull(w.file, tsBuf[:]); err != nil {
+		return WALRecord{}, err
+	}
+	timestamp := int64(binary.LittleEndian.Uint64(tsBuf[:]))
+	var opBuf [1]byte
+	if _, err := io.ReadFull(w.file, opBuf[:]); err != nil {
+		return WALRecord{}, err
+	}
+	if opBuf[0] != walOpPut && opBuf[0] != walOpDel {
+		return WALRecord{}, fmt.Errorf("invalid op: %d", opBuf[0])
+	}
+	rec := WALRecord{
+		Op:        "PUT",
+		Key:       string(keyBuf),
+		Value:     value,
+		Version:   version,
+		TimeStamp: timestamp,
+	}
+	if opBuf[0] == walOpDel {
+		rec.Op = "DEL"
+	}
+	return rec, nil
+}
+
+// resyncForward scans the file forward looking for valid binary records.
+// It reads the remaining file content and writes any valid records to tmpFile.
+// Returns true if at least one valid record was found and written.
+func (w *WAL) resyncForward(tmpFile *os.File) bool {
+	// Read remaining content
+	remaining, err := io.ReadAll(w.file)
+	if err != nil || len(remaining) == 0 {
+		return false
+	}
+
+	found := false
+	// Try to find valid records starting from each byte offset
+	for offset := 0; offset < len(remaining); {
+		rec, size, ok := tryParseBinaryRecord(remaining[offset:])
+		if ok {
+			if encErr := json.NewEncoder(tmpFile).Encode(rec); encErr == nil {
+				found = true
+			}
+			offset += size
+		} else {
+			offset++
+		}
+	}
+	return found
+}
+
+// tryParseBinaryRecord attempts to parse a binary record from the given buffer.
+// Returns the record, the number of bytes consumed, and whether parsing succeeded.
+func tryParseBinaryRecord(data []byte) (WALRecord, int, bool) {
+	minRecordSize := 4 + 0 + 4 + 8 + 8 + 1 // keyLen + key + valLen + version + timestamp + op
+	if len(data) < minRecordSize {
+		return WALRecord{}, 0, false
+	}
+
+	keyLen := binary.LittleEndian.Uint32(data[0:4])
+	if keyLen > 1024*1024 {
+		return WALRecord{}, 0, false
+	}
+
+	pos := 4
+	if uint32(len(data)) < keyLen+4+4+8+8+1 {
+		return WALRecord{}, 0, false
+	}
+	key := string(data[pos : pos+int(keyLen)])
+	pos += int(keyLen)
+
+	valLen := binary.LittleEndian.Uint32(data[pos : pos+4])
+	if valLen > 10*1024*1024 {
+		return WALRecord{}, 0, false
+	}
+	pos += 4
+
+	var value []byte
+	if valLen > 0 {
+		if uint32(len(data)) < uint32(pos)+valLen {
+			return WALRecord{}, 0, false
+		}
+		value = data[pos : pos+int(valLen)]
+		pos += int(valLen)
+	}
+
+	if uint32(len(data)) < uint32(pos)+8+8+1 {
+		return WALRecord{}, 0, false
+	}
+	version := binary.LittleEndian.Uint64(data[pos : pos+8])
+	pos += 8
+	timestamp := int64(binary.LittleEndian.Uint64(data[pos : pos+8]))
+	pos += 8
+	op := data[pos]
+	pos++
+
+	if op != walOpPut && op != walOpDel {
+		return WALRecord{}, 0, false
+	}
+
+	rec := WALRecord{
+		Op:        "PUT",
+		Key:       key,
+		Value:     value,
+		Version:   version,
+		TimeStamp: timestamp,
+	}
+	if op == walOpDel {
+		rec.Op = "DEL"
+	}
+	return rec, pos, true
+}
+
 func (w *WAL) Compact() (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
-	scanner := bufio.NewScanner(w.file)
-	scanner.Buffer(make([]byte, 2*1024*1024), 2*1024*1024)
 	tmpPath := w.path + ".compact.tmp"
 	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return 0, fmt.Errorf("create temp file: %w", err)
 	}
-	tmpEnc := json.NewEncoder(tmpFile)
-	entryCount := 0
-	for scanner.Scan() {
-		var rec WALRecord
-		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
-			continue
-		}
-		if err := tmpEnc.Encode(rec); err != nil {
-			tmpFile.Close()
+	defer func() {
+		tmpFile.Close()
+		if err != nil {
 			os.Remove(tmpPath)
-			return 0, fmt.Errorf("write temp file: %w", err)
 		}
-		entryCount++
+	}()
+
+	// Detect format
+	var firstByte [1]byte
+	if _, err := w.file.Read(firstByte[:]); err != nil {
+		if err == io.EOF {
+			// Empty WAL, just rename empty temp
+		} else {
+			return 0, err
+		}
 	}
-	if err := scanner.Err(); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		return 0, fmt.Errorf("scan WAL: %w", err)
+	isJSON := firstByte[0] == '{'
+	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
+		return 0, err
 	}
+
+	entryCount := 0
+	if isJSON {
+		scanner := bufio.NewScanner(w.file)
+		scanner.Buffer(make([]byte, 2*1024*1024), 2*1024*1024)
+		for scanner.Scan() {
+			var rec WALRecord
+			if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
+				continue
+			}
+			if encErr := json.NewEncoder(tmpFile).Encode(rec); encErr != nil {
+				return 0, fmt.Errorf("write temp file: %w", encErr)
+			}
+			entryCount++
+		}
+		if err := scanner.Err(); err != nil {
+			return 0, fmt.Errorf("scan WAL: %w", err)
+		}
+	} else {
+		for {
+			var hdr [4]byte
+			if _, readErr := io.ReadFull(w.file, hdr[:]); readErr != nil {
+				if readErr == io.EOF {
+					break
+				}
+				break
+			}
+			keyLen := binary.LittleEndian.Uint32(hdr[:])
+			keyBuf := make([]byte, keyLen)
+			if _, readErr := io.ReadFull(w.file, keyBuf); readErr != nil {
+				break
+			}
+			if _, readErr := io.ReadFull(w.file, hdr[:]); readErr != nil {
+				break
+			}
+			valLen := binary.LittleEndian.Uint32(hdr[:])
+			var value []byte
+			if valLen > 0 {
+				value = make([]byte, valLen)
+				if _, readErr := io.ReadFull(w.file, value); readErr != nil {
+					break
+				}
+			}
+			var verBuf [8]byte
+			if _, readErr := io.ReadFull(w.file, verBuf[:]); readErr != nil {
+				break
+			}
+			version := binary.LittleEndian.Uint64(verBuf[:])
+			var tsBuf [8]byte
+			if _, readErr := io.ReadFull(w.file, tsBuf[:]); readErr != nil {
+				break
+			}
+			timestamp := int64(binary.LittleEndian.Uint64(tsBuf[:]))
+			var opBuf [1]byte
+			if _, readErr := io.ReadFull(w.file, opBuf[:]); readErr != nil {
+				break
+			}
+			rec := WALRecord{
+				Op:        "PUT",
+				Key:       string(keyBuf),
+				Value:     value,
+				Version:   version,
+				TimeStamp: timestamp,
+			}
+			if opBuf[0] == walOpDel {
+				rec.Op = "DEL"
+			}
+			if encErr := json.NewEncoder(tmpFile).Encode(rec); encErr != nil {
+				return 0, fmt.Errorf("write temp file: %w", encErr)
+			}
+			entryCount++
+		}
+	}
+
 	if err := tmpFile.Sync(); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
 		return 0, fmt.Errorf("sync temp file: %w", err)
 	}
 	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
 		return 0, fmt.Errorf("close temp file: %w", err)
 	}
 	if err := w.file.Close(); err != nil {
-		os.Remove(tmpPath)
 		return 0, fmt.Errorf("close original file: %w", err)
 	}
 	if err := os.Rename(tmpPath, w.path); err != nil {
-		os.Remove(tmpPath)
 		return 0, fmt.Errorf("rename temp file: %w", err)
 	}
 	f, err := os.OpenFile(w.path, os.O_APPEND|os.O_RDWR, 0644)

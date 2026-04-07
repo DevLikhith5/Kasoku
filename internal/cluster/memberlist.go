@@ -82,19 +82,23 @@ func (ml *MemberList) AddMember(nodeID string) {
 	}
 }
 
-// Merge merges remote membership info and returns the combined view
+// Merge merges remote membership info and returns the combined view.
+// Bug 10 fix: if a remote peer reports a node as alive that we considered dead
+// or suspect, we revive it — this allows recovered nodes to be re-discovered.
 func (ml *MemberList) Merge(remoteMembers []string) []string {
 	ml.mu.Lock()
 	defer ml.mu.Unlock()
 
-	known := make(map[string]bool)
-	for nodeID := range ml.members {
-		known[nodeID] = true
-	}
-
-	// Add any members we don't know about
 	for _, nodeID := range remoteMembers {
-		if !known[nodeID] {
+		if existing, ok := ml.members[nodeID]; ok {
+			// Node already known: revive it if dead/suspect and update last seen
+			if existing.State != MemberStateAlive {
+				existing.State = MemberStateAlive
+				existing.Incarnation++
+			}
+			existing.LastSeen = time.Now()
+		} else {
+			// Brand new node — add it
 			ml.members[nodeID] = &Member{
 				NodeID:      nodeID,
 				Address:     nodeID,
@@ -102,7 +106,6 @@ func (ml *MemberList) Merge(remoteMembers []string) []string {
 				LastSeen:    time.Now(),
 				Incarnation: 1,
 			}
-			known[nodeID] = true
 		}
 	}
 

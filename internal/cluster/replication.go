@@ -13,15 +13,12 @@ import (
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
-const ReplicaTimeout = 200 * time.Millisecond
-
 type replicaResult struct {
 	nodeID string
 	entry  storage.Entry
 	err    error
 }
 
-// versionCounter is a per-node atomic version generator
 type versionCounter struct {
 	counter atomic.Uint64
 }
@@ -30,7 +27,6 @@ func (vc *versionCounter) next() uint64 {
 	return vc.counter.Add(1)
 }
 
-// ReplicatedPut writes to N replicas and waits for W acks
 func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) error {
 	replicas := n.ring.GetNodes(key, n.cfg.N)
 	if len(replicas) == 0 {
@@ -40,10 +36,15 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 	results := make(chan replicaResult, len(replicas))
 	version := n.versionCounter.next()
 
-	// Send write to ALL replicas concurrently
+	// Adaptive timeout
+	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
+
+	// fanout concurrent worker pattern
+	var quorumReached atomic.Bool
 	for _, nodeID := range replicas {
 		go func(nid string) {
-			rCtx, cancel := context.WithTimeout(ctx, ReplicaTimeout)
+			start := time.Now()
+			rCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			var err error
 			if nid == n.cfg.NodeID {
@@ -53,32 +54,35 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 				// Remote write — HTTP call to peer
 				err = n.remoteReplicate(rCtx, nid, key, value, false, version)
 			}
+			// Record latency for adaptive timeout
+			n.timeoutTracker.Record(nid, time.Since(start))
+
 			if err != nil {
-				// Store hint for delivery when node recovers
-				go n.hints.Store(key, value, nid)
+				// Bug 13 fix: store hint synchronously to avoid unbounded goroutine growth
+				_ = n.hints.Store(key, value, nid)
 			}
 			results <- replicaResult{nodeID: nid, err: err}
 		}(nodeID)
 	}
 
-	// Count acks — return success when W acks received
+	// Count acks — wait for ALL replicas to respond
 	acks, failures := 0, 0
-	for i := 0; i < len(replicas); i++ {
+	for range replicas {
 		res := <-results
 		if res.err == nil {
 			acks++
 			if acks >= n.cfg.W {
-				return nil // quorum reached!
+				quorumReached.Store(true)
 			}
 		} else {
 			failures++
 			n.logger.Warn("replica write failed",
 				"node", res.nodeID, "error", res.err)
-			// If too many failures, quorum impossible
-			if failures > len(replicas)-n.cfg.W {
-				return fmt.Errorf("write quorum failed: %d/%d acks", acks, n.cfg.W)
-			}
 		}
+	}
+
+	if quorumReached.Load() {
+		return nil
 	}
 	return fmt.Errorf("write quorum failed: only %d/%d acks", acks, n.cfg.W)
 }
@@ -104,9 +108,13 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 
 	results := make(chan replicaResult, len(replicas))
 
+	// Adaptive timeout based on historical latencies
+	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
+
 	for _, nodeID := range replicas {
 		go func(nid string) {
-			rCtx, cancel := context.WithTimeout(ctx, ReplicaTimeout)
+			start := time.Now()
+			rCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			var entry storage.Entry
 			var err error
@@ -115,12 +123,15 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 			} else {
 				entry, err = n.remoteGet(rCtx, nid, key)
 			}
+			// Record latency for adaptive timeout
+			n.timeoutTracker.Record(nid, time.Since(start))
+
 			results <- replicaResult{nodeID: nid, entry: entry, err: err}
 		}(nodeID)
 	}
 
 	var responses []replicaResult
-	for i := 0; i < len(replicas); i++ {
+	for range replicas {
 		res := <-results
 		if res.err == nil || errors.Is(res.err, storage.ErrKeyNotFound) {
 			responses = append(responses, res)
@@ -149,13 +160,20 @@ func (n *Node) ReplicatedDelete(ctx context.Context, key string) error {
 	results := make(chan replicaResult, len(replicas))
 	version := n.versionCounter.next()
 
+	// Adaptive timeout based on historical latencies
+	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
+
 	// Send delete (tombstone) to ALL replicas concurrently
+	var quorumReached atomic.Bool
 	for _, nodeID := range replicas {
 		go func(nid string) {
-			rCtx, cancel := context.WithTimeout(ctx, ReplicaTimeout)
+			start := time.Now()
+			rCtx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			var err error
 			if nid == n.cfg.NodeID {
+				// Bug 14 fix: local delete uses the engine's Delete which writes a tombstone
+				// in the LSM (the engine.Delete writes a tombstone entry, not a hard delete)
 				err = n.engine.Delete(key)
 				if errors.Is(err, storage.ErrKeyNotFound) {
 					err = nil // deleting non-existent key is fine
@@ -164,30 +182,35 @@ func (n *Node) ReplicatedDelete(ctx context.Context, key string) error {
 				// Remote delete via tombstone
 				err = n.remoteReplicate(rCtx, nid, key, nil, true, version)
 			}
+			// Record latency for adaptive timeout
+			n.timeoutTracker.Record(nid, time.Since(start))
+
 			if err != nil {
-				go n.hints.Store(key, nil, nid)
+				// Bug 13 fix: store hint synchronously to avoid unbounded goroutine growth
+				_ = n.hints.Store(key, nil, nid)
 			}
 			results <- replicaResult{nodeID: nid, err: err}
 		}(nodeID)
 	}
 
-	// Count acks
+	// Count acks — wait for ALL replicas to respond
 	acks, failures := 0, 0
-	for i := 0; i < len(replicas); i++ {
+	for range replicas {
 		res := <-results
 		if res.err == nil {
 			acks++
 			if acks >= n.cfg.W {
-				return nil
+				quorumReached.Store(true)
 			}
 		} else {
 			failures++
 			n.logger.Warn("replica delete failed",
 				"node", res.nodeID, "error", res.err)
-			if failures > len(replicas)-n.cfg.W {
-				return fmt.Errorf("delete quorum failed: %d/%d acks", acks, n.cfg.W)
-			}
 		}
+	}
+
+	if quorumReached.Load() {
+		return nil
 	}
 	return fmt.Errorf("delete quorum failed: only %d/%d acks", acks, n.cfg.W)
 }
@@ -213,7 +236,12 @@ func (n *Node) readRepair(ctx context.Context, key string,
 				"stale", r.entry.Version,
 				"latest", latest.entry.Version)
 			rCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-			n.remoteReplicate(rCtx, r.nodeID, key, latest.entry.Value, false, latest.entry.Version)
+			// Bug 3 fix: log and store hint on read repair failure instead of silently ignoring
+			if err := n.remoteReplicate(rCtx, r.nodeID, key, latest.entry.Value, false, latest.entry.Version); err != nil {
+				n.logger.Warn("read repair failed, storing hint",
+					"node", r.nodeID, "key", key, "error", err)
+				_ = n.hints.Store(key, latest.entry.Value, r.nodeID)
+			}
 			cancel()
 		}
 	}
@@ -228,12 +256,16 @@ func (n *Node) remoteReplicate(ctx context.Context,
 		addr = nodeID
 	}
 
-	body, _ := json.Marshal(map[string]any{
+	// Bug 4 fix: check json.Marshal error instead of silently discarding it
+	body, err := json.Marshal(map[string]any{
 		"key":       key,
 		"value":     value,
 		"tombstone": tombstone,
 		"version":   version,
 	})
+	if err != nil {
+		return fmt.Errorf("marshal replicate request: %w", err)
+	}
 
 	url := fmt.Sprintf("%s/internal/replicate", addr)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -261,7 +293,11 @@ func (n *Node) remoteGet(ctx context.Context, nodeID, key string) (storage.Entry
 		addr = nodeID
 	}
 
-	body, _ := json.Marshal(map[string]any{"key": key})
+	// Bug 4 fix: check json.Marshal error
+	body, err := json.Marshal(map[string]any{"key": key})
+	if err != nil {
+		return storage.Entry{}, fmt.Errorf("marshal get request: %w", err)
+	}
 	url := fmt.Sprintf("%s/internal/replicate/get", addr)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {

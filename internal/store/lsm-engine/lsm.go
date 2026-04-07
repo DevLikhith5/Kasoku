@@ -99,7 +99,23 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 		return nil, err
 	}
 
+	// Load persisted version counter before WAL replay
+	if err := e.loadVersion(); err != nil {
+		return nil, err
+	}
+
 	if err := e.replayWAL(); err != nil {
+		return nil, err
+	}
+
+	// Flush any replayed WAL entries to SSTables and reset the WAL.
+	// This ensures clean state and prevents WAL from growing across restarts.
+	if err := e.flushMemTable(); err != nil {
+		return nil, err
+	}
+
+	// Persist the version counter so it survives WAL reset
+	if err := e.saveVersion(); err != nil {
 		return nil, err
 	}
 
@@ -460,7 +476,9 @@ func (e *LSMEngine) flushMemTable() error {
 	e.mu.RLock()
 	l0Count := len(e.levels[0])
 	e.mu.RUnlock()
-	if l0Count >= e.maxFilesForLevel(0) {
+	// Trigger compaction if L0 has too many SSTables.
+	// Skip this if the engine is closing — compCh is closed and sends would panic.
+	if !e.closed.Load() && l0Count >= e.maxFilesForLevel(0) {
 		select {
 		case e.compCh <- struct{}{}:
 		default:
@@ -680,50 +698,74 @@ func (e *LSMEngine) Iter(prefix string) (*Iterator, error) {
 }
 
 func (e *LSMEngine) Stats() storage.EngineStats {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	// Get unique key count via Scan (handles tombstones and versioning correctly)
+	// We can't hold the lock while calling Scan (it also acquires the lock),
+	// so we do a lock-free snapshot approach.
+	uniqueKeys := e.countUniqueKeys()
 
+	e.mu.RLock()
 	var memBytes int64
-	var keyCount int64
 
 	if e.active != nil {
 		memBytes += e.active.Size()
-		keyCount += int64(e.active.Len())
 	}
 	for _, mem := range e.immutable {
 		memBytes += mem.Size()
-		keyCount += int64(mem.Len())
 	}
 
+	// Only count SSTable files (exclude WAL since it's transient and will be cleaned up)
 	var diskBytes int64
 
 	for _, level := range e.levels {
 		for _, sst := range level {
-			keyCount += int64(len(sst.index))
-			// Estimate disk size from index entries
-			for _, entry := range sst.index {
-				diskBytes += int64(entry.Size)
+			if sst.path != "" {
+				info, err := os.Stat(sst.path)
+				if err == nil {
+					diskBytes += info.Size()
+				}
 			}
 		}
 	}
-
-	// Add WAL size to disk bytes
-	if e.wal != nil {
-		walSize, _ := e.wal.Size()
-		diskBytes += walSize
-	}
+	e.mu.RUnlock()
 
 	return storage.EngineStats{
-		KeyCount:    keyCount,
+		KeyCount:    uniqueKeys,
 		DiskBytes:   diskBytes,
 		MemBytes:    memBytes,
 		BloomFPRate: 0.01,
 	}
 }
 
+// countUniqueKeys returns the count of unique, non-tombstoned keys
+func (e *LSMEngine) countUniqueKeys() int64 {
+	if e.closed.Load() {
+		return 0
+	}
+
+	// Use Scan() which properly handles tombstones across all levels and memtables
+	entries, err := e.Scan("")
+	if err != nil {
+		return 0
+	}
+
+	return int64(len(entries))
+}
+
 func (e *LSMEngine) Close() error {
 	if e.closed.Swap(true) {
 		return nil
+	}
+
+	// Flush remaining data BEFORE closing channels.
+	// flushMemTable() may send on compCh to trigger compaction —
+	// doing this after close(compCh) causes a "send on closed channel" panic.
+	if err := e.flushMemTable(); err != nil {
+		fmt.Println("final flush error:", err)
+	}
+
+	// Persist version counter before closing
+	if err := e.saveVersion(); err != nil {
+		fmt.Println("save version error:", err)
 	}
 
 	close(e.flushCh)
@@ -748,6 +790,48 @@ func (e *LSMEngine) TriggerCompaction() {
 	case e.compCh <- struct{}{}:
 	default:
 	}
+}
+
+// saveVersion persists the current version counter to disk
+func (e *LSMEngine) saveVersion() error {
+	versionPath := filepath.Join(e.dir, "VERSION")
+	tmpPath := versionPath + ".tmp"
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(f, "%d", e.version.Load())
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, versionPath)
+}
+
+// loadVersion restores the version counter from disk
+func (e *LSMEngine) loadVersion() error {
+	versionPath := filepath.Join(e.dir, "VERSION")
+	data, err := os.ReadFile(versionPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // No version file yet, start from 0
+		}
+		return err
+	}
+	var version uint64
+	_, err = fmt.Sscanf(string(data), "%d", &version)
+	if err != nil {
+		return err
+	}
+	e.version.Store(version)
+	return nil
 }
 
 // mergeSSTables merges multiple SSTables using merge sort

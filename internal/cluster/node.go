@@ -46,7 +46,9 @@ type Node struct {
 	hints          *HintStore
 	cluster        *Cluster
 	httpSrv        *server.Server
+	httpServer     *http.Server  // Bug 6/7 fix: stored so Stop() can shut it down
 	versionCounter versionCounter
+	timeoutTracker *AdaptiveTimeout
 	logger         *slog.Logger
 	done           chan struct{} // shutdown signal
 	wg             sync.WaitGroup
@@ -77,13 +79,14 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 	r.AddNode(cfg.NodeID) // add yourself first
 
 	n := &Node{
-		cfg:     cfg,
-		engine:  engine,
-		ring:    r,
-		members: NewMemberList(cfg.NodeID),
-		hints:   NewHintStore(),
-		logger:  slog.Default(),
-		done:    make(chan struct{}),
+		cfg:            cfg,
+		engine:         engine,
+		ring:           r,
+		members:        NewMemberList(cfg.NodeID),
+		hints:          NewHintStore(),
+		timeoutTracker: NewAdaptiveTimeout(),
+		logger:         slog.Default(),
+		done:           make(chan struct{}),
 	}
 
 	// Build the cluster layer (replication logic)
@@ -113,37 +116,39 @@ func (n *Node) Start() error {
 		}
 	}
 
-	// Start background goroutines
-	n.wg.Add(3)
-	go n.gossipLoop()
-	go n.antiEntropyLoop()
-	go n.hintDeliveryLoop()
-
-	// Start HTTP server (blocks until context is cancelled)
 	addr := n.cfg.HTTPAddr
 	if addr == "" {
 		addr = ":8080"
 	}
 
-	n.logger.Info("starting HTTP server", "addr", addr)
-	srv := &http.Server{
+	// Bug 7 fix: build the http.Server from n.httpSrv (the stored server), not
+	// a separate anonymous struct, so Stop() can shut down the actual running server.
+	n.httpServer = &http.Server{
 		Addr:    addr,
 		Handler: n.httpSrv.Routes(),
 	}
 
-	// Run server in a goroutine so Start returns
+	// Bug 6 fix: track the HTTP server goroutine in n.wg so Stop() correctly waits
+	n.wg.Add(3 + 1) // 3 background goroutines + 1 HTTP server goroutine
+	go n.gossipLoop()
+	go n.antiEntropyLoop()
+	go n.hintDeliveryLoop()
+
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		defer n.wg.Done()
+		n.logger.Info("starting HTTP server", "addr", addr)
+		if err := n.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			n.logger.Error("HTTP server error", "error", err)
 		}
 	}()
 
 	// Wait for shutdown signal
 	<-n.done
+
 	// Graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	srv.Shutdown(ctx)
+	n.httpServer.Shutdown(ctx)
 
 	return nil
 }
@@ -255,7 +260,9 @@ func (n *Node) joinSeed(seedAddr string) error {
 	return nil
 }
 
-// gossipLoop periodically exchanges membership info with peers
+// gossipLoop periodically exchanges membership info with peers.
+// Bug 16 fix: reuses the cluster's client pool instead of creating a new
+// rpc.Client on every tick, preventing an unbounded resource leak.
 func (n *Node) gossipLoop() {
 	defer n.wg.Done()
 
@@ -271,7 +278,11 @@ func (n *Node) gossipLoop() {
 			if peer == "" || peer == n.cfg.NodeID {
 				continue
 			}
-			client := rpc.NewClient(peer)
+			// Reuse client from cluster pool to avoid creating a new connection every tick
+			client, ok := n.cluster.getClient(peer)
+			if !ok {
+				client = rpc.NewClient(peer) // fallback if not in pool
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			ourMembers := n.members.Members()
 			theirMembers, err := client.Gossip(ctx, ourMembers)
@@ -312,7 +323,9 @@ func (n *Node) antiEntropyLoop() {
 	}
 }
 
-// hintDeliveryLoop periodically retries delivering hinted handoffs
+// hintDeliveryLoop periodically retries delivering hinted handoffs.
+// Bug 17 fix: reuses the cluster's client pool instead of creating a new
+// rpc.Client on every retry, preventing an unbounded resource leak.
 func (n *Node) hintDeliveryLoop() {
 	defer n.wg.Done()
 
@@ -323,8 +336,11 @@ func (n *Node) hintDeliveryLoop() {
 		select {
 		case <-ticker.C:
 			n.hints.RetryFailed(func(targetNode string, key string, value []byte) error {
-				// Try to deliver the hint to the target node
-				client := rpc.NewClient(targetNode)
+				// Reuse client from cluster pool to avoid creating a new connection every retry
+				client, ok := n.cluster.getClient(targetNode)
+				if !ok {
+					client = rpc.NewClient(targetNode) // fallback if not in pool
+				}
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				return client.ReplicatedPut(ctx, key, value)

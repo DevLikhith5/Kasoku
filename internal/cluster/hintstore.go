@@ -72,14 +72,16 @@ func (hs *HintStore) RemoveHint(key string, targetNode string) {
 	hs.hints = newHints
 }
 
-// RetryFailed attempts to redeliver all hints using the provided delivery function
+// RetryFailed attempts to redeliver all hints using the provided delivery function.
+// Bug 9 fix: tracks delivered hints by pointer identity so that duplicate hints
+// (same key+target) are only removed one at a time when delivered, not all at once.
 func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, value []byte) error) {
 	hs.mu.Lock()
 	hints := make([]*Hint, len(hs.hints))
 	copy(hints, hs.hints)
 	hs.mu.Unlock()
 
-	delivered := make([]string, 0)
+	delivered := make(map[*Hint]bool)
 
 	for _, h := range hints {
 		if h.Attempts >= 10 {
@@ -89,23 +91,18 @@ func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, val
 
 		err := deliver(h.TargetNode, h.Key, h.Value)
 		if err == nil {
-			delivered = append(delivered, h.Key+"|"+h.TargetNode)
+			delivered[h] = true // mark by pointer, not composite key
 		} else {
 			h.Attempts++
 		}
 	}
 
-	// Remove successfully delivered hints
+	// Remove successfully delivered hints by pointer identity
 	if len(delivered) > 0 {
 		hs.mu.Lock()
-		deliveredSet := make(map[string]bool)
-		for _, d := range delivered {
-			deliveredSet[d] = true
-		}
 		newHints := make([]*Hint, 0, len(hs.hints))
 		for _, h := range hs.hints {
-			key := h.Key + "|" + h.TargetNode
-			if !deliveredSet[key] {
+			if !delivered[h] {
 				newHints = append(newHints, h)
 			}
 		}

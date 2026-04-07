@@ -249,6 +249,7 @@ func (qc *QuorumChecker) GetRequiredQuorum() int {
 // AntiEntropy synchronizes data between nodes periodically
 type AntiEntropy struct {
 	mu       sync.Mutex
+	stopOnce sync.Once    // Bug 5 fix: prevents double-close panic on Stop()
 	nodeID   string
 	interval time.Duration
 	stopCh   chan struct{}
@@ -296,16 +297,18 @@ func (ae *AntiEntropy) Start(peers []string) {
 	ae.logger.Info("anti-entropy started", "interval", ae.interval)
 }
 
-// Stop stops the anti-entropy process
+// Stop stops the anti-entropy process.
+// Bug 5 fix: uses sync.Once to prevent double-close panic.
 func (ae *AntiEntropy) Stop() {
-	close(ae.stopCh)
+	ae.stopOnce.Do(func() {
+		close(ae.stopCh)
+	})
 }
 
-// run performs synchronization with peers
+// run performs synchronization with peers.
+// Bug 18 fix: mutex removed — it was held across all I/O operations (1+ seconds
+// per peer) but doesn't actually protect any shared mutable state here.
 func (ae *AntiEntropy) run(peers []string) {
-	ae.mu.Lock()
-	defer ae.mu.Unlock()
-
 	ctx, cancel := context.WithTimeout(context.Background(), ae.interval/2)
 	defer cancel()
 

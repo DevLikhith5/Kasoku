@@ -84,10 +84,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/api/v1/cluster/add-peer", s.handleAddPeer)
 		mux.HandleFunc("/api/v1/cluster/remove-peer", s.handleRemovePeer)
 
-		// Internal replication endpoints (not exposed publicly)
-		mux.HandleFunc("/internal/replicate/put", s.handleInternalReplicatePut)
-		mux.HandleFunc("/internal/replicate/get", s.handleInternalReplicateGet)
-		mux.HandleFunc("/internal/replicate/delete", s.handleInternalReplicateDelete)
+		// Internal replication endpoints (used by rpc.Client)
+		mux.HandleFunc("/internal/replicate", s.handleInternalReplicate)
 	}
 
 	// Metrics endpoint

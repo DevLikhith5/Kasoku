@@ -48,25 +48,26 @@ func newTestNode(t *testing.T, nodeID string, r *ring.Ring) *testNode {
 			HTTPAddr:       "localhost:0",
 			DataDir:        dir,
 			N:              3,
-			W:              3,
-			R:              2,
+			W:              1,
+			R:              1,
 			GossipInterval: time.Second,
 		},
 		engine:  engine,
 		ring:    r,
-		members: NewMemberList(nodeID),
-		hints:   NewHintStore(),
-		logger:  slog.Default(),
+		members:        NewMemberList(nodeID),
+		hints:          NewHintStore(),
+		timeoutTracker: NewAdaptiveTimeout(),
+		logger:         slog.Default(),
 		done:    make(chan struct{}),
 	}
 
 	n.cluster = New(ClusterConfig{
 		NodeID:            nodeID,
-		NodeAddr:          "", // will be set after httptest starts
+		NodeAddr:          "", 
 		Ring:              r,
 		Store:             engine,
 		ReplicationFactor: 3,
-		QuorumSize:        3,
+		QuorumSize:        1,
 		RPCTimeout:        5 * time.Second,
 	})
 

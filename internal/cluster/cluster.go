@@ -115,10 +115,11 @@ func (c *Cluster) AddPeer(nodeID, peerAddr string) {
 
 	c.clients[peerAddr] = rpc.NewClient(peerAddr)
 	c.peers = append(c.peers, peerAddr)
-	c.nodeAddrMap[nodeID] = peerAddr
 
 	if c.ring != nil {
 		c.ring.AddNode(nodeID)
+		// Register the mapping so ring lookups can resolve to this address
+		c.nodeAddrMap[nodeID] = peerAddr
 	}
 
 	c.logger.Info("peer added", "node_id", nodeID, "addr", peerAddr)
@@ -142,8 +143,8 @@ func (c *Cluster) RemovePeer(nodeID, peerAddr string) {
 
 	if c.ring != nil {
 		c.ring.RemoveNode(nodeID)
+		delete(c.nodeAddrMap, nodeID)
 	}
-	delete(c.nodeAddrMap, nodeID)
 
 	c.logger.Info("peer removed", "node_id", nodeID, "addr", peerAddr)
 }
@@ -353,16 +354,16 @@ func (c *Cluster) getReplicasForKey(key string) []string {
 	return c.ring.GetNodes(key, c.replicationFactor)
 }
 
-// getClient returns the RPC client for a node
+// getClient returns the RPC client for a node, creating one on demand.
+// Bug 1 fix: uses a single write-locked check-then-create to prevent TOCTOU race
+// where two goroutines could both enter the creation path simultaneously.
 func (c *Cluster) getClient(nodeID string) (*rpc.Client, bool) {
-	// First try direct lookup by node ID (in case nodeID == address)
+	// Fast path: check under read lock first
 	c.mu.RLock()
 	if client, ok := c.clients[nodeID]; ok {
 		c.mu.RUnlock()
 		return client, true
 	}
-
-	// Resolve nodeID -> address -> client
 	addr, ok := c.nodeAddrMap[nodeID]
 	if !ok {
 		c.mu.RUnlock()
@@ -374,11 +375,16 @@ func (c *Cluster) getClient(nodeID string) (*rpc.Client, bool) {
 	}
 	c.mu.RUnlock()
 
-	// Client doesn't exist yet — create one on demand
-	client := rpc.NewClient(addr)
+	// Slow path: upgrade to write lock and re-check before creating
+	// to guard against two goroutines concurrently entering this path.
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Re-check under write lock (double-checked locking)
+	if client, ok := c.clients[addr]; ok {
+		return client, true
+	}
+	client := rpc.NewClient(addr)
 	c.clients[addr] = client
-	c.mu.Unlock()
 	return client, true
 }
 
