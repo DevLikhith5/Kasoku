@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "kasoku"
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+      # Use host.docker.internal to reach the Kasoku instance running natively on the Mac host
+      - targets: ["host.docker.internal:8080"]

@@ -56,7 +56,7 @@ type Node struct {
 	timeoutTracker *AdaptiveTimeout
 	logger         *slog.Logger
 	done           chan struct{} // shutdown signal
-	stopOnce       sync.Once    // prevents double-close of done
+	stopOnce       sync.Once     // prevents double-close of done
 	wg             sync.WaitGroup
 }
 

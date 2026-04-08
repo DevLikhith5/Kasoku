@@ -1,47 +1,75 @@
 package metrics
 
 import (
-	"sync"
-	"sync/atomic"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// Metrics tracks server operation statistics
-type Metrics struct {
-	getTotal    atomic.Int64
-	putTotal    atomic.Int64
-	deleteTotal atomic.Int64
+var (
+	// Requests total counter
+	requestsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kasoku_requests_total",
+			Help: "Total number of KV requests processed.",
+		},
+		[]string{"operation", "status"},
+	)
 
-	getErrors    atomic.Int64
-	putErrors    atomic.Int64
-	deleteErrors atomic.Int64
+	// Request duration histogram
+	requestDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kasoku_request_duration_seconds",
+			Help:    "Latency of KV requests in seconds.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+		},
+		[]string{"operation"},
+	)
 
-	getLatency    sync.Mutex
-	getLatencySum int64
-	getCount      int64
+	// Storage metrics
+	storageKeys = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "kasoku_storage_engine_keys_total",
+			Help: "Total number of active keys in the storage engine.",
+		},
+	)
+	storageBytes = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kasoku_storage_engine_bytes",
+			Help: "Memory footprint of the storage engine.",
+		},
+		[]string{"type"}, // memory or disk
+	)
 
-	putLatency    sync.Mutex
-	putLatencySum int64
-	putCount      int64
-}
+	// Cluster metrics
+	clusterNodes = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "kasoku_cluster_nodes_active",
+			Help: "Number of active nodes in the consistent hash ring.",
+		},
+	)
+	pendingHints = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "kasoku_cluster_pending_hints",
+			Help: "Number of hinted handoffs waiting for delivery.",
+		},
+	)
+	phiSuspicion = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kasoku_cluster_phi_suspicion",
+			Help: "Current Phi accrual suspicion level per node.",
+		},
+		[]string{"node_id"},
+	)
+)
+
+// Metrics tracks server operation statistics wrapping Prometheus metrics
+type Metrics struct{}
 
 // New creates a new Metrics instance
 func New() *Metrics {
 	return &Metrics{}
-}
-
-// RecordGet records a GET operation (legacy, use RecordGetStart/RecordGetEnd)
-func (m *Metrics) RecordGet(duration time.Duration, success bool) {
-	m.getTotal.Add(1)
-	if !success {
-		m.getErrors.Add(1)
-		return
-	}
-
-	m.getLatency.Lock()
-	m.getLatencySum += int64(duration)
-	m.getCount++
-	m.getLatency.Unlock()
 }
 
 // RecordGetStart returns the start time for a GET operation
@@ -51,21 +79,12 @@ func (m *Metrics) RecordGetStart() time.Time {
 
 // RecordGetEnd records the end of a GET operation
 func (m *Metrics) RecordGetEnd(start time.Time, success bool) {
-	m.RecordGet(time.Since(start), success)
-}
-
-// RecordPut records a PUT operation (legacy, use RecordPutStart/RecordPutEnd)
-func (m *Metrics) RecordPut(duration time.Duration, success bool) {
-	m.putTotal.Add(1)
+	status := "success"
 	if !success {
-		m.putErrors.Add(1)
-		return
+		status = "error"
 	}
-
-	m.putLatency.Lock()
-	m.putLatencySum += int64(duration)
-	m.putCount++
-	m.putLatency.Unlock()
+	requestsTotal.WithLabelValues("get", status).Inc()
+	requestDuration.WithLabelValues("get").Observe(time.Since(start).Seconds())
 }
 
 // RecordPutStart returns the start time for a PUT operation
@@ -75,15 +94,12 @@ func (m *Metrics) RecordPutStart() time.Time {
 
 // RecordPutEnd records the end of a PUT operation
 func (m *Metrics) RecordPutEnd(start time.Time, success bool) {
-	m.RecordPut(time.Since(start), success)
-}
-
-// RecordDelete records a DELETE operation (legacy, use RecordDeleteStart/RecordDeleteEnd)
-func (m *Metrics) RecordDelete(duration time.Duration, success bool) {
-	m.deleteTotal.Add(1)
+	status := "success"
 	if !success {
-		m.deleteErrors.Add(1)
+		status = "error"
 	}
+	requestsTotal.WithLabelValues("put", status).Inc()
+	requestDuration.WithLabelValues("put").Observe(time.Since(start).Seconds())
 }
 
 // RecordDeleteStart returns the start time for a DELETE operation
@@ -93,10 +109,16 @@ func (m *Metrics) RecordDeleteStart() time.Time {
 
 // RecordDeleteEnd records the end of a DELETE operation
 func (m *Metrics) RecordDeleteEnd(start time.Time, success bool) {
-	m.RecordDelete(time.Since(start), success)
+	status := "success"
+	if !success {
+		status = "error"
+	}
+	requestsTotal.WithLabelValues("delete", status).Inc()
+	requestDuration.WithLabelValues("delete").Observe(time.Since(start).Seconds())
 }
 
-// Snapshot holds a point-in-time view of metrics
+// Snapshot ensures compatibility with handlers expecting the old method,
+// though it won't be actively used over /metrics endpoint
 type Snapshot struct {
 	GetTotal    int64
 	PutTotal    int64
@@ -110,29 +132,29 @@ type Snapshot struct {
 	AvgPutLatencyMs float64
 }
 
-// Get returns a snapshot of current metrics
+// Get returns an empty snapshot to maintain backward compatibility in handlers
 func (m *Metrics) Get() Snapshot {
-	snapshot := Snapshot{
-		GetTotal:    m.getTotal.Load(),
-		PutTotal:    m.putTotal.Load(),
-		DeleteTotal: m.deleteTotal.Load(),
+	return Snapshot{}
+}
 
-		GetErrors:    m.getErrors.Load(),
-		PutErrors:    m.putErrors.Load(),
-		DeleteErrors: m.deleteErrors.Load(),
-	}
+// Helper methods to update Gauges
+func (m *Metrics) SetStorageKeys(count int64) {
+	storageKeys.Set(float64(count))
+}
 
-	m.getLatency.Lock()
-	if m.getCount > 0 {
-		snapshot.AvgGetLatencyMs = float64(m.getLatencySum/m.getCount) / 1e6
-	}
-	m.getLatency.Unlock()
+func (m *Metrics) SetStorageBytes(memBytes, diskBytes int64) {
+	storageBytes.WithLabelValues("memory").Set(float64(memBytes))
+	storageBytes.WithLabelValues("disk").Set(float64(diskBytes))
+}
 
-	m.putLatency.Lock()
-	if m.putCount > 0 {
-		snapshot.AvgPutLatencyMs = float64(m.putLatencySum/m.putCount) / 1e6
-	}
-	m.putLatency.Unlock()
+func (m *Metrics) SetClusterNodes(count int) {
+	clusterNodes.Set(float64(count))
+}
 
-	return snapshot
+func (m *Metrics) SetPendingHints(count int) {
+	pendingHints.Set(float64(count))
+}
+
+func (m *Metrics) SetPhiSuspicion(nodeID string, phi float64) {
+	phiSuspicion.WithLabelValues(nodeID).Set(phi)
 }

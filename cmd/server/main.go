@@ -117,6 +117,23 @@ func main() {
 	// Apply middleware
 	httpHandler := handler.WithLogging(logger)(handler.WithRecovery(logger)(mux))
 
+	// Background metrics scraping
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			stats := store.Stats()
+			m.SetStorageKeys(stats.KeyCount)
+			m.SetStorageBytes(stats.MemBytes, stats.DiskBytes)
+
+			if cfg.Cluster.Enabled {
+				// We only have ring nodes exposed in main via cfg.Cluster
+				// In a full integration, you'd pull from HintStore/PhiMap here.
+				m.SetClusterNodes(len(cfg.Cluster.Peers) + 1)
+			}
+		}
+	}()
+
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	logger.Info("starting HTTP server", "addr", addr, "node_id", cfg.Cluster.NodeID)
 

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/DevLikhith5/kasoku/cmd/server/metrics"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/DevLikhith5/kasoku/internal/cluster"
 	"github.com/DevLikhith5/kasoku/internal/ring"
@@ -89,7 +90,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	}
 
 	// Metrics endpoint
-	mux.HandleFunc("/metrics", s.handleMetrics)
+	mux.Handle("/metrics", promhttp.Handler())
 }
 
 // SetCluster sets the cluster instance (for dependency injection)

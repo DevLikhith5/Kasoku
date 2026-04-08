@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"fmt"
 	"net/http"
 )
 
@@ -97,16 +96,4 @@ func (s *Server) handleNodeInfo(w http.ResponseWriter, r *http.Request) {
 			"stats":   stats,
 		},
 	})
-}
-
-// handleMetrics returns prometheus-style metrics
-func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	m := s.metrics.Get()
-	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "kasoku_get_total %d\n", m.GetTotal)
-	fmt.Fprintf(w, "kasoku_put_total %d\n", m.PutTotal)
-	fmt.Fprintf(w, "kasoku_delete_total %d\n", m.DeleteTotal)
-	fmt.Fprintf(w, "kasoku_get_errors_total %d\n", m.GetErrors)
-	fmt.Fprintf(w, "kasoku_put_errors_total %d\n", m.PutErrors)
-	fmt.Fprintf(w, "kasoku_delete_errors_total %d\n", m.DeleteErrors)
 }
