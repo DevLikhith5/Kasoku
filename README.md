@@ -1,134 +1,325 @@
 # Kasoku
 
-**Distributed LSM Key-Value Storage Engine**
+**Distributed Key-Value Storage Engine**
 
-*Built in Go | Multi-Node Clustering | Production-Ready Architecture*
-
-Kasoku is a distributed, high-performance key-value storage engine designed for scalability and durability. Built entirely in Go, it implements a Log-Structured Merge-Tree (LSM-Tree) architecture with automatic sharding, seamless replication, and fault tolerance across a decentralized cluster of nodes.
+Kasoku is a distributed, highly available key-value storage engine written entirely in Go. It is built on a custom Log-Structured Merge-Tree (LSM-Tree) beneath a Dynamo-style distributed cluster layer. It is designed to serve production workloads that require horizontal scalability, strong durability guarantees, and resilience to node failures.
 
 ---
 
-## Proprietary License & Restrictions
+## Table of Contents
 
-This software and its associated documentation are the exclusive property of the author. **All Rights Reserved.** 
-
-You are strictly **prohibited** from:
-- Cloning, copying, or distributing this repository.
-- Modifying or publishing any derivative works.
-- Using this codebase for any personal, commercial, or academic purpose without explicit written permission.
+1. [Architecture](#architecture)
+2. [Storage Engine](#storage-engine)
+3. [Distributed Cluster Layer](#distributed-cluster-layer)
+4. [Performance Benchmarks](#performance-benchmarks)
+5. [Project Structure](#project-structure)
+6. [Getting Started](#getting-started)
+7. [Configuration](#configuration)
+8. [License and Usage Restrictions](#license-and-usage-restrictions)
 
 ---
 
-## Architecture Overview
+## Architecture
 
-Kasoku separates the write path from the read path to optimize for write-heavy workloads while maintaining fast read speeds.
+Kasoku consists of two major subsystems that operate in tandem.
+
+The **storage layer** is a custom-built LSM-Tree that persists data durably to disk using Write-Ahead Logging, compressed SSTables, Bloom Filters, and a background compaction scheduler.
+
+The **cluster layer** implements a fully masterless, peer-to-peer topology where every node can coordinate reads and writes. Cluster membership, failure detection, and data reconciliation are handled entirely in-process without any external dependencies such as ZooKeeper or etcd.
+
+```
+Client Request
+     |
+     v
+HTTP API Handler
+     |
+     v
+Coordinator (Consistent Hash Ring -> replica nodes selected)
+     |
+     +-------> Local LSM-Tree Write + WAL
+     |
+     +-------> Remote Replica Write (RPC) x 2 (W=2 quorum)
+                     |
+           Hinted Handoff if replica down
+```
+
+Every node runs the same binary and code path. There is no leader election. Any node accepts both read and write requests.
+
+---
+
+## Storage Engine
+
+The LSM-Tree engine is designed specifically for write-heavy workloads. All writes are sequential, which saturates disk throughput. Reads are optimized through in-memory structures and probabilistic filters.
 
 ### Write Path
-The engine writes sequentially to a Write-Ahead Log (WAL) to ensure crash-safe durability. Operations are then inserted into an in-memory Skip List (MemTable). Once the MemTable reaches its capacity, it is flushed to disk as an immutable Sorted String Table (SSTable). Background compaction continuously merges SSTables to optimize disk space.
+
+1. The entry is appended to the Write-Ahead Log (WAL) on disk with fsync.
+2. The entry is inserted into the in-memory MemTable (implemented as a Red-Black Tree ordered by key).
+3. When the MemTable exceeds its configured capacity (default 64MB), it is frozen and flushed to a Level 0 SSTable on disk.
+4. Background compaction merges Level 0 SSTables into progressively larger sorted levels to eliminate duplicate and deleted keys.
 
 ### Read Path
-Reads query the active MemTable first, followed by immutable MemTables. If the key is not found in memory, Kasoku sequentially queries SSTables starting from Level 0 downwards. Bloom Filters and an LRU Block Cache are used to minimize disk I/O and maintain low latency.
+
+1. The active MemTable is checked first.
+2. Immutable MemTables awaiting flush are checked next.
+3. SSTables are searched from newest to oldest. Each SSTable consults its Bloom Filter before performing any disk I/O. If the Bloom Filter indicates the key is absent, the SSTable is skipped entirely.
+4. The LRU Block Cache serves recently accessed disk blocks from memory to avoid repeated reads.
+
+### Storage Engine Features
+
+| Feature | Detail |
+| :--- | :--- |
+| Write-Ahead Log | fsync-on-write for crash safety; atomic WAL truncation via rename |
+| MemTable | Red-Black Tree ordered map, concurrent-safe |
+| SSTables | Sorted, immutable, Snappy-compressed segments |
+| Bloom Filters | Per-SSTable, configurable false positive rate (default 1%) |
+| LRU Block Cache | Configurable size; shared across all SSTable readers |
+| Compaction | Leveled compaction, runs as a background goroutine |
+| Tombstones | Soft-deletes tracked across levels, purged during compaction |
+| MVCC Versioning | Monotonic version counter per key for conflict resolution |
+| WAL Checkpointing | Periodic offset checkpoints enable crash recovery and log truncation |
 
 ---
 
-## Core Features
+## Distributed Cluster Layer
 
-- **LSM-Tree Architecture**: Optimized for write-heavy workloads and sequential disk access.
-- **Write-Ahead Log (WAL)**: Ensures crash recovery and strict durability.
-- **Bloom Filters**: O(1) negative lookups to skip unnecessary disk reads.
-- **Snappy Compression**: Achieves 2-5x storage space reduction.
-- **LRU Block Cache**: Maintains hot data in memory for rapid recurring access.
-- **Auto-Compaction**: Background SSTable merging and garbage collection.
-- **Skip List MemTable**: Fast, concurrent O(log n) inserts.
-- **MVCC Versioning**: Tracks key versions accurately.
-- **Tombstone Processing**: Handles graceful deletions in an append-only system.
+The cluster layer is implemented entirely in-process and requires no external coordination service.
 
-## Distributed Capabilities
+### Consistent Hashing Ring
 
-- **Horizontal Scaling**: Add nodes to the cluster seamlessly without downtime.
-- **Data Replication**: Maintains data redundancy and fault tolerance across distinct nodes.
-- **Consistent Hashing**: Automatically shards data evenly across the cluster.
-- **Gossip Protocol**: Facilitates peer discovery and robust failure detection.
-- **Decentralized Coordination**: Operates without a single master or point of failure.
+Data is partitioned across nodes using a CRC32-based consistent hashing ring. Each node occupies 150 virtual node positions (vnodes) on the ring by default. This ensures that adding or removing a node requires relocating approximately 1/N of keys rather than re-partitioning the entire dataset.
+
+### Quorum Replication
+
+Write and read operations follow a quorum model with the following defaults:
+
+- Replication factor: N = 3
+- Write quorum: W = 2
+- Read quorum: R = 2
+
+The constraint W + R > N (2 + 2 > 3) guarantees that any read set will overlap with the most recent write set by at least one replica, providing read-your-writes consistency under normal operation.
+
+### Gossip Protocol
+
+Cluster membership state is propagated using an epidemic gossip protocol. Each node periodically exchanges its member list with a random subset of peers. This achieves eventual consistency of cluster state across all nodes in O(log N) gossip rounds without any central registry.
+
+### Phi Accrual Failure Detection
+
+Node health is tracked using the Phi Accrual failure detector rather than fixed timeouts. The detector continuously measures the inter-arrival time of heartbeat messages from each peer and computes a suspicion level (phi) based on the statistical distribution of observed intervals. A node is considered unhealthy when phi exceeds a configurable threshold (default 8.0), adapting automatically to variations in network latency without producing false positives under temporary slowdowns.
+
+### Hinted Handoff
+
+When a write is destined for a replica node that is currently unavailable, the coordinating node stores a timestamped hint in its local hint store. A background delivery loop retries delivering all pending hints every 10 seconds. Hints expire after 24 hours. This mechanism preserves write availability during short network partitions without permanently compromising consistency.
+
+### Anti-Entropy with Merkle Trees
+
+A background anti-entropy loop runs every 30 seconds. Each node builds a SHA-256 Merkle Tree over all keys it holds. It exchanges this tree with each peer and computes the symmetric difference in O(K log N) time, where K is the number of differing keys. Only the divergent keys are synchronized, minimizing network bandwidth. This mechanism heals data divergence caused by expired hints, node crashes, or prolonged partitions.
+
+### Vector Clocks
+
+Every write is associated with a vector clock entry identifying the originating node and the logical time of the write. Vector clocks support three ordering comparisons: Before, After, and Concurrent. Concurrent writes (where neither clock dominates) represent a true conflict that can be resolved by application-level policy or Last-Write-Wins using the attached version counter.
+
+### Distributed Cluster Features
+
+| Feature | Detail |
+| :--- | :--- |
+| Topology | Fully masterless, symmetric peer-to-peer |
+| Partitioning | CRC32 consistent hashing with 150 virtual nodes per node |
+| Replication | N=3, W=2, R=2 quorum; configurable |
+| Membership | Gossip protocol; no external dependency |
+| Failure Detection | Phi Accrual detector; adaptive to network jitter |
+| Write Durability | Hinted Handoff with 24-hour expiry and background retry |
+| Data Reconciliation | SHA-256 Merkle Tree anti-entropy; O(K log N) diff |
+| Conflict Tracking | Vector clocks with Before / After / Concurrent comparison |
+| Read Repair | Coordinator detects stale replicas on read and patches them |
 
 ---
 
-## Quick Start
+## Performance Benchmarks
 
-### Single Node Usage
+All benchmarks were executed on Apple M1 (ARM64, 8-core) with 1-second benchmark windows and memory allocation tracking enabled.
+
+```
+goos:  darwin
+goarch: arm64
+cpu:   Apple M1
+```
+
+### Write Performance
+
+| Benchmark | Iterations | Time per Op | Memory per Op | Allocs per Op |
+| :--- | ---: | ---: | ---: | ---: |
+| `LSM Put (SyncOnWrite)` | 327 | 3,754,219 ns (~3.75ms) | 48 B | 3 |
+| `LSM Put (SyncEvery100ms)` | 3,516,847 | 285.1 ns | 24 B | 3 |
+| `WAL Append (SyncOnWrite)` | 304 | 3,690,975 ns (~3.69ms) | 24 B | 3 |
+| `WAL Append (SyncEvery100ms)` | 4,170,537 | 240.8 ns | 24 B | 3 |
+| `MemTable_Put` | 2,432,594 | 451.4 ns | 192 B | 6 |
+
+### Read Performance
+
+| Benchmark | Iterations | Time per Op | Memory per Op | Allocs per Op |
+| :--- | ---: | ---: | ---: | ---: |
+| `Get_Sequential` | 7,280,403 | 174.2 ns | 14 B | 1 |
+| `Get_Random` | 5,996,497 | 197.6 ns | 14 B | 1 |
+| `Get_Concurrent` | 7,093,032 | 156.8 ns | 14 B | 1 |
+| `MemTable_Get` | 5,166,234 | 233.6 ns | 23 B | 1 |
+| `Scan (prefix)` | 559,771 | 2,095 ns (~2.1μs) | 5,564 B | 13 |
+
+### Mixed Workloads (70% Read / 30% Write)
+
+| Benchmark | Iterations | Time per Op | Memory per Op | Allocs per Op |
+| :--- | ---: | ---: | ---: | ---: |
+| `Mixed Read/Write (SyncOnWrite)` | 915 | 1,272,594 ns (~1.27ms) | 929 B | 8 |
+| `Mixed Read/Write (SyncEvery100ms)` | 532,092 | 2,286 ns (~2.3μs) | 406 B | 5 |
+
+**Notes:**
+
+- **Background WAL sync (100ms interval)** achieves **~3.5 million writes/sec** at 285.1 ns/op, compared to ~267 writes/sec with synchronous fsync (3.75ms/op). This is a **13,000x throughput improvement** for write-heavy workloads.
+- **Sequential reads** achieve **7.3 million ops/sec** at 174.2 ns/op with only 1 allocation per operation.
+- **Random reads** sustain **6.0 million ops/sec** at 197.6 ns/op, demonstrating efficient Bloom Filter and block cache utilization.
+- **Concurrent reads** reach **7.1 million ops/sec** at 156.8 ns/op, showing excellent parallel read performance from the MemTable and block cache.
+- **Pure MemTable reads** achieve **5.2 million ops/sec** (233.6 ns) with zero disk I/O.
+- **Prefix scans** complete in **~2.1 microseconds** per operation, returning 10 matching entries on average.
+- **Mixed read/write workloads** (70/30 split) with background sync process **~437K ops/sec** at 2.3μs per operation, compared to ~786 ops/sec with sync-on-write — a **556x improvement**.
+- Sequential write latency with fsync-on-write (~3.75ms/op) reflects macOS disk sync overhead. On Linux with NVMe SSDs, WAL fsync is typically under 300 microseconds.
+- Background compaction and flush loops operate asynchronously, ensuring write operations are never blocked by disk I/O.
+
+---
+
+## Project Structure
+
+```
+kasoku/
+├── cmd/
+│   ├── server/         Entry point for the cluster node HTTP server
+│   └── cli/            Entry point for the kvctl command-line client
+├── internal/
+│   ├── cluster/        Gossip, Phi failure detector, quorum, hinted handoff, anti-entropy, vector clocks
+│   ├── config/         YAML configuration loading and validation
+│   ├── merkle/         SHA-256 Merkle tree implementation
+│   ├── metrics/        Prometheus metrics exposition
+│   ├── ring/           CRC32 consistent hash ring with virtual nodes
+│   ├── rpc/            HTTP-based cross-node RPC client
+│   ├── server/         HTTP server middleware and routing
+│   └── store/
+│       ├── lsm-engine/ WAL, MemTable, SSTable, Bloom Filter, Block Cache, Compactor
+│       └── hashmap/    In-memory fallback engine for testing
+├── kasoku.yaml         Active cluster configuration
+├── kasoku.example.yaml Annotated reference configuration
+├── Makefile            Build, test, and lint targets
+└── USAGE.md            Detailed API reference and operation examples
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Go 1.25 or higher
+
+### Build
 
 ```bash
-# Clone the repository
-git clone https://github.com/DevLikhith5/kasoku.git
-cd kasoku
-
-# Build the project
+# Build the server and CLI binaries
 make build
 
-# Start using via CLI directly
-./kvctl put session:token "session_data"
-./kvctl get session:token
-./kvctl scan session:
-
-# Or start the standalone HTTP server
-./kasoku-server
-curl http://localhost:8080/api/v1/get/session:token
+# Or manually
+go build -o kasoku-server ./cmd/server/main.go
+go build -o kvctl ./cmd/cli/main.go
 ```
 
-### Multi-Node Cluster Setup
+### Run a Single Node
 
 ```bash
-# Start Node 1 (Bootstrap Node)
-./kasoku-server --node-id node-1 --port 9001 --peers ""
+./kasoku-server --config kasoku.yaml
+```
 
-# Start Node 2 (Joins cluster automatically)
-./kasoku-server --node-id node-2 --port 9002 --peers "localhost:9001"
+### Run a Three-Node Local Cluster
 
-# Start Node 3
-./kasoku-server --node-id node-3 --port 9003 --peers "localhost:9001"
+```bash
+# Terminal 1 - Bootstrap node
+./kasoku-server --node-id node-1 --port 9001
 
-# Write data to Node 1
-curl -X PUT http://localhost:9001/api/v1/put/user:1 -d '{"value":"Alice"}'
+# Terminal 2
+./kasoku-server --node-id node-2 --port 9002 --peers localhost:9001
 
-# Read identical replicated data from Node 3
-curl http://localhost:9003/api/v1/get/user:1
+# Terminal 3
+./kasoku-server --node-id node-3 --port 9003 --peers localhost:9001
+```
+
+### Basic Operations via CLI
+
+```bash
+./kvctl put user:1001 "Alice"
+./kvctl get user:1001
+./kvctl delete user:1001
+./kvctl scan user:
+./kvctl keys
+./kvctl stats
+```
+
+### Run Tests
+
+```bash
+# All unit and integration tests
+go test ./...
+
+# With data race detection enabled
+go test -race ./...
+
+# Benchmarks (LSM engine)
+go test ./internal/store/lsm-engine/... -bench=. -benchmem -run=^$
 ```
 
 ---
 
-## Performance Characteristics
+## Configuration
 
-Based on continuous integration benchmarks running with a 10ms WAL Sync frequency.
+Key configuration fields in `kasoku.yaml`:
 
-| Operation | Ops/Sec | Latency | Target Use Case |
-|-----------|---------|---------|-----------------|
-| **Write** | ~200,000 | <5ms | High-throughput metric ingestion |
-| **Read (cached)** | ~5,000,000 | <100us | High-frequency hot data access |
-| **Read (disk)** | ~10,000 | 1-5ms | Infrequent cold data access |
-| **Scan** | ~50,000 | <10ms | Prefix interval queries |
+```yaml
+node_id: node-1
+address: http://localhost:9001
 
----
+cluster:
+  replication_factor: 3
+  write_quorum: 2
+  read_quorum: 2
+  gossip_interval: 1s
+  anti_entropy_interval: 30s
 
-## Interfaces
+storage:
+  engine: lsm
+  data_dir: ./data
+  memtable_size_mb: 64
+  block_cache_mb: 128
+  bloom_false_positive: 0.01
+  wal_sync: true
+```
 
-Kasoku provides multiple interaction paradigms depending on the deployment environment:
-- **CLI (kvctl)**: Direct database access for scripts and background administration.
-- **HTTP REST API**: Language-agnostic endpoints for web applications.
-- **Interactive Shell**: A built-in REPL for ad-hoc queries and debugging.
-
-### Standard Commands
-
-- `put [key] [value]`
-- `get [key]`
-- `delete [key]`
-- `scan [prefix]`
-- `keys`
-- `stats`
-- `bench --count [N]`
-- `shell`
+See `kasoku.example.yaml` for the full annotated reference.
 
 ---
 
-## License
+## License and Usage Restrictions
 
-This software is **proprietary and strictly confidential**. It is NOT open source. See the LICENSE file for full restrictions. You may NOT clone, copy, distribute, or claim this software in any capacity.
+Copyright (c) 2025. All Rights Reserved.
+
+This software and its associated architecture, source code, documentation, and distributed systems design are the exclusive intellectual property of the author.
+
+**This is not open-source software.**
+
+This repository is made publicly visible strictly for portfolio review and technical evaluation by prospective employers and collaborators. You are permitted only to read and review the source code for evaluation purposes.
+
+The following actions are explicitly prohibited without prior written permission from the author:
+
+- Cloning, copying, forking, or re-hosting this repository or any portion of its contents
+- Modifying, adapting, or creating derivative works based on this code or architecture
+- Using this code, in whole or in part, in any personal, commercial, or academic project
+- Redistributing or publishing this code through any channel or medium
+- Submitting any portion of this code as your own academic work
+
+Violations of these restrictions may constitute copyright infringement under applicable law.
+
+To request permission for any use not described above, contact the author directly.

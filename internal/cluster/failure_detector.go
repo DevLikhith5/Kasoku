@@ -248,8 +248,7 @@ func (qc *QuorumChecker) GetRequiredQuorum() int {
 
 // AntiEntropy synchronizes data between nodes periodically
 type AntiEntropy struct {
-	mu       sync.Mutex
-	stopOnce sync.Once    // Bug 5 fix: prevents double-close panic on Stop()
+	stopOnce sync.Once // Bug 5 fix: prevents double-close panic on Stop()
 	nodeID   string
 	interval time.Duration
 	stopCh   chan struct{}

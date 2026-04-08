@@ -1,25 +1,23 @@
 package ring
 
 import (
-	"slices"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 
-	"github.com/spaolacci/murmur3"
+	"hash/crc32"
 )
 
 const DefaultVNodes = 150
 
-
 type Ring struct {
 	mu         sync.RWMutex
-	vnodes     []uint32            
+	vnodes     []uint32
 	nodeMap    map[uint32]string
-	nodes      map[string]bool     
-	vnodeCount int                 
+	nodes      map[string]bool
+	vnodeCount int
 }
-
 
 func New(vnodeCount int) *Ring {
 	if vnodeCount <= 0 {
@@ -32,20 +30,18 @@ func New(vnodeCount int) *Ring {
 	}
 }
 
-
 func (r *Ring) hash(key string) uint32 {
-	return murmur3.Sum32([]byte(key))
+	return crc32.ChecksumIEEE([]byte(key))
 }
 func (r *Ring) AddNode(nodeID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.nodes[nodeID] {
-		return 
+		return
 	}
 
 	r.nodes[nodeID] = true
-
 
 	for i := 0; i < r.vnodeCount; i++ {
 		vnodeKey := fmt.Sprintf("%s#vnode%d", nodeID, i)
@@ -57,17 +53,15 @@ func (r *Ring) AddNode(nodeID string) {
 	slices.Sort(r.vnodes)
 }
 
-
 func (r *Ring) RemoveNode(nodeID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if !r.nodes[nodeID] {
-		return 
+		return
 	}
 
 	delete(r.nodes, nodeID)
-
 
 	var newVnodes []uint32
 	newNodeMap := make(map[uint32]string)
@@ -82,7 +76,6 @@ func (r *Ring) RemoveNode(nodeID string) {
 	r.vnodes = newVnodes
 	r.nodeMap = newNodeMap
 }
-
 
 func (r *Ring) GetNode(key string) (string, bool) {
 	r.mu.RLock()
@@ -128,19 +121,17 @@ func (r *Ring) GetNodes(key string, n int) []string {
 	return result
 }
 
-
 func (r *Ring) search(pos uint32) int {
 	n := len(r.vnodes)
 	idx := sort.Search(n, func(i int) bool {
 		return r.vnodes[i] >= pos
 	})
-	return idx % n 
+	return idx % n
 }
 
 func (r *Ring) Distribution() map[string]float64 {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-
 
 	counts := make(map[string]int)
 	for _, nodeID := range r.nodeMap {
@@ -157,20 +148,17 @@ func (r *Ring) Distribution() map[string]float64 {
 	return dist
 }
 
-
 func (r *Ring) NodeCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.nodes)
 }
 
-
 func (r *Ring) HasNode(nodeID string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.nodes[nodeID]
 }
-
 
 func (r *Ring) GetAllNodes() []string {
 	r.mu.RLock()

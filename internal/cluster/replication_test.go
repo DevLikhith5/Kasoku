@@ -52,18 +52,18 @@ func newTestNode(t *testing.T, nodeID string, r *ring.Ring) *testNode {
 			R:              1,
 			GossipInterval: time.Second,
 		},
-		engine:  engine,
-		ring:    r,
+		engine:         engine,
+		ring:           r,
 		members:        NewMemberList(nodeID),
 		hints:          NewHintStore(),
 		timeoutTracker: NewAdaptiveTimeout(),
 		logger:         slog.Default(),
-		done:    make(chan struct{}),
+		done:           make(chan struct{}),
 	}
 
 	n.cluster = New(ClusterConfig{
 		NodeID:            nodeID,
-		NodeAddr:          "", 
+		NodeAddr:          "",
 		Ring:              r,
 		Store:             engine,
 		ReplicationFactor: 3,

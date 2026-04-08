@@ -98,8 +98,8 @@ func (at *AdaptiveTimeout) Timeout(nodeID string) time.Duration {
 
 	p := percentile(samples, at.percentile)
 	timeout := max(
-// Clamp to bounds
-time.Duration(p*at.multiplier) * time.Millisecond, at.minTimeout)
+		// Clamp to bounds
+		time.Duration(p*at.multiplier)*time.Millisecond, at.minTimeout)
 	if timeout > at.maxTimeout {
 		timeout = at.maxTimeout
 	}

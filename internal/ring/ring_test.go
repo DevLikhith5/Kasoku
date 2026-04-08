@@ -3,7 +3,7 @@ package ring
 import (
 	"fmt"
 	"math"
-	"math/rand"
+
 	"sync"
 	"testing"
 	"time"
@@ -184,8 +184,8 @@ func TestRing_DistributionWithManyNodes(t *testing.T) {
 	dist := r.Distribution()
 
 	// Each node should have approximately 1% of the ring
-	expected := 1.0 // 1%
-	tolerance := 0.5          // 0.5% tolerance
+	expected := 1.0  // 1%
+	tolerance := 0.5 // 0.5% tolerance
 
 	for nodeID, pct := range dist {
 		diff := math.Abs(pct - expected)
@@ -472,27 +472,6 @@ func TestRing_DeterministicMapping(t *testing.T) {
 
 	// Same keys should map to same nodes
 	for i := 0; i < 1000; i++ {
-		key := fmt.Sprintf("key-%d", i)
-		n1, _ := r1.GetNode(key)
-		n2, _ := r2.GetNode(key)
-		if n1 != n2 {
-			t.Errorf("key %s: ring1=%s, ring2=%s", key, n1, n2)
-		}
-	}
-}
-
-func TestRing_RandomSeedIndependence(t *testing.T) {
-	// Consistent hashing should not depend on random seed
-	rand.Seed(1)
-	r1 := New(150)
-	r1.AddNode("node-1")
-
-	rand.Seed(2)
-	r2 := New(150)
-	r2.AddNode("node-1")
-
-	// Both rings should produce identical mappings
-	for i := 0; i < 100; i++ {
 		key := fmt.Sprintf("key-%d", i)
 		n1, _ := r1.GetNode(key)
 		n2, _ := r2.GetNode(key)

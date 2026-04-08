@@ -2,12 +2,16 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
+	"github.com/DevLikhith5/kasoku/internal/merkle"
 	"github.com/DevLikhith5/kasoku/internal/ring"
 	"github.com/DevLikhith5/kasoku/internal/rpc"
 	"github.com/DevLikhith5/kasoku/internal/server"
@@ -44,9 +48,10 @@ type Node struct {
 	ring           *ring.Ring
 	members        *MemberList
 	hints          *HintStore
+	phiDetectors   *PhiDetectorMap
 	cluster        *Cluster
 	httpSrv        *server.Server
-	httpServer     *http.Server  // Bug 6/7 fix: stored so Stop() can shut it down
+	httpServer     *http.Server // Bug 6/7 fix: stored so Stop() can shut it down
 	versionCounter versionCounter
 	timeoutTracker *AdaptiveTimeout
 	logger         *slog.Logger
@@ -84,6 +89,7 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 		ring:           r,
 		members:        NewMemberList(cfg.NodeID),
 		hints:          NewHintStore(),
+		phiDetectors:   NewPhiDetectorMap(),
 		timeoutTracker: NewAdaptiveTimeout(),
 		logger:         slog.Default(),
 		done:           make(chan struct{}),
@@ -239,10 +245,66 @@ func (n *Node) HandleHint(key string, value []byte, targetNode string) error {
 	return n.hints.Store(key, value, targetNode)
 }
 
-// HandleMerkle returns a merkle tree summary for anti-entropy
+// HandleMerkle returns a serialized Merkle tree of all local keys
+// for anti-entropy comparison with peer nodes.
 func (n *Node) HandleMerkle() ([]byte, error) {
-	// Placeholder — full merkle tree implementation comes later
-	return []byte("merkle-summary-placeholder"), nil
+	tree, err := n.buildLocalMerkle()
+	if err != nil {
+		return nil, err
+	}
+	return merkle.Serialize(tree)
+}
+
+// buildLocalMerkle builds a Merkle tree from all keys in the local engine
+func (n *Node) buildLocalMerkle() (*merkle.Node, error) {
+	keys, err := n.engine.Keys()
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(keys)
+	tree := merkle.Build(keys, func(k string) []byte {
+		e, err := n.engine.Get(k)
+		if err != nil {
+			return nil
+		}
+		return e.Value
+	})
+	return tree, nil
+}
+
+// fetchRemoteMerkle fetches the Merkle tree from a remote peer via HTTP
+func (n *Node) fetchRemoteMerkle(peerID string) (*merkle.Node, error) {
+	addr, ok := n.cluster.nodeAddrMap[peerID]
+	if !ok {
+		addr = peerID
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	url := fmt.Sprintf("%s/internal/merkle", addr)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create merkle request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("merkle request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("merkle request failed: status %d", resp.StatusCode)
+	}
+
+	var buf []byte
+	buf, err = readAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read merkle response: %w", err)
+	}
+
+	return merkle.Deserialize(buf)
 }
 
 // --- Background goroutines ---
@@ -299,7 +361,8 @@ func (n *Node) gossipLoop() {
 	}
 }
 
-// antiEntropyLoop periodically syncs data with peers
+// antiEntropyLoop periodically syncs data with peers using Merkle tree comparison.
+// This catches divergence that hinted handoff missed (e.g. hints expired after 24h).
 func (n *Node) antiEntropyLoop() {
 	defer n.wg.Done()
 
@@ -309,18 +372,92 @@ func (n *Node) antiEntropyLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			peers := n.members.Members()
-			for _, peer := range peers {
-				if peer == n.cfg.NodeID {
-					continue
-				}
-				// Sync with peer — placeholder for full merkle-based sync
-				n.logger.Debug("anti-entropy sync", "peer", peer)
-			}
+			n.runAntiEntropy()
 		case <-n.done:
 			return
 		}
 	}
+}
+
+// runAntiEntropy performs Merkle-tree-based sync with all alive peers
+func (n *Node) runAntiEntropy() {
+	peers := n.members.Members()
+	for _, peerID := range peers {
+		if peerID == n.cfg.NodeID {
+			continue
+		}
+		if !n.members.IsAlive(peerID) {
+			continue
+		}
+		if err := n.syncWithPeer(peerID); err != nil {
+			n.logger.Warn("anti-entropy sync failed",
+				"peer", peerID, "error", err)
+		}
+	}
+}
+
+// syncWithPeer builds a local Merkle tree, fetches the remote one, diffs them,
+// and synchronizes any divergent keys by comparing versions.
+func (n *Node) syncWithPeer(peerID string) error {
+	// Build local Merkle tree
+	localTree, err := n.buildLocalMerkle()
+	if err != nil {
+		return fmt.Errorf("build local merkle: %w", err)
+	}
+
+	// Get remote Merkle tree
+	remoteTree, err := n.fetchRemoteMerkle(peerID)
+	if err != nil {
+		return fmt.Errorf("fetch remote merkle: %w", err)
+	}
+
+	// Find differing keys — O(K log N) instead of O(N)
+	diffKeys := merkle.Diff(localTree, remoteTree)
+	if len(diffKeys) == 0 {
+		n.logger.Debug("anti-entropy: in sync", "peer", peerID)
+		return nil
+	}
+
+	n.logger.Info("anti-entropy: syncing",
+		"peer", peerID, "diff_count", len(diffKeys))
+
+	// For each differing key, compare versions and sync the winner
+	for _, key := range diffKeys {
+		localEntry, localErr := n.engine.Get(key)
+		remoteEntry, remoteErr := n.remoteGet(context.Background(), peerID, key)
+
+		switch {
+		case localErr != nil && remoteErr == nil:
+			// Remote has it, we don't — pull it
+			if err := n.engine.Put(key, remoteEntry.Value); err != nil {
+				n.logger.Warn("anti-entropy pull failed", "key", key, "error", err)
+			}
+		case localErr == nil && remoteErr != nil:
+			// We have it, remote doesn't — push it
+			if !errors.Is(remoteErr, storage.ErrKeyNotFound) {
+				break // remote error, not a missing key
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			if err := n.remoteReplicate(ctx, peerID, key, localEntry.Value, false, localEntry.Version); err != nil {
+				n.logger.Warn("anti-entropy push failed", "key", key, "error", err)
+			}
+			cancel()
+		case localErr == nil && remoteErr == nil:
+			// Both have it — highest version wins
+			if localEntry.Version < remoteEntry.Version {
+				if err := n.engine.Put(key, remoteEntry.Value); err != nil {
+					n.logger.Warn("anti-entropy pull failed", "key", key, "error", err)
+				}
+			} else if localEntry.Version > remoteEntry.Version {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				if err := n.remoteReplicate(ctx, peerID, key, localEntry.Value, false, localEntry.Version); err != nil {
+					n.logger.Warn("anti-entropy push failed", "key", key, "error", err)
+				}
+				cancel()
+			}
+		}
+	}
+	return nil
 }
 
 // hintDeliveryLoop periodically retries delivering hinted handoffs.
@@ -349,4 +486,10 @@ func (n *Node) hintDeliveryLoop() {
 			return
 		}
 	}
+}
+
+// readAll is a small helper wrapping io.ReadAll so fetchRemoteMerkle
+// doesn't need an inline alias for the io package.
+func readAll(r io.Reader) ([]byte, error) {
+	return io.ReadAll(r)
 }

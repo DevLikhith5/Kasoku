@@ -30,19 +30,19 @@ func (s MemberState) String() string {
 
 // Member represents a single cluster member
 type Member struct {
-	NodeID     string
-	Address    string
-	State      MemberState
-	LastSeen   time.Time
+	NodeID      string
+	Address     string
+	State       MemberState
+	LastSeen    time.Time
 	Incarnation int // incremented when member updates its own state
 }
 
 // MemberList maintains the gossip-based membership view of the cluster
 type MemberList struct {
-	mu       sync.RWMutex
-	self     string
-	members  map[string]*Member // nodeID -> Member
-	seeded   bool
+	mu      sync.RWMutex
+	self    string
+	members map[string]*Member // nodeID -> Member
+
 }
 
 // NewMemberList creates a new membership list with the given node as self

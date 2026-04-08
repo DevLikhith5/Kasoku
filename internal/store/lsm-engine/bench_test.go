@@ -1,6 +1,7 @@
 package lsmengine
 
 import (
+	crand "crypto/rand"
 	"fmt"
 	"math/rand"
 	"os"
@@ -48,7 +49,7 @@ func Benchmark_Put_Sequential_1KB(b *testing.B) {
 	defer engine.Close()
 
 	value := make([]byte, 1024)
-	rand.Read(value)
+	crand.Read(value)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -74,7 +75,7 @@ func Benchmark_Put_Sequential_10KB(b *testing.B) {
 	defer engine.Close()
 
 	value := make([]byte, 10*1024)
-	rand.Read(value)
+	crand.Read(value)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -384,7 +385,6 @@ func Benchmark_SSTable_Write(b *testing.B) {
 		}
 	}
 
-	
 	for i := 0; b.Loop(); i++ {
 		path := fmt.Sprintf("%s/test-%d.sst", dir, i)
 		writer, err := NewSSTableWriter(path, 10000, 0.01)

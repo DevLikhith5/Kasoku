@@ -36,18 +36,18 @@ func (s NodeState) String() string {
 
 // NodeInfo contains metadata about a cluster node
 type NodeInfo struct {
-	NodeID    string
-	Address   string
-	State     NodeState
-	LastSeen  time.Time
-	AddedAt   time.Time
-	Metadata  map[string]string
+	NodeID   string
+	Address  string
+	State    NodeState
+	LastSeen time.Time
+	AddedAt  time.Time
+	Metadata map[string]string
 }
 
 // NodeRegistry maintains the state of all nodes in the cluster
 type NodeRegistry struct {
 	mu              sync.RWMutex
-	stopOnce        sync.Once    // Bug 5 fix: prevents double-close panic on Stop()
+	stopOnce        sync.Once // Bug 5 fix: prevents double-close panic on Stop()
 	nodes           map[string]*NodeInfo
 	nodeIDByAddr    map[string]string
 	healthCheckFunc func(ctx context.Context, addr string) error

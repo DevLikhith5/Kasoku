@@ -31,8 +31,8 @@ type SSTableWriter struct {
 	offset    int64
 	count     int
 	blockSize int
-	blockBuf  []byte
-	compress  bool
+
+	compress bool
 }
 
 func NewSSTableWriter(path string, expectedEntries int, bloomFPRate float64) (*SSTableWriter, error) {
@@ -152,11 +152,10 @@ type SSTableReader struct {
 
 // BlockCache is an LRU cache for data blocks
 type BlockCache struct {
-	mu          sync.Mutex
-	cache       map[string][]byte
-	keys        []string
-	maxSize     int
-	currentSize int
+	mu      sync.Mutex
+	cache   map[string][]byte
+	keys    []string
+	maxSize int
 }
 
 // NewBlockCache creates an LRU block cache
@@ -227,7 +226,7 @@ var blockCacheOnce sync.Once
 // InitBlockCache initializes the global block cache from config (size in bytes)
 func InitBlockCache(sizeBytes int64) {
 	blockCacheOnce.Do(func() {
-		maxBlocks := max(int(sizeBytes) / DefaultBlockSize, 1)
+		maxBlocks := max(int(sizeBytes)/DefaultBlockSize, 1)
 		globalBlockCache = NewBlockCache(maxBlocks)
 	})
 }

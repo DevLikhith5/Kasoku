@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -249,9 +250,9 @@ func TestQuorumChecker_GetRequiredQuorum(t *testing.T) {
 
 func TestAntiEntropy_StartStop(t *testing.T) {
 	logger := slog.Default()
-	syncCount := 0
+	var syncCount atomic.Int32
 	syncFunc := func(ctx context.Context, peerID string) error {
-		syncCount++
+		syncCount.Add(1)
 		return nil
 	}
 
@@ -262,16 +263,16 @@ func TestAntiEntropy_StartStop(t *testing.T) {
 	time.Sleep(250 * time.Millisecond)
 	ae.Stop()
 
-	if syncCount == 0 {
+	if syncCount.Load() == 0 {
 		t.Error("expected at least one sync to occur")
 	}
 }
 
 func TestAntiEntropy_SkipsSelf(t *testing.T) {
 	logger := slog.Default()
-	syncCount := 0
+	var syncCount atomic.Int32
 	syncFunc := func(ctx context.Context, peerID string) error {
-		syncCount++
+		syncCount.Add(1)
 		return nil
 	}
 
@@ -282,8 +283,8 @@ func TestAntiEntropy_SkipsSelf(t *testing.T) {
 	ae.Stop()
 
 	// Should only sync with node-2, not node-1
-	if syncCount != 1 {
-		t.Errorf("expected 1 sync (skipping self), got %d", syncCount)
+	if syncCount.Load() != 1 {
+		t.Errorf("expected 1 sync (skipping self), got %d", syncCount.Load())
 	}
 }
 

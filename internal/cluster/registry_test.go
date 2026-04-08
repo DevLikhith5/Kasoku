@@ -167,7 +167,7 @@ func TestNodeRegistry_GetNodeAddress(t *testing.T) {
 
 func TestNodeRegistry_HealthChecks(t *testing.T) {
 	logger := slog.Default()
-	
+
 	// Mock health check function
 	healthyNodes := map[string]bool{
 		"http://localhost:8080": true,
@@ -288,7 +288,7 @@ func TestNodeRegistry_Stop(t *testing.T) {
 
 func TestNodeRegistry_HealthChecksSkipsLeavingNodes(t *testing.T) {
 	logger := slog.Default()
-	
+
 	checkCount := 0
 	healthCheckFunc := func(ctx context.Context, addr string) error {
 		checkCount++
@@ -310,7 +310,7 @@ func TestNodeRegistry_HealthChecksSkipsLeavingNodes(t *testing.T) {
 
 func TestNodeRegistry_HealthChecksSkipsDownNodes(t *testing.T) {
 	logger := slog.Default()
-	
+
 	checkCount := 0
 	healthCheckFunc := func(ctx context.Context, addr string) error {
 		checkCount++
