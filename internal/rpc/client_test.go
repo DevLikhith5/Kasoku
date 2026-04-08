@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// TestClient_NewClient tests client creation
 func TestClient_NewClient(t *testing.T) {
 	client := NewClient("http://localhost:8080")
 	if client == nil {
@@ -27,7 +26,6 @@ func TestClient_NewClient(t *testing.T) {
 	}
 }
 
-// TestClient_ReplicatedPut tests replicated put via HTTP mock server
 func TestClient_ReplicatedPut(t *testing.T) {
 	var receivedKey string
 	var receivedValue []byte
@@ -69,7 +67,6 @@ func TestClient_ReplicatedPut(t *testing.T) {
 	}
 }
 
-// TestClient_ReplicatedGet tests replicated get via HTTP mock server
 func TestClient_ReplicatedGet(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -108,7 +105,6 @@ func TestClient_ReplicatedGet(t *testing.T) {
 	}
 }
 
-// TestClient_ReplicatedGetNotFound tests get for non-existent key
 func TestClient_ReplicatedGetNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -131,7 +127,6 @@ func TestClient_ReplicatedGetNotFound(t *testing.T) {
 	}
 }
 
-// TestClient_ReplicatedDelete tests replicated delete
 func TestClient_ReplicatedDelete(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
@@ -158,7 +153,6 @@ func TestClient_ReplicatedDelete(t *testing.T) {
 	}
 }
 
-// TestClient_ReplicatedDeleteNotFound tests delete for non-existent key
 func TestClient_ReplicatedDeleteNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -181,7 +175,6 @@ func TestClient_ReplicatedDeleteNotFound(t *testing.T) {
 	}
 }
 
-// TestClient_HealthCheck tests health check endpoint
 func TestClient_HealthCheck(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/health" {
@@ -200,7 +193,6 @@ func TestClient_HealthCheck(t *testing.T) {
 	}
 }
 
-// TestClient_HealthCheckFailing tests failing health check
 func TestClient_HealthCheckFailing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -216,7 +208,6 @@ func TestClient_HealthCheckFailing(t *testing.T) {
 	}
 }
 
-// TestClient_ContextCancellation tests context cancellation
 func TestClient_ContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Simulate slow response
@@ -234,7 +225,6 @@ func TestClient_ContextCancellation(t *testing.T) {
 	}
 }
 
-// TestClient_InvalidJSON tests handling of invalid JSON
 func TestClient_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -254,7 +244,6 @@ func TestClient_InvalidJSON(t *testing.T) {
 	}
 }
 
-// TestClient_ServerError tests handling of server errors
 func TestClient_ServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -271,7 +260,6 @@ func TestClient_ServerError(t *testing.T) {
 	}
 }
 
-// TestClient_ConnectionRefused tests connection refused error
 func TestClient_ConnectionRefused(t *testing.T) {
 	client := NewClient("http://localhost:1") // Invalid port
 	ctx := context.Background()
@@ -282,7 +270,6 @@ func TestClient_ConnectionRefused(t *testing.T) {
 	}
 }
 
-// TestClient_DoRequestWithNilBody tests request with nil body
 func TestClient_DoRequestWithNilBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -298,7 +285,6 @@ func TestClient_DoRequestWithNilBody(t *testing.T) {
 	}
 }
 
-// TestClient_DoRequestWithNilResult tests request with nil result
 func TestClient_DoRequestWithNilResult(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -315,7 +301,6 @@ func TestClient_DoRequestWithNilResult(t *testing.T) {
 	}
 }
 
-// TestClient_MarshalingError tests error handling for marshaling failure
 func TestClient_MarshalingError(t *testing.T) {
 	client := NewClient("http://localhost:8080")
 	ctx := context.Background()
@@ -333,7 +318,6 @@ func TestClient_MarshalingError(t *testing.T) {
 	}
 }
 
-// BenchmarkClient_ReplicatedPut benchmarks replicated put
 func BenchmarkClient_ReplicatedPut(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -352,7 +336,6 @@ func BenchmarkClient_ReplicatedPut(b *testing.B) {
 	}
 }
 
-// BenchmarkClient_ReplicatedGet benchmarks replicated get
 func BenchmarkClient_ReplicatedGet(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -373,7 +356,6 @@ func BenchmarkClient_ReplicatedGet(b *testing.B) {
 	}
 }
 
-// BenchmarkClient_HealthCheck benchmarks health check
 func BenchmarkClient_HealthCheck(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

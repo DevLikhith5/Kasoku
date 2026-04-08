@@ -150,7 +150,6 @@ type SSTableReader struct {
 	mu         sync.RWMutex
 }
 
-// BlockCache is an LRU cache for data blocks
 type BlockCache struct {
 	mu      sync.Mutex
 	cache   map[string][]byte
@@ -158,7 +157,6 @@ type BlockCache struct {
 	maxSize int
 }
 
-// NewBlockCache creates an LRU block cache
 func NewBlockCache(maxBlocks int) *BlockCache {
 	return &BlockCache{
 		cache:   make(map[string][]byte),
@@ -167,7 +165,6 @@ func NewBlockCache(maxBlocks int) *BlockCache {
 	}
 }
 
-// Get retrieves a block from cache
 func (bc *BlockCache) Get(key string) ([]byte, bool) {
 	bc.mu.Lock() // Write lock needed because we update LRU order
 	defer bc.mu.Unlock()
@@ -189,7 +186,6 @@ func (bc *BlockCache) Get(key string) ([]byte, bool) {
 	return data, true
 }
 
-// Put adds a block to cache with LRU eviction
 func (bc *BlockCache) Put(key string, data []byte) {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
@@ -223,7 +219,6 @@ func (bc *BlockCache) Put(key string, data []byte) {
 var globalBlockCache *BlockCache
 var blockCacheOnce sync.Once
 
-// InitBlockCache initializes the global block cache from config (size in bytes)
 func InitBlockCache(sizeBytes int64) {
 	blockCacheOnce.Do(func() {
 		maxBlocks := max(int(sizeBytes)/DefaultBlockSize, 1)
@@ -231,7 +226,6 @@ func InitBlockCache(sizeBytes int64) {
 	})
 }
 
-// GetBlockCache returns the global block cache
 func GetBlockCache() *BlockCache {
 	if globalBlockCache == nil {
 		// Default: 128MB / 4KB = 32768 blocks
@@ -345,7 +339,6 @@ func (r *SSTableReader) Get(key string) (storage.Entry, error) {
 	return result, nil
 }
 
-// Scan returns all entries with the given prefix
 func (r *SSTableReader) Scan(prefix string) ([]storage.Entry, error) {
 	// Binary search for start of prefix range in index
 	start := sort.Search(len(r.index), func(i int) bool {

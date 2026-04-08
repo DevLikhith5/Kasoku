@@ -87,7 +87,6 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 	return fmt.Errorf("write quorum failed: only %d/%d acks", acks, n.cfg.W)
 }
 
-// ReplicatedGet reads from R replicas and returns highest version
 func (n *Node) ReplicatedGet(ctx context.Context, key string) ([]byte, error) {
 	entry, err := n.replicatedGetEntry(ctx, key)
 	if err != nil {
@@ -99,7 +98,6 @@ func (n *Node) ReplicatedGet(ctx context.Context, key string) ([]byte, error) {
 	return entry.Value, nil
 }
 
-// replicatedGetEntry returns the full Entry (including version) for internal use
 func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entry, error) {
 	replicas := n.ring.GetNodes(key, n.cfg.N)
 	if len(replicas) == 0 {
@@ -150,7 +148,6 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 	return storage.Entry{}, fmt.Errorf("read quorum failed")
 }
 
-// ReplicatedDelete deletes a key from all replicas with tombstone
 func (n *Node) ReplicatedDelete(ctx context.Context, key string) error {
 	replicas := n.ring.GetNodes(key, n.cfg.N)
 	if len(replicas) == 0 {
@@ -215,7 +212,6 @@ func (n *Node) ReplicatedDelete(ctx context.Context, key string) error {
 	return fmt.Errorf("delete quorum failed: only %d/%d acks", acks, n.cfg.W)
 }
 
-// latestEntry finds the response with the highest version number
 func latestEntry(responses []replicaResult) replicaResult {
 	latest := responses[0]
 	for _, r := range responses[1:] {
@@ -226,7 +222,6 @@ func latestEntry(responses []replicaResult) replicaResult {
 	return latest
 }
 
-// readRepair proactively updates replicas that have stale data
 func (n *Node) readRepair(ctx context.Context, key string,
 	latest replicaResult, all []replicaResult) {
 	for _, r := range all {
@@ -247,7 +242,6 @@ func (n *Node) readRepair(ctx context.Context, key string,
 	}
 }
 
-// remoteReplicate sends a write to another node via HTTP
 func (n *Node) remoteReplicate(ctx context.Context,
 	nodeID, key string, value []byte, tombstone bool, version uint64) error {
 	addr, ok := n.cluster.nodeAddrMap[nodeID]
@@ -286,7 +280,6 @@ func (n *Node) remoteReplicate(ctx context.Context,
 	return nil
 }
 
-// remoteGet fetches an entry from another node via HTTP
 func (n *Node) remoteGet(ctx context.Context, nodeID, key string) (storage.Entry, error) {
 	addr, ok := n.cluster.nodeAddrMap[nodeID]
 	if !ok {

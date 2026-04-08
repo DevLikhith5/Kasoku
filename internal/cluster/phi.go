@@ -79,12 +79,10 @@ func (d *PhiDetector) Phi() float64 {
 	return (elapsed / mean) / math.Log(10)
 }
 
-// IsAlive returns true if the phi value is below the threshold
 func (d *PhiDetector) IsAlive() bool {
 	return d.Phi() < PhiThreshold
 }
 
-// mean calculates the arithmetic mean of all recorded intervals
 func (d *PhiDetector) mean() float64 {
 	if len(d.intervals) == 0 {
 		return 0
@@ -103,12 +101,10 @@ type PhiDetectorMap struct {
 	detectors map[string]*PhiDetector
 }
 
-// NewPhiDetectorMap creates a new map of per-node phi detectors
 func NewPhiDetectorMap() *PhiDetectorMap {
 	return &PhiDetectorMap{detectors: make(map[string]*PhiDetector)}
 }
 
-// Heartbeat records a heartbeat from the given node
 func (m *PhiDetectorMap) Heartbeat(nodeID string) {
 	m.mu.Lock()
 	if _, ok := m.detectors[nodeID]; !ok {
@@ -119,7 +115,6 @@ func (m *PhiDetectorMap) Heartbeat(nodeID string) {
 	d.Heartbeat()
 }
 
-// IsAlive checks if a node is considered alive based on phi accrual
 func (m *PhiDetectorMap) IsAlive(nodeID string) bool {
 	m.mu.RLock()
 	d, ok := m.detectors[nodeID]
@@ -130,7 +125,6 @@ func (m *PhiDetectorMap) IsAlive(nodeID string) bool {
 	return d.IsAlive()
 }
 
-// Phi returns the current phi value for a node
 func (m *PhiDetectorMap) Phi(nodeID string) float64 {
 	m.mu.RLock()
 	d, ok := m.detectors[nodeID]
@@ -141,7 +135,6 @@ func (m *PhiDetectorMap) Phi(nodeID string) float64 {
 	return d.Phi()
 }
 
-// Remove removes a node's detector
 func (m *PhiDetectorMap) Remove(nodeID string) {
 	m.mu.Lock()
 	delete(m.detectors, nodeID)

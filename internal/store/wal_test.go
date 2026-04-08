@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockWALHandler for testing WAL replay
 type MockWALHandler struct {
 	entries []Entry
 	version uint64

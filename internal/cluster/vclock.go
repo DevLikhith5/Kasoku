@@ -10,7 +10,6 @@ package cluster
 // and node-2 has done 1 write as observed by this clock.
 type VectorClock map[string]uint64
 
-// NewVectorClock creates an empty vector clock
 func NewVectorClock() VectorClock {
 	return make(VectorClock)
 }
@@ -36,7 +35,6 @@ func (vc VectorClock) Merge(other VectorClock) VectorClock {
 	return result
 }
 
-// Ordering represents the causal relationship between two vector clocks
 type Ordering int
 
 const (
@@ -96,7 +94,6 @@ func (vc VectorClock) Compare(other VectorClock) Ordering {
 	}
 }
 
-// Clone creates a deep copy of the vector clock
 func (vc VectorClock) Clone() VectorClock {
 	c := make(VectorClock, len(vc))
 	for k, v := range vc {
@@ -105,12 +102,10 @@ func (vc VectorClock) Clone() VectorClock {
 	return c
 }
 
-// IsZero returns true if the clock has no entries
 func (vc VectorClock) IsZero() bool {
 	return len(vc) == 0
 }
 
-// unionKeys returns the union of keys from two vector clocks
 func unionKeys(a, b VectorClock) []string {
 	seen := make(map[string]bool)
 	for k := range a {

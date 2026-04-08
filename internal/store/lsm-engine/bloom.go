@@ -12,7 +12,6 @@ type BloomFilter struct {
 	numHash int
 }
 
-// NewBloomFilter creates a filter for n items with false positive rate p
 func NewBloomFilter(n int, p float64) *BloomFilter {
 	if n <= 0 {
 		n = 1000
@@ -40,7 +39,6 @@ func NewBloomFilter(n int, p float64) *BloomFilter {
 	}
 }
 
-// hash produces two hashes using FNV-1a + mixing
 func (bf *BloomFilter) hash(key []byte) (h1, h2 uint64) {
 	const prime64 = 1099511628211
 	const offset64 = 14695981039346656037
@@ -59,7 +57,6 @@ func (bf *BloomFilter) hash(key []byte) (h1, h2 uint64) {
 	return h1, h2
 }
 
-// Add inserts a key into the filter
 func (bf *BloomFilter) Add(key []byte) {
 	h1, h2 := bf.hash(key)
 
@@ -69,7 +66,6 @@ func (bf *BloomFilter) Add(key []byte) {
 	}
 }
 
-// MightContain checks if key may exist
 func (bf *BloomFilter) MightContain(key []byte) bool {
 	h1, h2 := bf.hash(key)
 
@@ -83,7 +79,6 @@ func (bf *BloomFilter) MightContain(key []byte) bool {
 	return true // probably present
 }
 
-// Encode serializes the filter
 func (bf *BloomFilter) Encode() []byte {
 	// Format: [numBits uint64][numHash uint32][bits...]
 	buf := make([]byte, 12+8*len(bf.bits))
@@ -98,7 +93,6 @@ func (bf *BloomFilter) Encode() []byte {
 	return buf
 }
 
-// DecodeBloomFilter safely reconstructs a filter
 func DecodeBloomFilter(data []byte) (*BloomFilter, error) {
 	if len(data) < 12 {
 		return nil, errors.New("bloom filter: data too short")

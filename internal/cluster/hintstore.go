@@ -6,7 +6,6 @@ import (
 	"time"
 )
 
-// Hint represents a hinted handoff entry
 type Hint struct {
 	Key        string
 	Value      []byte
@@ -22,14 +21,12 @@ type HintStore struct {
 	hints []*Hint
 }
 
-// NewHintStore creates a new hinted handoff store
 func NewHintStore() *HintStore {
 	return &HintStore{
 		hints: make([]*Hint, 0),
 	}
 }
 
-// Store adds a hint for later delivery
 func (hs *HintStore) Store(key string, value []byte, targetNode string) error {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
@@ -43,7 +40,6 @@ func (hs *HintStore) Store(key string, value []byte, targetNode string) error {
 	return nil
 }
 
-// GetHintsForNode returns all hints targeting a specific node
 func (hs *HintStore) GetHintsForNode(nodeID string) []*Hint {
 	hs.mu.RLock()
 	defer hs.mu.RUnlock()
@@ -57,7 +53,6 @@ func (hs *HintStore) GetHintsForNode(nodeID string) []*Hint {
 	return result
 }
 
-// RemoveHint removes a hint after successful delivery
 func (hs *HintStore) RemoveHint(key string, targetNode string) {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
@@ -111,7 +106,6 @@ func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, val
 	}
 }
 
-// PendingCount returns the number of pending hints
 func (hs *HintStore) PendingCount() int {
 	hs.mu.RLock()
 	defer hs.mu.RUnlock()

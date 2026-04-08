@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// NodeState represents the state of a cluster node
 type NodeState int
 
 const (
@@ -34,7 +33,6 @@ func (s NodeState) String() string {
 	}
 }
 
-// NodeInfo contains metadata about a cluster node
 type NodeInfo struct {
 	NodeID   string
 	Address  string
@@ -44,7 +42,6 @@ type NodeInfo struct {
 	Metadata map[string]string
 }
 
-// NodeRegistry maintains the state of all nodes in the cluster
 type NodeRegistry struct {
 	mu              sync.RWMutex
 	stopOnce        sync.Once // Bug 5 fix: prevents double-close panic on Stop()
@@ -57,7 +54,6 @@ type NodeRegistry struct {
 	logger          *slog.Logger
 }
 
-// NewNodeRegistry creates a new node registry
 func NewNodeRegistry(healthCheckFunc func(ctx context.Context, addr string) error, interval time.Duration, logger *slog.Logger) *NodeRegistry {
 	if logger == nil {
 		logger = slog.Default()
@@ -74,7 +70,6 @@ func NewNodeRegistry(healthCheckFunc func(ctx context.Context, addr string) erro
 	}
 }
 
-// Register adds a new node to the registry
 func (r *NodeRegistry) Register(nodeID, address string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -98,7 +93,6 @@ func (r *NodeRegistry) Register(nodeID, address string) {
 	r.logger.Info("node registered", "node_id", nodeID, "address", address)
 }
 
-// Unregister removes a node from the registry
 func (r *NodeRegistry) Unregister(nodeID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -114,7 +108,6 @@ func (r *NodeRegistry) Unregister(nodeID string) {
 	r.logger.Info("node unregistered", "node_id", nodeID)
 }
 
-// GetNode returns node info by ID
 func (r *NodeRegistry) GetNode(nodeID string) (*NodeInfo, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -129,7 +122,6 @@ func (r *NodeRegistry) GetNode(nodeID string) (*NodeInfo, bool) {
 	return &nodeCopy, true
 }
 
-// GetNodeByAddr returns node info by address
 func (r *NodeRegistry) GetNodeByAddr(address string) (*NodeInfo, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -148,7 +140,6 @@ func (r *NodeRegistry) GetNodeByAddr(address string) (*NodeInfo, bool) {
 	return &nodeCopy, true
 }
 
-// SetNodeState updates the state of a node
 func (r *NodeRegistry) SetNodeState(nodeID string, state NodeState) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -167,7 +158,6 @@ func (r *NodeRegistry) SetNodeState(nodeID string, state NodeState) {
 	}
 }
 
-// GetHealthyNodes returns all nodes in healthy state
 func (r *NodeRegistry) GetHealthyNodes() []*NodeInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -183,7 +173,6 @@ func (r *NodeRegistry) GetHealthyNodes() []*NodeInfo {
 	return healthy
 }
 
-// GetAllNodes returns all registered nodes
 func (r *NodeRegistry) GetAllNodes() []*NodeInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -197,7 +186,6 @@ func (r *NodeRegistry) GetAllNodes() []*NodeInfo {
 	return nodes
 }
 
-// GetNodeAddress returns the address for a node
 func (r *NodeRegistry) GetNodeAddress(nodeID string) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -210,7 +198,6 @@ func (r *NodeRegistry) GetNodeAddress(nodeID string) (string, bool) {
 	return node.Address, true
 }
 
-// StartHealthChecks begins periodic health checking
 func (r *NodeRegistry) StartHealthChecks() {
 	if r.healthCheckFunc == nil {
 		r.logger.Warn("no health check function provided, health checks disabled")
@@ -243,7 +230,6 @@ func (r *NodeRegistry) Stop() {
 	})
 }
 
-// runHealthChecks performs health checks on all nodes
 func (r *NodeRegistry) runHealthChecks() {
 	r.mu.RLock()
 	nodes := make([]*NodeInfo, 0, len(r.nodes))
@@ -280,14 +266,12 @@ func (r *NodeRegistry) runHealthChecks() {
 	}
 }
 
-// NodeCount returns the number of registered nodes
 func (r *NodeRegistry) NodeCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return len(r.nodes)
 }
 
-// HealthyNodeCount returns the number of healthy nodes
 func (r *NodeRegistry) HealthyNodeCount() int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -302,7 +286,6 @@ func (r *NodeRegistry) HealthyNodeCount() int {
 	return count
 }
 
-// String returns a string representation of the registry
 func (r *NodeRegistry) String() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

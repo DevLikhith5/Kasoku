@@ -19,7 +19,6 @@ import (
 	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
 )
 
-// testNode wraps a Node + its httptest.Server for integration testing
 type testNode struct {
 	node     *Node
 	server   *httptest.Server
@@ -453,7 +452,6 @@ func TestReplication_EndToEndWithHTTPClient(t *testing.T) {
 	}
 }
 
-// TestReplication_Scan tests the scan endpoint.
 func TestReplication_Scan(t *testing.T) {
 	r := ring.New(150)
 	node1 := newTestNode(t, "node-1", r)
@@ -487,7 +485,6 @@ func TestReplication_Scan(t *testing.T) {
 	}
 }
 
-// TestReplication_HealthAndStatus tests the health and status endpoints.
 func TestReplication_HealthAndStatus(t *testing.T) {
 	r := ring.New(150)
 	node1 := newTestNode(t, "node-1", r)

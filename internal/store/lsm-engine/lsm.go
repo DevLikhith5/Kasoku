@@ -39,13 +39,11 @@ type LSMConfig struct {
 	LevelRatio          float64
 }
 
-// PutEntry implements WALReplayHandler for LSMEngine
 func (e *LSMEngine) PutEntry(entry storage.Entry) error {
 	e.active.Put(entry)
 	return nil
 }
 
-// SetVersion implements WALReplayHandler for LSMEngine
 func (e *LSMEngine) SetVersion(version uint64) {
 	e.version.Store(version)
 }
@@ -390,7 +388,6 @@ func (e *LSMEngine) compactLevel(level int) {
 	slog.Info("[COMPACTION] done", "src_level", level, "dst_level", nextLevel, "entries", len(deduped))
 }
 
-// Flush forces a flush of the active memtable to disk
 func (e *LSMEngine) Flush() error {
 	return e.flushMemTable()
 }
@@ -737,7 +734,6 @@ func (e *LSMEngine) Stats() storage.EngineStats {
 	}
 }
 
-// countUniqueKeys returns the count of unique, non-tombstoned keys
 func (e *LSMEngine) countUniqueKeys() int64 {
 	if e.closed.Load() {
 		return 0
@@ -785,7 +781,6 @@ func (e *LSMEngine) Close() error {
 	return e.wal.Close()
 }
 
-// TriggerCompaction manual triggers the background compaction process
 func (e *LSMEngine) TriggerCompaction() {
 	select {
 	case e.compCh <- struct{}{}:
@@ -793,7 +788,6 @@ func (e *LSMEngine) TriggerCompaction() {
 	}
 }
 
-// saveVersion persists the current version counter to disk
 func (e *LSMEngine) saveVersion() error {
 	versionPath := filepath.Join(e.dir, "VERSION")
 	tmpPath := versionPath + ".tmp"
@@ -816,7 +810,6 @@ func (e *LSMEngine) saveVersion() error {
 	return os.Rename(tmpPath, versionPath)
 }
 
-// loadVersion restores the version counter from disk
 func (e *LSMEngine) loadVersion() error {
 	versionPath := filepath.Join(e.dir, "VERSION")
 	data, err := os.ReadFile(versionPath)

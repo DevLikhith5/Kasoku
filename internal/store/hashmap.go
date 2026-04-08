@@ -16,13 +16,11 @@ type HashMapEngine struct {
 	wal     *WAL
 }
 
-// PutEntry implements WALReplayHandler for HashMapEngine
 func (h *HashMapEngine) PutEntry(entry Entry) error {
 	h.data[entry.Key] = entry
 	return nil
 }
 
-// SetVersion implements WALReplayHandler for HashMapEngine
 func (h *HashMapEngine) SetVersion(version uint64) {
 	h.version.Store(version)
 }

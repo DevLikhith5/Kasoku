@@ -5,14 +5,12 @@ import (
 	"net/http"
 )
 
-// APIResponse represents a standard API response
 type APIResponse struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
 }
 
-// GetResponse represents a GET response
 type GetResponse struct {
 	Key       string `json:"key"`
 	Value     []byte `json:"value"`
@@ -20,12 +18,10 @@ type GetResponse struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-// PutRequest represents a PUT request body
 type PutRequest struct {
 	Value string `json:"value"`
 }
 
-// ScanResponse represents a scan response
 type ScanResponse struct {
 	Keys []string `json:"keys"`
 }

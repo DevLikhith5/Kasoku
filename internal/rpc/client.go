@@ -10,13 +10,11 @@ import (
 	"time"
 )
 
-// Client handles RPC communication between nodes
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
 }
 
-// NewClient creates a new RPC client for communicating with a node
 func NewClient(nodeAddr string) *Client {
 	return &Client{
 		httpClient: &http.Client{
@@ -26,43 +24,36 @@ func NewClient(nodeAddr string) *Client {
 	}
 }
 
-// ReplicatedWriteRequest represents a write request to be replicated
 type ReplicatedWriteRequest struct {
 	Key   string `json:"key"`
 	Value []byte `json:"value"`
 }
 
-// ReplicatedWriteResponse is the response from a replicated write
 type ReplicatedWriteResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
 }
 
-// ReplicatedReadRequest represents a read request
 type ReplicatedReadRequest struct {
 	Key string `json:"key"`
 }
 
-// ReplicatedReadResponse is the response from a replicated read
 type ReplicatedReadResponse struct {
 	Found bool   `json:"found"`
 	Value []byte `json:"value,omitempty"`
 	Error string `json:"error,omitempty"`
 }
 
-// ReplicatedDeleteRequest represents a delete request to be replicated
 type ReplicatedDeleteRequest struct {
 	Key string `json:"key"`
 }
 
-// ReplicatedDeleteResponse is the response from a replicated delete
 type ReplicatedDeleteResponse struct {
 	Success bool   `json:"success"`
 	Deleted bool   `json:"deleted"`
 	Error   string `json:"error,omitempty"`
 }
 
-// ReplicatedPut sends a write request to a remote node for replication
 func (c *Client) ReplicatedPut(ctx context.Context, key string, value []byte) error {
 	reqBody := ReplicatedWriteRequest{
 		Key:   key,
@@ -73,7 +64,6 @@ func (c *Client) ReplicatedPut(ctx context.Context, key string, value []byte) er
 	return c.doRequest(ctx, http.MethodPut, url, reqBody, nil)
 }
 
-// ReplicatedGet fetches a value from a remote node
 func (c *Client) ReplicatedGet(ctx context.Context, key string) ([]byte, bool, error) {
 	reqBody := ReplicatedReadRequest{
 		Key: key,
@@ -94,7 +84,6 @@ func (c *Client) ReplicatedGet(ctx context.Context, key string) ([]byte, bool, e
 	return resp.Value, true, nil
 }
 
-// ReplicatedDelete sends a delete request to a remote node
 func (c *Client) ReplicatedDelete(ctx context.Context, key string) (bool, error) {
 	reqBody := ReplicatedDeleteRequest{
 		Key: key,
@@ -111,7 +100,6 @@ func (c *Client) ReplicatedDelete(ctx context.Context, key string) (bool, error)
 	return resp.Deleted, nil
 }
 
-// doRequest performs an HTTP request with JSON payload
 func (c *Client) doRequest(ctx context.Context, method, url string, body, result interface{}) error {
 	var reqBody io.Reader
 
@@ -154,17 +142,14 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body, result
 	return nil
 }
 
-// GossipRequest represents a gossip exchange
 type GossipRequest struct {
 	Members []string `json:"members"`
 }
 
-// GossipResponse is the response from a gossip exchange
 type GossipResponse struct {
 	Members []string `json:"members"`
 }
 
-// Gossip exchanges membership info with a peer. Returns the peer's member list.
 func (c *Client) Gossip(ctx context.Context, ourMembers []string) ([]string, error) {
 	reqBody := GossipRequest{
 		Members: ourMembers,
@@ -181,7 +166,6 @@ func (c *Client) Gossip(ctx context.Context, ourMembers []string) ([]string, err
 	return resp.Members, nil
 }
 
-// HealthCheck checks if a remote node is healthy
 func (c *Client) HealthCheck(ctx context.Context) error {
 	url := fmt.Sprintf("%s/health", c.baseURL)
 

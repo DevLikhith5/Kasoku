@@ -9,7 +9,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config holds all configuration for the Kasoku server
 type Config struct {
 	// Data directory for LSM storage
 	DataDir string `yaml:"data_dir" env:"KASOKU_DATA_DIR" default:"./data"`
@@ -42,7 +41,6 @@ type Config struct {
 	Cluster ClusterConfig `yaml:"cluster"`
 }
 
-// LSMConfig holds LSM engine specific settings
 type LSMConfig struct {
 	// Number of levels in LSM tree
 	Levels int `yaml:"levels" env:"KASOKU_LSM_LEVELS" default:"7"`
@@ -54,7 +52,6 @@ type LSMConfig struct {
 	L0BaseSize int64 `yaml:"l0_base_size" env:"KASOKU_LSM_L0_BASE_SIZE" default:"67108864"` // 64MB
 }
 
-// CompactionConfig holds compaction settings
 type CompactionConfig struct {
 	// Number of SSTables to trigger compaction
 	Threshold int `yaml:"threshold" env:"KASOKU_COMPACTION_THRESHOLD" default:"4"`
@@ -66,7 +63,6 @@ type CompactionConfig struct {
 	L0SizeThreshold int64 `yaml:"l0_size_threshold" env:"KASOKU_COMPACTION_L0_SIZE_THRESHOLD" default:"134217728"` // 128MB
 }
 
-// MemoryConfig holds memory-related settings
 type MemoryConfig struct {
 	// Memtable size in bytes
 	MemTableSize int64 `yaml:"memtable_size" env:"KASOKU_MEMTABLE_SIZE" default:"67108864"` // 64MB
@@ -81,7 +77,6 @@ type MemoryConfig struct {
 	BlockCacheSize int64 `yaml:"block_cache_size" env:"KASOKU_BLOCK_CACHE_SIZE" default:"134217728"` // 128MB
 }
 
-// WALConfig holds Write-Ahead Log settings
 type WALConfig struct {
 	// Sync every write (safer but slower)
 	Sync bool `yaml:"sync" env:"KASOKU_WAL_SYNC" default:"true"`
@@ -93,7 +88,6 @@ type WALConfig struct {
 	MaxFileSize int64 `yaml:"max_file_size" env:"KASOKU_WAL_MAX_FILE_SIZE" default:"67108864"` // 64MB
 }
 
-// ClusterConfig holds distributed cluster settings
 type ClusterConfig struct {
 	// Enable cluster mode
 	Enabled bool `yaml:"enabled" env:"KASOKU_CLUSTER_ENABLED" default:"false"`
@@ -126,7 +120,6 @@ type ClusterConfig struct {
 	RPCTimeoutMs int `yaml:"rpc_timeout_ms" env:"KASOKU_RPC_TIMEOUT_MS" default:"5000"`
 }
 
-// DefaultConfig returns a Config with default values
 func DefaultConfig() *Config {
 	return &Config{
 		DataDir:  "./data",
@@ -170,7 +163,6 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load loads configuration from a YAML file
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
@@ -198,7 +190,6 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// applyEnvOverrides applies environment variable overrides
 func applyEnvOverrides(cfg *Config) error {
 	// DataDir
 	if v := os.Getenv("KASOKU_DATA_DIR"); v != "" {
@@ -228,7 +219,6 @@ func applyEnvOverrides(cfg *Config) error {
 	return nil
 }
 
-// Validate validates the configuration
 func (c *Config) Validate() error {
 	if c.DataDir == "" {
 		return fmt.Errorf("data_dir cannot be empty")
@@ -265,7 +255,6 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// Save saves the configuration to a YAML file
 func (c *Config) Save(path string) error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
@@ -279,7 +268,6 @@ func (c *Config) Save(path string) error {
 	return nil
 }
 
-// String returns a string representation of the config (for logging)
 func (c *Config) String() string {
 	return fmt.Sprintf("Config{DataDir: %s, Port: %d, HTTPPort: %d, LogLevel: %s}",
 		c.DataDir, c.Port, c.HTTPPort, c.LogLevel)

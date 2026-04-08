@@ -19,7 +19,6 @@ import (
 	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
 )
 
-// NodeConfig holds all configuration for a Kasoku node
 type NodeConfig struct {
 	NodeID         string        // unique identifier, e.g. 'localhost:8080'
 	HTTPAddr       string        // address to listen on, e.g. ':8080'
@@ -31,7 +30,6 @@ type NodeConfig struct {
 	GossipInterval time.Duration // how often to gossip (default 1s)
 }
 
-// DefaultNodeConfig returns a NodeConfig with sensible defaults
 func DefaultNodeConfig() NodeConfig {
 	return NodeConfig{
 		N:              3,
@@ -41,7 +39,6 @@ func DefaultNodeConfig() NodeConfig {
 	}
 }
 
-// Node is a single Kasoku cluster member
 type Node struct {
 	cfg            NodeConfig
 	engine         *lsmengine.LSMEngine
@@ -60,7 +57,6 @@ type Node struct {
 	wg             sync.WaitGroup
 }
 
-// NewNode creates and initializes a new Kasoku node
 func NewNode(cfg NodeConfig) (*Node, error) {
 	if cfg.N <= 0 {
 		cfg.N = 3
@@ -114,7 +110,6 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 	return n, nil
 }
 
-// Start launches the node — HTTP server + background goroutines
 func (n *Node) Start() error {
 	// Join existing cluster nodes
 	for _, seed := range n.cfg.Seeds {
@@ -164,7 +159,6 @@ func (n *Node) Start() error {
 	return nil
 }
 
-// Stop signals all goroutines to stop and waits for them
 func (n *Node) Stop() {
 	n.stopOnce.Do(func() { close(n.done) }) // safe to call multiple times
 	n.wg.Wait()
@@ -173,7 +167,6 @@ func (n *Node) Stop() {
 
 // --- Node methods exposed to HTTP handlers ---
 
-// Scan returns all keys with the given prefix
 func (n *Node) Scan(ctx context.Context, prefix string) ([]string, error) {
 	entries, err := n.engine.Scan(prefix)
 	if err != nil {
@@ -186,22 +179,18 @@ func (n *Node) Scan(ctx context.Context, prefix string) ([]string, error) {
 	return keys, nil
 }
 
-// GetRing returns the consistent hashing ring
 func (n *Node) GetRing() *ring.Ring {
 	return n.ring
 }
 
-// GetMembers returns the current gossip member list
 func (n *Node) GetMembers() []string {
 	return n.members.Members()
 }
 
-// GetNodeID returns this node's ID
 func (n *Node) GetNodeID() string {
 	return n.cfg.NodeID
 }
 
-// GetStatus returns a map of node status information
 func (n *Node) GetStatus() map[string]any {
 	return map[string]any{
 		"node_id":       n.cfg.NodeID,
@@ -215,12 +204,10 @@ func (n *Node) GetStatus() map[string]any {
 	}
 }
 
-// HandleReplicate is called when another node asks us to replicate data
 func (n *Node) HandleReplicate(ctx context.Context, key string, value []byte) error {
 	return n.engine.Put(key, value)
 }
 
-// HandleReplicateGet is called when another node reads from us
 func (n *Node) HandleReplicateGet(ctx context.Context, key string) ([]byte, bool, error) {
 	entry, err := n.engine.Get(key)
 	if err != nil {
@@ -229,23 +216,19 @@ func (n *Node) HandleReplicateGet(ctx context.Context, key string) ([]byte, bool
 	return entry.Value, true, nil
 }
 
-// HandleReplicateGetEntry returns the full Entry for remote get (includes version/tombstone)
 func (n *Node) HandleReplicateGetEntry(ctx context.Context, key string) (storage.Entry, error) {
 	return n.engine.Get(key)
 }
 
-// HandleReplicateDelete is called when another node asks us to delete data
 func (n *Node) HandleReplicateDelete(ctx context.Context, key string) (bool, error) {
 	err := n.engine.Delete(key)
 	return err == nil, err
 }
 
-// HandleGossip processes an incoming gossip message and returns our view
 func (n *Node) HandleGossip(remoteMembers []string) []string {
 	return n.members.Merge(remoteMembers)
 }
 
-// HandleHint stores a hinted handoff entry
 func (n *Node) HandleHint(key string, value []byte, targetNode string) error {
 	return n.hints.Store(key, value, targetNode)
 }
@@ -260,7 +243,6 @@ func (n *Node) HandleMerkle() ([]byte, error) {
 	return merkle.Serialize(tree)
 }
 
-// buildLocalMerkle builds a Merkle tree from all keys in the local engine
 func (n *Node) buildLocalMerkle() (*merkle.Node, error) {
 	keys, err := n.engine.Keys()
 	if err != nil {
@@ -277,7 +259,6 @@ func (n *Node) buildLocalMerkle() (*merkle.Node, error) {
 	return tree, nil
 }
 
-// fetchRemoteMerkle fetches the Merkle tree from a remote peer via HTTP
 func (n *Node) fetchRemoteMerkle(peerID string) (*merkle.Node, error) {
 	addr, ok := n.cluster.nodeAddrMap[peerID]
 	if !ok {
@@ -314,7 +295,6 @@ func (n *Node) fetchRemoteMerkle(peerID string) (*merkle.Node, error) {
 
 // --- Background goroutines ---
 
-// joinSeed contacts a seed node to learn about the cluster
 func (n *Node) joinSeed(seedAddr string) error {
 	n.logger.Info("joining seed", "addr", seedAddr)
 
@@ -384,7 +364,6 @@ func (n *Node) antiEntropyLoop() {
 	}
 }
 
-// runAntiEntropy performs Merkle-tree-based sync with all alive peers
 func (n *Node) runAntiEntropy() {
 	peers := n.members.Members()
 	for _, peerID := range peers {

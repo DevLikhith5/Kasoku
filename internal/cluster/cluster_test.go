@@ -11,7 +11,6 @@ import (
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
-// MockStore is a simple in-memory store for testing
 type MockStore struct {
 	mu     sync.RWMutex
 	data   map[string][]byte
@@ -82,7 +81,6 @@ func (s *MockStore) Stats() storage.EngineStats {
 	return storage.EngineStats{}
 }
 
-// TestCluster_ReplicatedPut tests basic replicated put operation
 func TestCluster_ReplicatedPut(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -127,7 +125,6 @@ func TestCluster_ReplicatedPut(t *testing.T) {
 	}
 }
 
-// TestCluster_IsPrimary tests primary node detection
 func TestCluster_IsPrimary(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -164,7 +161,6 @@ func TestCluster_IsPrimary(t *testing.T) {
 	t.Logf("node-1 is primary for %d/100 keys", primaryCount)
 }
 
-// TestCluster_GetReplicas tests replica set retrieval
 func TestCluster_GetReplicas(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -202,7 +198,6 @@ func TestCluster_GetReplicas(t *testing.T) {
 	}
 }
 
-// TestCluster_NodeOperations tests add/remove peer operations
 func TestCluster_NodeOperations(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -228,7 +223,6 @@ func TestCluster_NodeOperations(t *testing.T) {
 	c.RemovePeer("http://localhost:8081", "http://localhost:8081")
 }
 
-// TestCluster_QuorumSize tests quorum configuration
 func TestCluster_QuorumSize(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -253,7 +247,6 @@ func TestCluster_QuorumSize(t *testing.T) {
 	}
 }
 
-// TestCluster_Distribution tests ring distribution with cluster
 func TestCluster_Distribution(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -283,7 +276,6 @@ func TestCluster_Distribution(t *testing.T) {
 	_ = c // Use cluster variable
 }
 
-// TestCluster_EmptyRing tests behavior with empty ring
 func TestCluster_EmptyRing(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -305,7 +297,6 @@ func TestCluster_EmptyRing(t *testing.T) {
 	}
 }
 
-// TestCluster_NilRing tests behavior with nil ring
 func TestCluster_NilRing(t *testing.T) {
 	store := NewMockStore()
 
@@ -324,7 +315,6 @@ func TestCluster_NilRing(t *testing.T) {
 	}
 }
 
-// TestCluster_ConcurrentAccess tests concurrent cluster operations
 func TestCluster_ConcurrentAccess(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -384,7 +374,6 @@ func TestCluster_ConcurrentAccess(t *testing.T) {
 	}
 }
 
-// TestCluster_GetNodeID tests node ID retrieval
 func TestCluster_GetNodeID(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -402,7 +391,6 @@ func TestCluster_GetNodeID(t *testing.T) {
 	}
 }
 
-// TestCluster_GetRing tests ring retrieval
 func TestCluster_GetRing(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -421,7 +409,6 @@ func TestCluster_GetRing(t *testing.T) {
 	}
 }
 
-// TestCluster_SetNodeAddr tests setting node address
 func TestCluster_SetNodeAddr(t *testing.T) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -438,7 +425,6 @@ func TestCluster_SetNodeAddr(t *testing.T) {
 	// This should create a client for node-2
 }
 
-// BenchmarkCluster_ReplicatedPut benchmarks replicated put operations
 func BenchmarkCluster_ReplicatedPut(b *testing.B) {
 	store := NewMockStore()
 	r := ring.New(150)
@@ -466,7 +452,6 @@ func BenchmarkCluster_ReplicatedPut(b *testing.B) {
 	}
 }
 
-// BenchmarkCluster_ReplicatedGet benchmarks replicated get operations
 func BenchmarkCluster_ReplicatedGet(b *testing.B) {
 	store := NewMockStore()
 	r := ring.New(150)

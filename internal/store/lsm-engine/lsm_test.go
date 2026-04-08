@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLSMEngine_Basic tests basic LSMEngine operations
 func TestLSMEngine_Basic(t *testing.T) {
 	t.Run("create engine", func(t *testing.T) {
 		dir := t.TempDir()
@@ -686,7 +685,6 @@ func TestLSMEngine_Concurrent(t *testing.T) {
 	})
 }
 
-// TestLSMEngine_PutEntryHandler tests the WAL replay handler
 func TestLSMEngine_PutEntryHandler(t *testing.T) {
 	t.Run("PutEntry adds to memtable", func(t *testing.T) {
 		dir := t.TempDir()

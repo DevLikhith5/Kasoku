@@ -25,7 +25,6 @@ type AdaptiveTimeout struct {
 	windowSize int
 }
 
-// NewAdaptiveTimeout creates a tracker with sensible defaults.
 func NewAdaptiveTimeout(opts ...TimeoutOption) *AdaptiveTimeout {
 	at := &AdaptiveTimeout{
 		latencies:  make(map[string][]float64),
@@ -41,35 +40,28 @@ func NewAdaptiveTimeout(opts ...TimeoutOption) *AdaptiveTimeout {
 	return at
 }
 
-// TimeoutOption functional option for AdaptiveTimeout
 type TimeoutOption func(*AdaptiveTimeout)
 
-// WithMinTimeout sets the minimum allowed timeout.
 func WithMinTimeout(d time.Duration) TimeoutOption {
 	return func(at *AdaptiveTimeout) { at.minTimeout = d }
 }
 
-// WithMaxTimeout sets the maximum allowed timeout.
 func WithMaxTimeout(d time.Duration) TimeoutOption {
 	return func(at *AdaptiveTimeout) { at.maxTimeout = d }
 }
 
-// WithPercentile sets the percentile to target (0.0-1.0).
 func WithPercentile(p float64) TimeoutOption {
 	return func(at *AdaptiveTimeout) { at.percentile = p }
 }
 
-// WithMultiplier sets the safety multiplier over the percentile.
 func WithMultiplier(m float64) TimeoutOption {
 	return func(at *AdaptiveTimeout) { at.multiplier = m }
 }
 
-// WithWindowSize sets the sliding window size per node.
 func WithWindowSize(n int) TimeoutOption {
 	return func(at *AdaptiveTimeout) { at.windowSize = n }
 }
 
-// Record records a latency measurement for a node.
 func (at *AdaptiveTimeout) Record(nodeID string, latency time.Duration) {
 	at.mu.Lock()
 	defer at.mu.Unlock()

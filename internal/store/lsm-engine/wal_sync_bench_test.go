@@ -7,7 +7,6 @@ import (
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
-// BenchmarkWALSyncInterval benchmarks the WAL with different sync intervals
 func BenchmarkWALSyncInterval(b *testing.B) {
 	value := []byte("test-value-for-benchmark")
 
@@ -60,7 +59,6 @@ func BenchmarkWALSyncInterval(b *testing.B) {
 	})
 }
 
-// BenchmarkLSMEngineSyncInterval benchmarks the LSM engine with different sync intervals
 func BenchmarkLSMEngineSyncInterval(b *testing.B) {
 	value := []byte("test-value-for-benchmark")
 
@@ -101,7 +99,6 @@ func BenchmarkLSMEngineSyncInterval(b *testing.B) {
 	})
 }
 
-// Benchmark10KWrites benchmarks 10,000 writes (simulating the original issue)
 func Benchmark10KWrites(b *testing.B) {
 	value := []byte("test-value-for-benchmark")
 
@@ -148,7 +145,6 @@ func Benchmark10KWrites(b *testing.B) {
 	})
 }
 
-// TestWALBackgroundSync verifies background sync doesn't break functionality
 func TestWALBackgroundSync(t *testing.T) {
 	dir := t.TempDir()
 
@@ -201,7 +197,6 @@ func TestWALBackgroundSync(t *testing.T) {
 	}
 }
 
-// WALReplayHandlerFuncs is a helper for testing
 type WALReplayHandlerFuncs struct {
 	PutEntryFunc   func(storage.Entry) error
 	SetVersionFunc func(uint64)

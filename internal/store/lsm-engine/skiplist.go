@@ -94,7 +94,6 @@ func (s *SkipList) Get(key string) (storage.Entry, bool) {
 	return storage.Entry{}, false
 }
 
-// Put inserts or updates an entry. Returns old value size if key existed (for size tracking).
 func (s *SkipList) Put(entry storage.Entry) int64 {
 	updatePtr := s.updatePool.Get().(*[]*node)
 	update := *updatePtr

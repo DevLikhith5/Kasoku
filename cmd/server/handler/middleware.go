@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// WithLogging creates a logging middleware
 func WithLogging(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +22,6 @@ func WithLogging(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// WithRecovery creates a recovery middleware
 func WithRecovery(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

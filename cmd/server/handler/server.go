@@ -15,7 +15,6 @@ import (
 
 const ReplicationFactor = 3
 
-// Server is the HTTP server that exposes the KV store
 type Server struct {
 	store   storage.StorageEngine
 	nodeID  string
@@ -26,7 +25,6 @@ type Server struct {
 	ring    *ring.Ring
 }
 
-// New creates a new HTTP server
 func New(store storage.StorageEngine, nodeID, addr string, logger *slog.Logger, metrics *metrics.Metrics) *Server {
 	return &Server{
 		store:   store,
@@ -37,7 +35,6 @@ func New(store storage.StorageEngine, nodeID, addr string, logger *slog.Logger, 
 	}
 }
 
-// NewDistributed creates a new distributed HTTP server with consistent hashing
 func NewDistributed(store storage.StorageEngine, nodeID, addr string, logger *slog.Logger, metrics *metrics.Metrics, cfg *cluster.ClusterConfig) *Server {
 	r := cfg.Ring
 	if r == nil {
@@ -62,7 +59,6 @@ func NewDistributed(store storage.StorageEngine, nodeID, addr string, logger *sl
 	return s
 }
 
-// RegisterRoutes registers all HTTP routes on the given mux
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// Health endpoints
 	mux.HandleFunc("/health", s.handleHealth)
@@ -93,12 +89,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("/metrics", promhttp.Handler())
 }
 
-// SetCluster sets the cluster instance (for dependency injection)
 func (s *Server) SetCluster(c *cluster.Cluster) {
 	s.cluster = c
 }
 
-// SetRing sets the ring instance (for dependency injection)
 func (s *Server) SetRing(r *ring.Ring) {
 	s.ring = r
 }

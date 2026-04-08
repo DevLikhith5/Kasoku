@@ -10,7 +10,6 @@ import (
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
-// Benchmark_Put_Sequential benchmarks sequential writes
 func Benchmark_Put_Sequential(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-put-*")
 	if err != nil {
@@ -34,7 +33,6 @@ func Benchmark_Put_Sequential(b *testing.B) {
 	}
 }
 
-// Benchmark_Put_Sequential_1KB benchmarks writes with 1KB values
 func Benchmark_Put_Sequential_1KB(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-put-1kb-*")
 	if err != nil {
@@ -60,7 +58,6 @@ func Benchmark_Put_Sequential_1KB(b *testing.B) {
 	}
 }
 
-// Benchmark_Put_Sequential_10KB benchmarks writes with 10KB values
 func Benchmark_Put_Sequential_10KB(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-put-10kb-*")
 	if err != nil {
@@ -86,7 +83,6 @@ func Benchmark_Put_Sequential_10KB(b *testing.B) {
 	}
 }
 
-// Benchmark_Get_Sequential benchmarks sequential reads
 func Benchmark_Get_Sequential(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-get-*")
 	if err != nil {
@@ -117,7 +113,6 @@ func Benchmark_Get_Sequential(b *testing.B) {
 	}
 }
 
-// Benchmark_Get_Random benchmarks random reads
 func Benchmark_Get_Random(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-get-rand-*")
 	if err != nil {
@@ -150,7 +145,6 @@ func Benchmark_Get_Random(b *testing.B) {
 	}
 }
 
-// Benchmark_Get_Miss benchmarks reads for non-existent keys
 func Benchmark_Get_Miss(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-get-miss-*")
 	if err != nil {
@@ -178,7 +172,6 @@ func Benchmark_Get_Miss(b *testing.B) {
 	}
 }
 
-// Benchmark_Delete benchmarks deletes
 func Benchmark_Delete(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-delete-*")
 	if err != nil {
@@ -208,7 +201,6 @@ func Benchmark_Delete(b *testing.B) {
 	}
 }
 
-// Benchmark_MixedReadWrite benchmarks 70% reads, 30% writes
 func Benchmark_MixedReadWrite(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-mixed-*")
 	if err != nil {
@@ -246,7 +238,6 @@ func Benchmark_MixedReadWrite(b *testing.B) {
 	}
 }
 
-// Benchmark_Scan benchmarks prefix scans
 func Benchmark_Scan(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-scan-*")
 	if err != nil {
@@ -279,7 +270,6 @@ func Benchmark_Scan(b *testing.B) {
 	}
 }
 
-// Benchmark_Put_Concurrent benchmarks concurrent writes
 func Benchmark_Put_Concurrent(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-put-concurrent-*")
 	if err != nil {
@@ -307,7 +297,6 @@ func Benchmark_Put_Concurrent(b *testing.B) {
 	})
 }
 
-// Benchmark_Get_Concurrent benchmarks concurrent reads
 func Benchmark_Get_Concurrent(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-get-concurrent-*")
 	if err != nil {
@@ -339,7 +328,6 @@ func Benchmark_Get_Concurrent(b *testing.B) {
 	})
 }
 
-// Benchmark_MemTable_Put benchmarks memtable-only writes
 func Benchmark_MemTable_Put(b *testing.B) {
 	memtable := NewMemTable(64 * 1024 * 1024) // 64MB
 
@@ -351,7 +339,6 @@ func Benchmark_MemTable_Put(b *testing.B) {
 	}
 }
 
-// Benchmark_MemTable_Get benchmarks memtable-only reads
 func Benchmark_MemTable_Get(b *testing.B) {
 	memtable := NewMemTable(64 * 1024 * 1024)
 
@@ -369,7 +356,6 @@ func Benchmark_MemTable_Get(b *testing.B) {
 	}
 }
 
-// Benchmark_SSTable_Write benchmarks SSTable creation
 func Benchmark_SSTable_Write(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-sstable-*")
 	if err != nil {
@@ -399,7 +385,6 @@ func Benchmark_SSTable_Write(b *testing.B) {
 	}
 }
 
-// Benchmark_Keys benchmarks key enumeration
 func Benchmark_Keys(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-keys-*")
 	if err != nil {
@@ -429,7 +414,6 @@ func Benchmark_Keys(b *testing.B) {
 	}
 }
 
-// Benchmark_Stats benchmarks stats collection
 func Benchmark_Stats(b *testing.B) {
 	dir, err := os.MkdirTemp("", "bench-stats-*")
 	if err != nil {

@@ -64,20 +64,16 @@ var (
 	)
 )
 
-// Metrics tracks server operation statistics wrapping Prometheus metrics
 type Metrics struct{}
 
-// New creates a new Metrics instance
 func New() *Metrics {
 	return &Metrics{}
 }
 
-// RecordGetStart returns the start time for a GET operation
 func (m *Metrics) RecordGetStart() time.Time {
 	return time.Now()
 }
 
-// RecordGetEnd records the end of a GET operation
 func (m *Metrics) RecordGetEnd(start time.Time, success bool) {
 	status := "success"
 	if !success {
@@ -87,12 +83,10 @@ func (m *Metrics) RecordGetEnd(start time.Time, success bool) {
 	requestDuration.WithLabelValues("get").Observe(time.Since(start).Seconds())
 }
 
-// RecordPutStart returns the start time for a PUT operation
 func (m *Metrics) RecordPutStart() time.Time {
 	return time.Now()
 }
 
-// RecordPutEnd records the end of a PUT operation
 func (m *Metrics) RecordPutEnd(start time.Time, success bool) {
 	status := "success"
 	if !success {
@@ -102,12 +96,10 @@ func (m *Metrics) RecordPutEnd(start time.Time, success bool) {
 	requestDuration.WithLabelValues("put").Observe(time.Since(start).Seconds())
 }
 
-// RecordDeleteStart returns the start time for a DELETE operation
 func (m *Metrics) RecordDeleteStart() time.Time {
 	return time.Now()
 }
 
-// RecordDeleteEnd records the end of a DELETE operation
 func (m *Metrics) RecordDeleteEnd(start time.Time, success bool) {
 	status := "success"
 	if !success {
@@ -132,7 +124,6 @@ type Snapshot struct {
 	AvgPutLatencyMs float64
 }
 
-// Get returns an empty snapshot to maintain backward compatibility in handlers
 func (m *Metrics) Get() Snapshot {
 	return Snapshot{}
 }

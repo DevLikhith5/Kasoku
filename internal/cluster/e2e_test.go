@@ -13,7 +13,6 @@ import (
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
-// TestCluster_E2E_SingleNode tests basic operations with a single node
 func TestCluster_E2E_SingleNode(t *testing.T) {
 	logger := slog.Default()
 	store := NewMockStore()
@@ -65,7 +64,6 @@ func TestCluster_E2E_SingleNode(t *testing.T) {
 	}
 }
 
-// TestCluster_E2E_ConsistentHashing verifies consistent hashing behavior
 func TestCluster_E2E_ConsistentHashing(t *testing.T) {
 	logger := slog.Default()
 	store := NewMockStore()
@@ -108,7 +106,6 @@ func TestCluster_E2E_ConsistentHashing(t *testing.T) {
 	}
 }
 
-// TestCluster_E2E_NodeFailure tests behavior when nodes fail
 func TestCluster_E2E_NodeFailure(t *testing.T) {
 	logger := slog.Default()
 	store := NewMockStore()
@@ -148,7 +145,6 @@ func TestCluster_E2E_NodeFailure(t *testing.T) {
 	}
 }
 
-// TestCluster_E2E_ConcurrentOperations tests concurrent operations
 func TestCluster_E2E_ConcurrentOperations(t *testing.T) {
 	logger := slog.Default()
 	store := NewMockStore()
@@ -207,7 +203,6 @@ func TestCluster_E2E_ConcurrentOperations(t *testing.T) {
 	}
 }
 
-// TestCluster_E2E_RingDistribution tests key distribution across the ring
 func TestCluster_E2E_RingDistribution(t *testing.T) {
 	r := ring.New(150)
 
@@ -239,7 +234,6 @@ func TestCluster_E2E_RingDistribution(t *testing.T) {
 	}
 }
 
-// TestCluster_E2E_ReplicationFactor tests different replication factors
 func TestCluster_E2E_ReplicationFactor(t *testing.T) {
 	logger := slog.Default()
 
@@ -281,7 +275,6 @@ func TestCluster_E2E_ReplicationFactor(t *testing.T) {
 	}
 }
 
-// TestCluster_E2E_NodeRegistry tests node registry integration
 func TestCluster_E2E_NodeRegistry(t *testing.T) {
 	logger := slog.Default()
 
@@ -313,7 +306,6 @@ func TestCluster_E2E_NodeRegistry(t *testing.T) {
 	}
 }
 
-// TestCluster_E2E_FailureDetector tests failure detector integration
 func TestCluster_E2E_FailureDetector(t *testing.T) {
 	logger := slog.Default()
 	fd := NewFailureDetector(8.0, time.Minute, 3, logger)
@@ -337,7 +329,6 @@ func TestCluster_E2E_FailureDetector(t *testing.T) {
 	}
 }
 
-// TestCluster_E2E_QuorumChecker tests quorum checker integration
 func TestCluster_E2E_QuorumChecker(t *testing.T) {
 	qc := NewQuorumChecker(3, 2)
 
@@ -361,7 +352,6 @@ func TestCluster_E2E_QuorumChecker(t *testing.T) {
 	}
 }
 
-// TestCluster_E2E_KeyMovementOnNodeAdd tests consistent hashing key movement
 func TestCluster_E2E_KeyMovementOnNodeAdd(t *testing.T) {
 	r := ring.New(150)
 
@@ -405,7 +395,6 @@ func TestCluster_E2E_KeyMovementOnNodeAdd(t *testing.T) {
 	t.Logf("key movement: %d/%d keys moved (expected ~%d)", movedKeys, 1000, expectedMoved)
 }
 
-// TestCluster_E2E_KeyMovementOnNodeRemove tests key movement when node is removed
 func TestCluster_E2E_KeyMovementOnNodeRemove(t *testing.T) {
 	r := ring.New(150)
 
@@ -459,7 +448,6 @@ func TestCluster_E2E_KeyMovementOnNodeRemove(t *testing.T) {
 	t.Logf("key movement: %d/%d keys moved (expected ~%d)", movedKeys, 1000, expectedMoved)
 }
 
-// TestCluster_E2E_ReadRepair tests read repair functionality
 func TestCluster_E2E_ReadRepair(t *testing.T) {
 	logger := slog.Default()
 	rr := NewReadRepair(logger)

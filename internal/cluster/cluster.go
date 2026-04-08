@@ -29,7 +29,6 @@ var (
 	ErrNoNodesAvailable = errors.New("no nodes available")
 )
 
-// Cluster manages the distributed cluster state and replication
 type Cluster struct {
 	mu                sync.RWMutex
 	nodeID            string
@@ -45,7 +44,6 @@ type Cluster struct {
 	peers             []string
 }
 
-// ClusterConfig holds cluster configuration
 type ClusterConfig struct {
 	NodeID            string
 	NodeAddr          string // Base URL for this node (e.g., "http://localhost:8080")
@@ -58,7 +56,6 @@ type ClusterConfig struct {
 	Peers             []string
 }
 
-// New creates a new Cluster instance
 func New(cfg ClusterConfig) *Cluster {
 	rf := cfg.ReplicationFactor
 	if rf <= 0 {
@@ -108,7 +105,6 @@ func New(cfg ClusterConfig) *Cluster {
 	return c
 }
 
-// AddPeer adds a new peer to the cluster with an explicit node ID
 func (c *Cluster) AddPeer(nodeID, peerAddr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -125,7 +121,6 @@ func (c *Cluster) AddPeer(nodeID, peerAddr string) {
 	c.logger.Info("peer added", "node_id", nodeID, "addr", peerAddr)
 }
 
-// RemovePeer removes a peer from the cluster
 func (c *Cluster) RemovePeer(nodeID, peerAddr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -272,7 +267,6 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 	return value, nil
 }
 
-// ReplicatedDelete deletes a key from the cluster with replication
 func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
 	c.mu.RLock()
 	replicas := c.getReplicasForKey(key)
@@ -346,7 +340,6 @@ func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
 	return nil
 }
 
-// getReplicasForKey returns the replica nodes for a given key
 func (c *Cluster) getReplicasForKey(key string) []string {
 	if c.ring == nil {
 		return []string{c.nodeID}
@@ -388,19 +381,16 @@ func (c *Cluster) getClient(nodeID string) (*rpc.Client, bool) {
 	return client, true
 }
 
-// GetNodeID returns this node's ID
 func (c *Cluster) GetNodeID() string {
 	return c.nodeID
 }
 
-// GetReplicas returns the current replica set for a key
 func (c *Cluster) GetReplicas(key string) []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.getReplicasForKey(key)
 }
 
-// IsPrimary checks if this node is the primary for a key
 func (c *Cluster) IsPrimary(key string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -411,7 +401,6 @@ func (c *Cluster) IsPrimary(key string) bool {
 	return replicas[0] == c.nodeID
 }
 
-// GetRing returns the consistent hashing ring
 func (c *Cluster) GetRing() *ring.Ring {
 	return c.ring
 }
@@ -424,7 +413,6 @@ func extractNodeID(addr string) string {
 	return addr
 }
 
-// SetNodeAddr sets the address for a node (for client mapping)
 func (c *Cluster) SetNodeAddr(nodeID, addr string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -4,7 +4,6 @@ import (
 	"net/http"
 )
 
-// handleHealth returns basic health status
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, APIResponse{
 		Success: true,
@@ -15,7 +14,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleLive checks if server is running
 func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, APIResponse{
 		Success: true,
@@ -23,7 +21,6 @@ func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleReady checks if server is ready to serve requests
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	stats := s.store.Stats()
 	s.writeJSON(w, http.StatusOK, APIResponse{
@@ -35,7 +32,6 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleScan handles GET /api/v1/scan?prefix=xxx
 func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -63,7 +59,6 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleKeys handles GET /api/v1/keys
 func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -85,7 +80,6 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleNodeInfo returns information about this node
 func (s *Server) handleNodeInfo(w http.ResponseWriter, r *http.Request) {
 	stats := s.store.Stats()
 	s.writeJSON(w, http.StatusOK, APIResponse{

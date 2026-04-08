@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// FailureDetector implements a phi accrual failure detector
 type FailureDetector struct {
 	mu               sync.Mutex
 	heartbeats       map[string]*heartbeatHistory
@@ -22,7 +21,6 @@ type heartbeatHistory struct {
 	lastUpdate time.Time
 }
 
-// NewFailureDetector creates a new phi accrual failure detector
 func NewFailureDetector(threshold float64, windowSize time.Duration, minSamples int, logger *slog.Logger) *FailureDetector {
 	if logger == nil {
 		logger = slog.Default()
@@ -37,7 +35,6 @@ func NewFailureDetector(threshold float64, windowSize time.Duration, minSamples 
 	}
 }
 
-// RecordHeartbeat records a heartbeat from a node
 func (fd *FailureDetector) RecordHeartbeat(nodeID string) {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
@@ -65,13 +62,11 @@ func (fd *FailureDetector) RecordHeartbeat(nodeID string) {
 	}
 }
 
-// IsAvailable checks if a node is considered available based on phi value
 func (fd *FailureDetector) IsAvailable(nodeID string) bool {
 	phi := fd.phi(nodeID)
 	return phi < fd.threshold
 }
 
-// phi calculates the phi accrual value for a node
 func (fd *FailureDetector) phi(nodeID string) float64 {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
@@ -110,7 +105,6 @@ func (fd *FailureDetector) phi(nodeID string) float64 {
 	return phi
 }
 
-// GetLastHeartbeat returns the last heartbeat time for a node
 func (fd *FailureDetector) GetLastHeartbeat(nodeID string) (time.Time, bool) {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
@@ -123,7 +117,6 @@ func (fd *FailureDetector) GetLastHeartbeat(nodeID string) (time.Time, bool) {
 	return hist.lastUpdate, true
 }
 
-// RemoveNode removes a node from the failure detector
 func (fd *FailureDetector) RemoveNode(nodeID string) {
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
@@ -131,14 +124,12 @@ func (fd *FailureDetector) RemoveNode(nodeID string) {
 	delete(fd.heartbeats, nodeID)
 }
 
-// ReadRepair handles read repair operations for consistency
 type ReadRepair struct {
 	mu          sync.Mutex
 	repairCount int
 	logger      *slog.Logger
 }
 
-// NewReadRepair creates a new read repair handler
 func NewReadRepair(logger *slog.Logger) *ReadRepair {
 	if logger == nil {
 		logger = slog.Default()
@@ -149,7 +140,6 @@ func NewReadRepair(logger *slog.Logger) *ReadRepair {
 	}
 }
 
-// CheckAndRepair compares values from multiple replicas and repairs inconsistencies
 func (rr *ReadRepair) CheckAndRepair(ctx context.Context, key string, values map[string][]byte, writeFunc func(ctx context.Context, nodeID string, key string, value []byte) error) int {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
@@ -204,20 +194,17 @@ func (rr *ReadRepair) CheckAndRepair(ctx context.Context, key string, values map
 	return repairCount
 }
 
-// GetRepairCount returns the total number of repairs performed
 func (rr *ReadRepair) GetRepairCount() int {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
 	return rr.repairCount
 }
 
-// QuorumChecker checks if quorum requirements are met
 type QuorumChecker struct {
 	replicationFactor int
 	quorumSize        int
 }
 
-// NewQuorumChecker creates a new quorum checker
 func NewQuorumChecker(replicationFactor, quorumSize int) *QuorumChecker {
 	return &QuorumChecker{
 		replicationFactor: replicationFactor,
@@ -225,28 +212,23 @@ func NewQuorumChecker(replicationFactor, quorumSize int) *QuorumChecker {
 	}
 }
 
-// CheckWriteQuorum checks if write quorum is satisfied
 func (qc *QuorumChecker) CheckWriteQuorum(successCount int) bool {
 	return successCount >= qc.quorumSize
 }
 
-// CheckReadQuorum checks if read quorum is satisfied
 func (qc *QuorumChecker) CheckReadQuorum(successCount int) bool {
 	// For strong consistency, read quorum should also meet the requirement
 	return successCount >= qc.quorumSize
 }
 
-// IsQuorumPossible checks if quorum can still be achieved
 func (qc *QuorumChecker) IsQuorumPossible(availableNodes int) bool {
 	return availableNodes >= qc.quorumSize
 }
 
-// GetRequiredQuorum returns the required quorum size
 func (qc *QuorumChecker) GetRequiredQuorum() int {
 	return qc.quorumSize
 }
 
-// AntiEntropy synchronizes data between nodes periodically
 type AntiEntropy struct {
 	stopOnce sync.Once // Bug 5 fix: prevents double-close panic on Stop()
 	nodeID   string
@@ -256,7 +238,6 @@ type AntiEntropy struct {
 	logger   *slog.Logger
 }
 
-// NewAntiEntropy creates a new anti-entropy process
 func NewAntiEntropy(nodeID string, interval time.Duration, syncFunc func(ctx context.Context, peerID string) error, logger *slog.Logger) *AntiEntropy {
 	if logger == nil {
 		logger = slog.Default()
@@ -271,7 +252,6 @@ func NewAntiEntropy(nodeID string, interval time.Duration, syncFunc func(ctx con
 	}
 }
 
-// Start begins the anti-entropy process
 func (ae *AntiEntropy) Start(peers []string) {
 	if ae.syncFunc == nil {
 		ae.logger.Warn("no sync function provided, anti-entropy disabled")

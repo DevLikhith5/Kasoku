@@ -10,7 +10,6 @@ import (
 	"sort"
 )
 
-// Node represents a node in the Merkle tree
 type Node struct {
 	Hash   [32]byte `json:"hash"`
 	Left   *Node    `json:"left,omitempty"`
@@ -88,7 +87,6 @@ func Diff(local, remote *Node) []string {
 	return diff
 }
 
-// collectKeys gathers all keys from whichever node is non-nil
 func collectKeys(a, b *Node) []string {
 	n := a
 	if n == nil {
@@ -107,7 +105,6 @@ func collectKeys(a, b *Node) []string {
 	return keys
 }
 
-// RootHash returns the root hash of the tree as a hex string for easy comparison
 func RootHash(n *Node) [32]byte {
 	if n == nil {
 		return sha256.Sum256(nil)
@@ -115,12 +112,10 @@ func RootHash(n *Node) [32]byte {
 	return n.Hash
 }
 
-// Serialize encodes the Merkle tree to JSON for transmission between nodes
 func Serialize(n *Node) ([]byte, error) {
 	return json.Marshal(n)
 }
 
-// Deserialize decodes a Merkle tree from JSON
 func Deserialize(data []byte) (*Node, error) {
 	var n Node
 	if err := json.Unmarshal(data, &n); err != nil {

@@ -6,7 +6,6 @@ import (
 	"time"
 )
 
-// MemberState represents the state of a cluster member
 type MemberState int
 
 const (
@@ -28,7 +27,6 @@ func (s MemberState) String() string {
 	}
 }
 
-// Member represents a single cluster member
 type Member struct {
 	NodeID      string
 	Address     string
@@ -37,7 +35,6 @@ type Member struct {
 	Incarnation int // incremented when member updates its own state
 }
 
-// MemberList maintains the gossip-based membership view of the cluster
 type MemberList struct {
 	mu      sync.RWMutex
 	self    string
@@ -45,7 +42,6 @@ type MemberList struct {
 
 }
 
-// NewMemberList creates a new membership list with the given node as self
 func NewMemberList(selfNodeID string) *MemberList {
 	ml := &MemberList{
 		self:    selfNodeID,
@@ -62,7 +58,6 @@ func NewMemberList(selfNodeID string) *MemberList {
 	return ml
 }
 
-// AddMember adds or updates a member in the list
 func (ml *MemberList) AddMember(nodeID string) {
 	ml.mu.Lock()
 	defer ml.mu.Unlock()
@@ -117,7 +112,6 @@ func (ml *MemberList) Merge(remoteMembers []string) []string {
 	return result
 }
 
-// Members returns all known member node IDs (excluding self if dead)
 func (ml *MemberList) Members() []string {
 	ml.mu.RLock()
 	defer ml.mu.RUnlock()
@@ -131,7 +125,6 @@ func (ml *MemberList) Members() []string {
 	return result
 }
 
-// RandomMember returns a random member other than self
 func (ml *MemberList) RandomMember() string {
 	ml.mu.RLock()
 	defer ml.mu.RUnlock()
@@ -148,14 +141,12 @@ func (ml *MemberList) RandomMember() string {
 	return alive[rand.Intn(len(alive))]
 }
 
-// MemberCount returns the number of known members
 func (ml *MemberList) MemberCount() int {
 	ml.mu.RLock()
 	defer ml.mu.RUnlock()
 	return len(ml.members)
 }
 
-// Tick is called periodically to check for dead members
 func (ml *MemberList) Tick() {
 	ml.mu.Lock()
 	defer ml.mu.Unlock()
@@ -175,7 +166,6 @@ func (ml *MemberList) Tick() {
 	}
 }
 
-// MarkAlive marks a member as alive
 func (ml *MemberList) MarkAlive(nodeID string) {
 	ml.mu.Lock()
 	defer ml.mu.Unlock()
@@ -195,7 +185,6 @@ func (ml *MemberList) MarkAlive(nodeID string) {
 	}
 }
 
-// MarkDead marks a member as dead
 func (ml *MemberList) MarkDead(nodeID string) {
 	ml.mu.Lock()
 	defer ml.mu.Unlock()
@@ -206,7 +195,6 @@ func (ml *MemberList) MarkDead(nodeID string) {
 	}
 }
 
-// IsAlive checks if a member is considered alive
 func (ml *MemberList) IsAlive(nodeID string) bool {
 	ml.mu.RLock()
 	defer ml.mu.RUnlock()
