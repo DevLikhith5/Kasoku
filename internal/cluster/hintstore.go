@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -11,7 +12,7 @@ type Hint struct {
 	Value      []byte
 	TargetNode string // the node that should ultimately receive this write
 	CreatedAt  time.Time
-	Attempts   int
+	Attempts   atomic.Int32
 }
 
 // HintStore stores writes that couldn't be delivered to their target node
@@ -38,7 +39,6 @@ func (hs *HintStore) Store(key string, value []byte, targetNode string) error {
 		Value:      value,
 		TargetNode: targetNode,
 		CreatedAt:  time.Now(),
-		Attempts:   0,
 	})
 	return nil
 }
@@ -84,7 +84,7 @@ func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, val
 	delivered := make(map[*Hint]bool)
 
 	for _, h := range hints {
-		if h.Attempts >= 10 {
+		if h.Attempts.Load() >= 10 {
 			// Give up after 10 attempts — in production you'd persist these
 			continue
 		}
@@ -93,7 +93,7 @@ func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, val
 		if err == nil {
 			delivered[h] = true // mark by pointer, not composite key
 		} else {
-			h.Attempts++
+			h.Attempts.Add(1)
 		}
 	}
 

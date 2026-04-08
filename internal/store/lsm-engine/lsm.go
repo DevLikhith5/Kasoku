@@ -2,6 +2,7 @@ package lsmengine
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -172,9 +173,9 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	// Backpressure: wait for at least one flush to complete
 	for overHardLimit || overSystemCap {
 		if overSystemCap {
-			fmt.Printf("[BACKPRESSURE] total memtable memory exceeded system cap (%d bytes), blocking writes\n", e.config.MaxMemtableBytes)
+			slog.Warn("[BACKPRESSURE] blocking writes: total memtable exceeds system cap", "cap_bytes", e.config.MaxMemtableBytes)
 		} else {
-			fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", e.config.L0SizeThreshold)
+			slog.Warn("[BACKPRESSURE] blocking writes: active memtable exceeds hard limit", "limit_bytes", e.config.L0SizeThreshold)
 		}
 		<-e.flushDone
 		// Re-check after flush
@@ -250,7 +251,7 @@ func (e *LSMEngine) flushLoop() {
 		}
 
 		if err := e.flushMemTable(); err != nil {
-			fmt.Println("flush error:", err)
+			slog.Error("memtable flush failed", "error", err)
 		}
 	}
 }
@@ -316,7 +317,7 @@ func (e *LSMEngine) compactLevel(level int) {
 	copy(toMerge, e.levels[level])
 	e.mu.Unlock()
 
-	fmt.Printf("[COMPACTION] level %d: merging %d SSTables\n", level, len(toMerge))
+	slog.Info("[COMPACTION] merging", "level", level, "count", len(toMerge))
 
 	// Collect all entries from all SSTables using merge sort
 	merged := mergeSSTables(toMerge)
@@ -335,7 +336,7 @@ func (e *LSMEngine) compactLevel(level int) {
 			sst.Close()
 			os.Remove(sst.path)
 		}
-		fmt.Printf("[COMPACTION] level %d: all tombstones expired, cleaned up\n", level)
+		slog.Info("[COMPACTION] all tombstones expired, cleaned up", "level", level)
 		return
 	}
 
@@ -345,20 +346,20 @@ func (e *LSMEngine) compactLevel(level int) {
 		fmt.Sprintf("L%d_%d.sst", nextLevel, time.Now().UnixNano()))
 	writer, err := NewSSTableWriter(sstPath, len(deduped), e.config.BloomFPRate)
 	if err != nil {
-		fmt.Printf("[COMPACTION] error creating writer: %v\n", err)
+		slog.Error("[COMPACTION] error creating writer", "error", err)
 		return
 	}
 
 	for _, entry := range deduped {
 		if err := writer.WriteEntry(entry); err != nil {
-			fmt.Printf("[COMPACTION] error writing entry: %v\n", err)
+			slog.Error("[COMPACTION] error writing entry", "error", err)
 			os.Remove(sstPath)
 			return
 		}
 	}
 
 	if err := writer.Finalize(); err != nil {
-		fmt.Printf("[COMPACTION] error finalizing: %v\n", err)
+		slog.Error("[COMPACTION] error finalizing", "error", err)
 		os.Remove(sstPath)
 		return
 	}
@@ -366,7 +367,7 @@ func (e *LSMEngine) compactLevel(level int) {
 	// Open new SSTable
 	reader, err := OpenSSTable(sstPath)
 	if err != nil {
-		fmt.Printf("[COMPACTION] error opening new SSTable: %v\n", err)
+		slog.Error("[COMPACTION] error opening new SSTable", "error", err)
 		os.Remove(sstPath)
 		return
 	}
@@ -386,7 +387,7 @@ func (e *LSMEngine) compactLevel(level int) {
 		os.Remove(sst.path)
 	}
 
-	fmt.Printf("[COMPACTION] done: level %d -> %d (%d entries)\n", level, nextLevel, len(deduped))
+	slog.Info("[COMPACTION] done", "src_level", level, "dst_level", nextLevel, "entries", len(deduped))
 }
 
 // Flush forces a flush of the active memtable to disk
@@ -588,9 +589,9 @@ func (e *LSMEngine) Delete(key string) error {
 
 	for overHardLimit || overSystemCap {
 		if overSystemCap {
-			fmt.Printf("[BACKPRESSURE] total memtable memory exceeded system cap (%d bytes), blocking writes\n", e.config.MaxMemtableBytes)
+			slog.Warn("[BACKPRESSURE] blocking deletes: total memtable exceeds system cap", "cap_bytes", e.config.MaxMemtableBytes)
 		} else {
-			fmt.Printf("[BACKPRESSURE] active memtable exceeded hard limit (%d bytes), blocking writes\n", e.config.L0SizeThreshold)
+			slog.Warn("[BACKPRESSURE] blocking deletes: active memtable exceeds hard limit", "limit_bytes", e.config.L0SizeThreshold)
 		}
 		<-e.flushDone
 		e.mu.RLock()
@@ -760,12 +761,12 @@ func (e *LSMEngine) Close() error {
 	// flushMemTable() may send on compCh to trigger compaction —
 	// doing this after close(compCh) causes a "send on closed channel" panic.
 	if err := e.flushMemTable(); err != nil {
-		fmt.Println("final flush error:", err)
+		slog.Error("final flush error", "error", err)
 	}
 
 	// Persist version counter before closing
 	if err := e.saveVersion(); err != nil {
-		fmt.Println("save version error:", err)
+		slog.Error("save version error", "error", err)
 	}
 
 	close(e.flushCh)

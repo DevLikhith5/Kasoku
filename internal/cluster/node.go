@@ -56,6 +56,7 @@ type Node struct {
 	timeoutTracker *AdaptiveTimeout
 	logger         *slog.Logger
 	done           chan struct{} // shutdown signal
+	stopOnce       sync.Once    // prevents double-close of done
 	wg             sync.WaitGroup
 }
 
@@ -148,21 +149,25 @@ func (n *Node) Start() error {
 		}
 	}()
 
-	// Wait for shutdown signal
-	<-n.done
+	// Bug fix: Start() must not block the caller — run the serve+shutdown
+	// in a goroutine so callers can select on a done/error channel.
+	go func() {
+		// Wait for shutdown signal
+		<-n.done
 
-	// Graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	n.httpServer.Shutdown(ctx)
+		// Graceful HTTP shutdown
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		n.httpServer.Shutdown(ctx) //nolint:errcheck
+	}()
 
 	return nil
 }
 
 // Stop signals all goroutines to stop and waits for them
 func (n *Node) Stop() {
-	close(n.done) // signal all goroutines to stop
-	n.wg.Wait()   // wait for them to finish
+	n.stopOnce.Do(func() { close(n.done) }) // safe to call multiple times
+	n.wg.Wait()
 	n.engine.Close()
 }
 
@@ -438,10 +443,11 @@ func (n *Node) syncWithPeer(peerID string) error {
 				break // remote error, not a missing key
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			if err := n.remoteReplicate(ctx, peerID, key, localEntry.Value, false, localEntry.Version); err != nil {
+			err := n.remoteReplicate(ctx, peerID, key, localEntry.Value, false, localEntry.Version)
+			cancel() // always cancel, even on success
+			if err != nil {
 				n.logger.Warn("anti-entropy push failed", "key", key, "error", err)
 			}
-			cancel()
 		case localErr == nil && remoteErr == nil:
 			// Both have it — highest version wins
 			if localEntry.Version < remoteEntry.Version {
@@ -450,10 +456,11 @@ func (n *Node) syncWithPeer(peerID string) error {
 				}
 			} else if localEntry.Version > remoteEntry.Version {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				if err := n.remoteReplicate(ctx, peerID, key, localEntry.Value, false, localEntry.Version); err != nil {
+				err := n.remoteReplicate(ctx, peerID, key, localEntry.Value, false, localEntry.Version)
+				cancel() // always cancel, even on success
+				if err != nil {
 					n.logger.Warn("anti-entropy push failed", "key", key, "error", err)
 				}
-				cancel()
 			}
 		}
 	}
