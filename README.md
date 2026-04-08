@@ -53,8 +53,8 @@ The LSM-Tree engine is designed specifically for write-heavy workloads. All writ
 
 ### Write Path
 
-1. The entry is appended to the Write-Ahead Log (WAL) on disk with fsync.
-2. The entry is inserted into the in-memory MemTable (implemented as a Red-Black Tree ordered by key).
+1. The entry is appended to the Write-Ahead Log (WAL) on disk. With `wal.sync: true`, each write is fsynced; with `wal.sync: false`, a background thread syncs every `wal.sync_interval` (default 100ms).
+2. The entry is inserted into the in-memory MemTable (implemented as a probabilistic Skip List ordered by key).
 3. When the MemTable exceeds its configured capacity (default 64MB), it is frozen and flushed to a Level 0 SSTable on disk.
 4. Background compaction merges Level 0 SSTables into progressively larger sorted levels to eliminate duplicate and deleted keys.
 
@@ -69,8 +69,8 @@ The LSM-Tree engine is designed specifically for write-heavy workloads. All writ
 
 | Feature | Detail |
 | :--- | :--- |
-| Write-Ahead Log | fsync-on-write for crash safety; atomic WAL truncation via rename |
-| MemTable | Red-Black Tree ordered map, concurrent-safe |
+| Write-Ahead Log | Configurable sync: per-write fsync or background sync (default 100ms interval); atomic WAL truncation via rename |
+| MemTable | Probabilistic Skip List (concurrent-safe, lock-free reads under MemTable lock) |
 | SSTables | Sorted, immutable, Snappy-compressed segments |
 | Bloom Filters | Per-SSTable, configurable false positive rate (default 1%) |
 | LRU Block Cache | Configurable size; shared across all SSTable readers |
@@ -178,7 +178,7 @@ cpu:   Apple M1
 - **Sequential reads** achieve **7.3 million ops/sec** at 174.2 ns/op with only 1 allocation per operation.
 - **Random reads** sustain **6.0 million ops/sec** at 197.6 ns/op, demonstrating efficient Bloom Filter and block cache utilization.
 - **Concurrent reads** reach **7.1 million ops/sec** at 156.8 ns/op, showing excellent parallel read performance from the MemTable and block cache.
-- **Pure MemTable reads** achieve **5.2 million ops/sec** (233.6 ns) with zero disk I/O.
+- **Pure MemTable reads** achieve **5.2 million ops/sec** (233.6 ns) with zero disk I/O, using lock-free Skip List traversal under the MemTable's read lock.
 - **Prefix scans** complete in **~2.1 microseconds** per operation, returning 10 matching entries on average.
 - **Mixed read/write workloads** (70/30 split) with background sync process **~437K ops/sec** at 2.3μs per operation, compared to ~786 ops/sec with sync-on-write — a **556x improvement**.
 - Sequential write latency with fsync-on-write (~3.75ms/op) reflects macOS disk sync overhead. On Linux with NVMe SSDs, WAL fsync is typically under 300 microseconds.
@@ -192,7 +192,7 @@ cpu:   Apple M1
 kasoku/
 ├── cmd/
 │   ├── server/         Entry point for the cluster node HTTP server
-│   └── cli/            Entry point for the kvctl command-line client
+│   └── kvctl/          Entry point for the kvctl command-line client
 ├── internal/
 │   ├── cluster/        Gossip, Phi failure detector, quorum, hinted handoff, anti-entropy, vector clocks
 │   ├── config/         YAML configuration loading and validation
@@ -226,26 +226,36 @@ make build
 
 # Or manually
 go build -o kasoku-server ./cmd/server/main.go
-go build -o kvctl ./cmd/cli/main.go
+go build -o kvctl ./cmd/kvctl/main.go
 ```
 
 ### Run a Single Node
 
 ```bash
-./kasoku-server --config kasoku.yaml
+# Start server with config file
+KASOKU_CONFIG=kasoku.yaml ./kasoku-server
+
+# Or set individual settings via environment variables
+KASOKU_CLUSTER_ENABLED=false ./kasoku-server
 ```
 
 ### Run a Three-Node Local Cluster
 
 ```bash
 # Terminal 1 - Bootstrap node
-./kasoku-server --node-id node-1 --port 9001
+KASOKU_NODE_ID=node-1 KASOKU_PORT=9000 KASOKU_CLUSTER_ENABLED=true \
+  KASOKU_GOSSIP_PORT=9002 KASOKU_PEERS="http://localhost:9001,http://localhost:9002" \
+  ./kasoku-server
 
 # Terminal 2
-./kasoku-server --node-id node-2 --port 9002 --peers localhost:9001
+KASOKU_NODE_ID=node-2 KASOKU_PORT=9001 KASOKU_CLUSTER_ENABLED=true \
+  KASOKU_GOSSIP_PORT=9003 KASOKU_PEERS="http://localhost:9000,http://localhost:9002" \
+  ./kasoku-server
 
 # Terminal 3
-./kasoku-server --node-id node-3 --port 9003 --peers localhost:9001
+KASOKU_NODE_ID=node-3 KASOKU_PORT=9002 KASOKU_CLUSTER_ENABLED=true \
+  KASOKU_GOSSIP_PORT=9004 KASOKU_PEERS="http://localhost:9000,http://localhost:9001" \
+  ./kasoku-server
 ```
 
 ### Basic Operations via CLI
@@ -279,23 +289,40 @@ go test ./internal/store/lsm-engine/... -bench=. -benchmem -run=^$
 Key configuration fields in `kasoku.yaml`:
 
 ```yaml
-node_id: node-1
-address: http://localhost:9001
+# Server
+data_dir: ./data
+port: 9000
+http_port: 9001
 
+# LSM Engine
+lsm:
+  levels: 7
+  level_ratio: 10.0
+  l0_base_size: 67108864  # 64MB
+
+# Memory
+memory:
+  memtable_size: 67108864       # 64MB
+  max_memtable_bytes: 268435456 # 256MB
+  bloom_fp_rate: 0.01
+  block_cache_size: 134217728   # 128MB
+
+# WAL
+wal:
+  sync: false
+  sync_interval: 100ms
+  max_file_size: 67108864       # 64MB
+
+# Cluster
 cluster:
+  enabled: false
+  node_id: node-1
+  node_addr: http://localhost:9000
+  peers: []
   replication_factor: 3
-  write_quorum: 2
-  read_quorum: 2
-  gossip_interval: 1s
-  anti_entropy_interval: 30s
-
-storage:
-  engine: lsm
-  data_dir: ./data
-  memtable_size_mb: 64
-  block_cache_mb: 128
-  bloom_false_positive: 0.01
-  wal_sync: true
+  quorum_size: 2
+  vnodes: 150
+  rpc_timeout_ms: 5000
 ```
 
 See `kasoku.example.yaml` for the full annotated reference.
