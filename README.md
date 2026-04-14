@@ -1,6 +1,7 @@
 # Kasoku
-<img width="1440" height="900" alt="image" src="https://github.com/user-attachments/assets/4251a5f1-0bc0-4e2e-8bde-c2fffb4165f0" />
-<img width="1440" height="900" alt="image" src="https://github.com/user-attachments/assets/7dc0bd4b-88f5-4fd3-85b1-61e3692a3791" />
+<img width="1428" height="900" alt="image" src="https://github.com/user-attachments/assets/179de515-be24-43e5-a218-b4a252cf08f8" />
+<img width="1428" height="900" alt="image" src="https://github.com/user-attachments/assets/532f5a90-ddce-45f9-be65-1eea8b0976dc" />
+<img width="1440" height="889" alt="image" src="https://github.com/user-attachments/assets/69baa06c-787e-46f3-804c-6a375c76d645" />
 
 
 **Distributed Key-Value Storage Engine**
