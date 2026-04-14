@@ -4,11 +4,18 @@
 *.dll
 *.so
 *.dylib
+kasoku
 kasoku-server
+kasoku_bin
 kvctl
 server
 kvctl-new
 kasoku-server-new
+
+# Node configs
+kasoku-node*.yaml
+node*.yaml
+
 
 # Test binaries
 *.test
