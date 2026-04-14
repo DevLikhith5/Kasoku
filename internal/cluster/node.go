@@ -204,6 +204,10 @@ func (n *Node) GetStatus() map[string]any {
 	}
 }
 
+func (n *Node) GetRingNodes() []string {
+	return n.ring.GetAllNodes()
+}
+
 func (n *Node) HandleReplicate(ctx context.Context, key string, value []byte) error {
 	return n.engine.Put(key, value)
 }

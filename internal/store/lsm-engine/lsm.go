@@ -612,11 +612,8 @@ func (e *LSMEngine) Scan(prefix string) ([]storage.Entry, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	// Use map to track latest version of each key
 	result := make(map[string]storage.Entry)
 
-	// Scan SSTables from oldest to newest (L0 first, then L1, etc.)
-	// Within each level, SSTables are stored newest-first, so iterate in reverse
 	for _, level := range e.levels {
 		for i := len(level) - 1; i >= 0; i-- {
 			sst := level[i]
@@ -634,7 +631,6 @@ func (e *LSMEngine) Scan(prefix string) ([]storage.Entry, error) {
 		}
 	}
 
-	// Scan immutable memtables (newest first - last in queue is newest)
 	for i := len(e.immutable) - 1; i >= 0; i-- {
 		for _, entry := range e.immutable[i].Scan(prefix) {
 			if !entry.Tombstone {

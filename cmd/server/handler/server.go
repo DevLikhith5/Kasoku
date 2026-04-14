@@ -85,6 +85,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/internal/replicate", s.handleInternalReplicate)
 	}
 
+	// Hash ring visualization endpoint
+	mux.HandleFunc("/ring", s.handleRing)
+
 	// Metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())
 }

@@ -81,9 +81,16 @@ func main() {
 		// Create consistent hashing ring
 		r := ring.New(cfg.Cluster.VNodes)
 
-		// Create cluster config
+		// IMPORTANT: Use nodeAddr as the consistent identity in the ring so that
+		// ring lookup results (peer URLs) can be compared directly to s.nodeID
+		// in the handler. Previously, nodeID was "node-1" but peers were added
+		// as "http://localhost:9001" — causing replicas[0] == s.nodeID to never
+		// match, leading to infinite proxy loops and crashes.
+		r.AddNode(nodeAddr) // Add self using nodeAddr as identity
+
+		// Create cluster config — use nodeAddr as NodeID for ring consistency
 		clusterCfg := cluster.ClusterConfig{
-			NodeID:            cfg.Cluster.NodeID,
+			NodeID:            nodeAddr, // Use URL as ID for ring consistency
 			NodeAddr:          nodeAddr,
 			Ring:              r,
 			Store:             store,
@@ -94,9 +101,9 @@ func main() {
 			Peers:             cfg.Cluster.Peers,
 		}
 
-		server = handler.NewDistributed(store, cfg.Cluster.NodeID, nodeAddr, logger, m, &clusterCfg)
+		server = handler.NewDistributed(store, nodeAddr, nodeAddr, logger, m, &clusterCfg)
 
-		// Add peer nodes to the ring
+		// Add peer nodes to the ring using their node_addr URLs as identity
 		for _, peer := range cfg.Cluster.Peers {
 			r.AddNode(peer)
 		}

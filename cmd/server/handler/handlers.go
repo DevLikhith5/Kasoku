@@ -25,7 +25,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	stats := s.store.Stats()
 	s.writeJSON(w, http.StatusOK, APIResponse{
 		Success: true,
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"status": "ready",
 			"stats":  stats,
 		},
@@ -88,6 +88,30 @@ func (s *Server) handleNodeInfo(w http.ResponseWriter, r *http.Request) {
 			"node_id": s.nodeID,
 			"addr":    s.addr,
 			"stats":   stats,
+		},
+	})
+}
+
+func (s *Server) handleRing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var nodes []string
+	if s.ring != nil {
+		nodes = s.ring.GetAllNodes()
+	} else {
+		// Single-node mode: just this node
+		nodes = []string{s.nodeID}
+	}
+
+	s.writeJSON(w, http.StatusOK, APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"nodes":       nodes,
+			"count":       len(nodes),
+			"replication": ReplicationFactor,
 		},
 	})
 }

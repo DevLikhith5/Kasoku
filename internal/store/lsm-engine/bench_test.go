@@ -23,8 +23,8 @@ func Benchmark_Put_Sequential(b *testing.B) {
 	}
 	defer engine.Close()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	
+	for i := 0; b.Loop(); i++ {
 		key := fmt.Sprintf("key-%d", i)
 		value := []byte(fmt.Sprintf("value-%d", i))
 		if err := engine.Put(key, value); err != nil {

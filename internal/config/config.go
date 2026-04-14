@@ -201,7 +201,7 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	// HTTPPort
 	if v := os.Getenv("KASOKU_HTTP_PORT"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.Port)
+		fmt.Sscanf(v, "%d", &cfg.HTTPPort)
 	}
 	// LogLevel
 	if v := os.Getenv("KASOKU_LOG_LEVEL"); v != "" {

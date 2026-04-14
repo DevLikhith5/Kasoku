@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Geometric K icon -->
+  <g transform="translate(4, 0)">
+    <!-- Left spine — solid -->
+    <path d="M2 2 L10 0 L10 30 L2 28 Z" fill="#e11d5a" />
+    <!-- Top arm — angled -->
+    <path d="M12 0 L24 0 L16 13 L12 13 Z" fill="#e11d5a" opacity="0.9" />
+    <!-- Bottom arm — angled -->
+    <path d="M12 17 L16 17 L24 30 L12 30 Z" fill="#e11d5a" opacity="0.7" />
+    <!-- Center pivot dot -->
+    <circle cx="11" cy="15" r="2.5" fill="#f43f5e" />
+  </g>
+</svg>
