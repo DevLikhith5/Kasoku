@@ -1,4 +1,7 @@
 # Kasoku
+<img width="1440" height="900" alt="image" src="https://github.com/user-attachments/assets/4251a5f1-0bc0-4e2e-8bde-c2fffb4165f0" />
+<img width="1440" height="900" alt="image" src="https://github.com/user-attachments/assets/7dc0bd4b-88f5-4fd3-85b1-61e3692a3791" />
+
 
 **Distributed Key-Value Storage Engine**
 
