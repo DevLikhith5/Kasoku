@@ -1,0 +1,37 @@
+# Kasoku Single-Node Configuration - OPTIMIZED FOR HIGH THROUGHPUT
+# Performance-tuned for maximum writes/reads per second
+
+data_dir: ./data/single
+port: 9000
+http_port: 9000
+log_level: error
+
+# LSM Engine - Optimized
+lsm:
+    levels: 5
+    level_ratio: 10
+    l0_base_size: 268435456
+    key_cache_size: 1000000
+
+# Compaction - Optimized for throughput
+compaction:
+    threshold: 8
+    max_concurrent: 4
+    l0_size_threshold: 268435456
+
+# Memory - Increased for performance
+memory:
+    memtable_size: 268435456
+    max_memtable_bytes: 1073741824
+    bloom_fp_rate: 0.01
+    block_cache_size: 1073741824
+
+# WAL - Async with checkpoint for throughput
+wal:
+    sync: false
+    sync_interval: 100ms
+    checkpoint_bytes: 1048576
+    max_file_size: 67108864
+
+cluster:
+    enabled: false

@@ -216,8 +216,10 @@ kasoku/
 │   └── store/
 │       ├── lsm-engine/ WAL, MemTable, SSTable, Bloom Filter, Block Cache, Compactor
 │       └── hashmap/    In-memory fallback engine for testing
-├── kasoku.yaml         Active cluster configuration
-├── kasoku.example.yaml Annotated reference configuration
+├── configs/            Configuration files
+│   ├── single.yaml     Single-node optimized config
+│   ├── cluster.yaml    Cluster config (use with env vars)
+│   └── example.yaml    Full annotated reference
 ├── Makefile            Build, test, and lint targets
 └── USAGE.md            Detailed API reference and operation examples
 ```
@@ -245,7 +247,7 @@ go build -o kvctl ./cmd/kvctl/main.go
 
 ```bash
 # Start server with config file
-KASOKU_CONFIG=kasoku.yaml ./kasoku-server
+KASOKU_CONFIG=configs/single.yaml ./kasoku-server
 
 # Or set individual settings via environment variables
 KASOKU_CLUSTER_ENABLED=false ./kasoku-server
@@ -255,19 +257,16 @@ KASOKU_CLUSTER_ENABLED=false ./kasoku-server
 
 ```bash
 # Terminal 1 - Bootstrap node
-KASOKU_NODE_ID=node-1 KASOKU_PORT=9000 KASOKU_CLUSTER_ENABLED=true \
-  KASOKU_GOSSIP_PORT=9002 KASOKU_PEERS="http://localhost:9001,http://localhost:9002" \
-  ./kasoku-server
+KASOKU_NODE_ID=node-1 KASOKU_DATA_DIR=./data/node1 KASOKU_HTTP_PORT=9000 \
+  KASOKU_CONFIG=configs/cluster.yaml ./kasoku-server
 
 # Terminal 2
-KASOKU_NODE_ID=node-2 KASOKU_PORT=9001 KASOKU_CLUSTER_ENABLED=true \
-  KASOKU_GOSSIP_PORT=9003 KASOKU_PEERS="http://localhost:9000,http://localhost:9002" \
-  ./kasoku-server
+KASOKU_NODE_ID=node-2 KASOKU_DATA_DIR=./data/node2 KASOKU_HTTP_PORT=9001 \
+  KASOKU_CONFIG=configs/cluster.yaml ./kasoku-server
 
 # Terminal 3
-KASOKU_NODE_ID=node-3 KASOKU_PORT=9002 KASOKU_CLUSTER_ENABLED=true \
-  KASOKU_GOSSIP_PORT=9004 KASOKU_PEERS="http://localhost:9000,http://localhost:9001" \
-  ./kasoku-server
+KASOKU_NODE_ID=node-3 KASOKU_DATA_DIR=./data/node3 KASOKU_HTTP_PORT=9002 \
+  KASOKU_CONFIG=configs/cluster.yaml ./kasoku-server
 ```
 
 ### Basic Operations via CLI
