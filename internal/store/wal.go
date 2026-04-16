@@ -71,10 +71,15 @@ type WAL struct {
 	config       WALConfig
 	bytesWritten int64 // track bytes written for checkpoint
 	dirty        bool  // data not yet synced to disk
+	closed       bool  // WAL has been closed
 }
 
 func OpenWAL(path string) (*WAL, error) {
-	return OpenWALWithConfig(path, WALConfig{})
+	return OpenWALWithConfig(path, WALConfig{
+		SyncInterval:     0, // Legacy behavior: sync on every write
+		CheckpointBytes:  0,
+		MaxBufferedBytes: 0,
+	})
 }
 
 func OpenWALWithConfig(path string, cfg WALConfig) (*WAL, error) {
@@ -82,15 +87,15 @@ func OpenWALWithConfig(path string, cfg WALConfig) (*WAL, error) {
 		return nil, fmt.Errorf("WAL SyncInterval cannot be negative")
 	}
 
-	// Apply optimized defaults
-	if cfg.SyncInterval == 0 {
-		cfg.SyncInterval = DefaultWALSyncInterval // 100ms async sync
-	}
-	if cfg.CheckpointBytes <= 0 {
-		cfg.CheckpointBytes = DefaultWALCheckpointBytes // 1MB
-	}
-	if cfg.MaxBufferedBytes <= 0 {
-		cfg.MaxBufferedBytes = DefaultWALMaxBufferedBytes // 4MB
+	// Apply optimized defaults only when values are explicitly set
+	// SyncInterval = 0 means sync on every write (legacy behavior)
+	if cfg.SyncInterval > 0 {
+		if cfg.CheckpointBytes <= 0 {
+			cfg.CheckpointBytes = DefaultWALCheckpointBytes // 1MB
+		}
+		if cfg.MaxBufferedBytes <= 0 {
+			cfg.MaxBufferedBytes = DefaultWALMaxBufferedBytes // 4MB
+		}
 	}
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
@@ -108,10 +113,18 @@ func OpenWALWithConfig(path string, cfg WALConfig) (*WAL, error) {
 		dirty:        false,
 	}
 
-	// Start background sync goroutine
+	// Always create stop channel for Close() safety
 	w.stopCh = make(chan struct{})
-	w.wg.Add(1)
-	go w.backgroundSync()
+
+	// Start background sync goroutine only if async mode is enabled
+	if cfg.SyncInterval > 0 {
+		w.wg.Add(1)
+		go w.backgroundSync()
+	} else {
+		// For sync mode, Close the stopCh immediately since no goroutine is running
+		close(w.stopCh)
+		w.stopCh = nil // Mark as nil so Close() knows not to wait
+	}
 
 	return w, nil
 }
@@ -144,6 +157,10 @@ func (w *WAL) backgroundSync() {
 
 func (w *WAL) Append(entry Entry) error {
 	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return fmt.Errorf("WAL is closed")
+	}
 	defer w.mu.Unlock()
 	keyLen := len(entry.Key)
 	valLen := len(entry.Value)
@@ -316,8 +333,9 @@ func (w *WAL) Close() error {
 		w.wg.Wait()
 	}
 	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
 	w.wbuf.Flush()
-	w.mu.Unlock()
 	return w.file.Close()
 }
 
