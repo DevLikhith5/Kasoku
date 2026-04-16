@@ -540,11 +540,33 @@ func (e *LSMEngine) compactLevel(level int) {
 
 	// ATOMIC SWAP: remove old SSTables and install new one in a single lock
 	e.mu.Lock()
+
+	// Build a set of SSTables that were in the original compaction snapshot
+	oldSSTables := make(map[*SSTableReader]bool)
+	for _, sst := range toMerge {
+		oldSSTables[sst] = true
+	}
+
+	// Keep any SSTables that were added to this level AFTER the compaction snapshot
+	// These are the "new" SSTables from flushes that happened during compaction
+	var newSSTables []*SSTableReader
+	if level < len(e.levels) && e.levels[level] != nil {
+		for _, sst := range e.levels[level] {
+			if !oldSSTables[sst] {
+				newSSTables = append(newSSTables, sst)
+			}
+		}
+	}
+
 	e.levels[level] = nil // remove old SSTables from source level
 	for len(e.levels) <= nextLevel {
 		e.levels = append(e.levels, nil)
 	}
 	e.levels[nextLevel] = append(e.levels[nextLevel], reader)
+	// Prepend new SSTables back to the level so they're not lost
+	if len(newSSTables) > 0 {
+		e.levels[level] = append(newSSTables, e.levels[level]...)
+	}
 	e.mu.Unlock()
 
 	// Now safe to close and delete old files (no longer referenced by e.levels)
