@@ -143,36 +143,21 @@ Every write is associated with a vector clock entry identifying the originating 
 
 Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testing tool (Dynamo-style).
 
-Kasoku supports two read modes, matching different systems:
-- **Single-Key Point Read**: `get(key)` — per the original Dynamo (2007) paper
-- **Batch Read**: `BatchGet(50 keys)` — added later in DynamoDB (AWS service, ~2015)
+### Single Node (Optimized - April 2026)
 
-### Single Node (Standalone, no replication)
+| Operation | Type | Throughput | Latency p50 | Latency p99 |
+| :--- | :--- | ---: | ---: | ---: |
+| **Writes** | Single-key | **118,000 ops/sec** | 70µs | 675µs |
+| **Reads** | Single-Key | **308,000 ops/sec** | 56µs | 647µs |
+| **Reads** | Batch (25 keys) | **435,000 ops/sec** | — | — |
 
-| Operation | Type | Throughput | p50 Latency |
-| :--- | :--- | ---: | ---: |
-| **Writes** | Single-key | ~5,000 ops/sec | 10ms |
-| **Reads** | Single-Key | ~4,000 ops/sec | 8ms |
-| **Writes** | Batch (50 keys) | ~12,000 ops/sec | 5ms |
-| **Reads** | Batch (50 keys) | ~35,000 ops/sec | 1.5ms |
+### 3-Node Cluster (RF=3, W=2, R=1)
 
-### 3-Node Cluster (RF=3, W=2 quorum) - Strong Consistency
-
-| Operation | Type | Throughput | p50 Latency |
-| :--- | :--- | ---: | ---: |
-| **Writes** | Single-key (quorum) | ~2,000 ops/sec | 20ms |
-| **Reads** | Single-Key | ~2,000 ops/sec | 15ms |
-| **Writes** | Batch (50 keys) | ~5,000 ops/sec | 10ms |
-| **Reads** | Batch (50 keys) | ~15,000 ops/sec | 5ms |
-
-### 3-Node Cluster (RF=3, W=1 R=1) - Eventual Consistency
-
-| Operation | Type | Throughput | p50 Latency |
-| :--- | :--- | ---: | ---: |
-| **Writes** | Single-key | ~5,000 ops/sec | 12ms |
-| **Reads** | Single-Key | ~20,000 ops/sec | 2ms |
-| **Writes** | Batch (50 keys) | ~10,000 ops/sec | 8ms |
-| **Reads** | Batch (50 keys) | ~45,000 ops/sec | 1.3ms |
+| Operation | Type | Throughput | Latency p50 | Latency p99 |
+| :--- | :--- | ---: | ---: | ---: |
+| **Writes** | Single-key (quorum) | **24,000-62,000 ops/sec** | 495µs | 3.88ms |
+| **Reads** | Single-Key | **28,000 ops/sec** | 85µs | 79.65ms |
+| **Reads** | Batch (peak) | **262,000 ops/sec** | — | — |
 
 ### Comparison with Dynamo Paper & DynamoDB
 
@@ -181,24 +166,24 @@ Kasoku supports two read modes, matching different systems:
 | **Dynamo Paper (2007)** | ~100,000+ ops/sec | ~100,000+ ops/sec | N/A |
 | **DynamoDB** | ~50,000+ ops/sec | ~50,000+ ops/sec | ~200,000+ ops/sec |
 | **Cassandra** | ~50,000 ops/sec | ~50,000 ops/sec | ~100,000 ops/sec |
-| **Riak** | ~10,000 ops/sec | ~10,000 ops/sec | ~30,000 ops/sec |
-| **Kasoku (strong)** | ~5,000 ops/sec | ~4,000 ops/sec | ~35,000 ops/sec |
-| **Kasoku (eventual)** | ~5,000 ops/sec | ~20,000 ops/sec | ~45,000 ops/sec |
+| **Kasoku (single node)** | **118,000 ops/sec** | **308,000 ops/sec** | **435,000 ops/sec** |
+| **Kasoku (cluster)** | **24,000-62,000 ops/sec** | **28,000 ops/sec** | **262,000 ops/sec** |
 
-**Why Kasoku is slower:**
+### Optimizations Applied
 
-- **Pure Go**: No native code optimization vs Java (Cassandra) or C++ (DynamoDB)
-- **No SSD optimization**: Running on consumer Mac with spinning disk simulation
-- **Single-threaded HTTP**: Each request uses a goroutine but not optimized for extreme throughput
-- **Eventual vs Strong**: Use W=1,R=1 for eventual consistency (~3x faster reads)
-| **Reads** | Batch (50 keys) | ~15,000 ops/sec | 5ms |
+- **WAL**: Async batch sync (100ms interval + 1MB checkpoint)
+- **Encoding**: Pure binary with magic byte (no JSON)
+- **Block Size**: 64KB (was 4KB)
+- **Caches**: 1GB block cache, 1M key cache entries
+- **MemTable**: 256MB (was 64MB)
+- **Level Ratio**: 10 (was 2) — fewer levels = faster compaction
+- **Parallel Compaction**: Concurrent level compactions
 
-**Key Insights:**
+### Key Insights
 
 - **Batch operations** are significantly faster than single-key due to amortizing HTTP overhead.
-- **Writes** are limited by sequential WAL - each write is an fsync (or batched sync).
-- **Single-node** outperforms cluster for reads due to no network hops.
-- **Cluster writes** are slower due to quorum replication (local + remote + wait).
+- **Single-node** outperforms cluster for writes due to no quorum overhead.
+- **Cluster reads** can exceed single node with R=1 (eventual consistency).
 - All benchmarks use background compaction — never blocks read/write operations.
 - **Eventual Consistency Mode**: Set `quorum_size: 1` and `read_quorum: 1` in config for ~3x faster reads.
 

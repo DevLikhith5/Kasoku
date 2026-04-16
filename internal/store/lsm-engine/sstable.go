@@ -8,13 +8,16 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 	"github.com/golang/snappy"
 )
 
 const (
-	DefaultBlockSize = 4096 // 4KB blocks
+	DefaultBlockSize   = 64 * 1024  // 64KB blocks (optimized for SSD sequential I/O)
+	MaxBlockSize       = 256 * 1024 // 256KB max block size
+	BinaryEncodingMode = true       // BINARY ONLY - for maximum performance
 )
 
 type indexEntry struct {
@@ -22,6 +25,7 @@ type indexEntry struct {
 	Offset     int64  `json:"o"`
 	Size       int32  `json:"s"`
 	Compressed bool   `json:"c"` // whether data block is compressed
+	Binary     bool   `json:"b"` // whether binary encoding was used (NEW - for decode compatibility)
 }
 
 type SSTableWriter struct {
@@ -49,10 +53,146 @@ func NewSSTableWriter(path string, expectedEntries int, bloomFPRate float64) (*S
 	}, nil
 }
 
+// Magic byte to identify binary format - ensures we can distinguish from any legacy data
+const binaryMagic = 0xBF
+
+// encodeEntryBinary encodes an entry to binary format for fast serialization
+// Format: [magic:1][keyLen:4][keyBytes][valLen:4][valueBytes][version:8][timestamp:8][tombstone:1]
+func encodeEntryBinary(entry storage.Entry) []byte {
+	keyLen := len(entry.Key)
+	valLen := len(entry.Value)
+	// Fixed overhead: 1 (magic) + 4 (keyLen) + 4 (valLen) + 8 (version) + 8 (timestamp) + 1 (tombstone) = 26
+	// Plus variable: keyLen + valLen
+	buf := make([]byte, 1+4+keyLen+4+valLen+8+8+1)
+	pos := 0
+
+	// Magic byte (1 byte)
+	buf[pos] = binaryMagic
+	pos++
+
+	// Key length (4 bytes)
+	binary.LittleEndian.PutUint32(buf[pos:pos+4], uint32(keyLen))
+	pos += 4
+
+	// Key bytes
+	if keyLen > 0 {
+		copy(buf[pos:pos+keyLen], entry.Key)
+		pos += keyLen
+	}
+
+	// Value length (4 bytes)
+	binary.LittleEndian.PutUint32(buf[pos:pos+4], uint32(valLen))
+	pos += 4
+
+	// Value bytes
+	if valLen > 0 {
+		copy(buf[pos:pos+valLen], entry.Value)
+		pos += valLen
+	}
+
+	// Version (8 bytes)
+	binary.LittleEndian.PutUint64(buf[pos:pos+8], entry.Version)
+	pos += 8
+
+	// Timestamp (8 bytes)
+	ts := entry.TimeStamp.UnixNano()
+	if ts == 0 {
+		ts = time.Now().UnixNano()
+	}
+	binary.LittleEndian.PutUint64(buf[pos:pos+8], uint64(ts))
+	pos += 8
+
+	// Tombstone (1 byte)
+	if entry.Tombstone {
+		buf[pos] = 1
+	}
+
+	return buf
+}
+
+// decodeEntryBinary decodes binary entry back to storage.Entry
+// Requires data to start with magic byte
+func decodeEntryBinary(data []byte) (storage.Entry, error) {
+	var entry storage.Entry
+
+	if len(data) < 1 {
+		return entry, fmt.Errorf("data too short for magic byte")
+	}
+
+	// Check magic byte
+	if data[0] != binaryMagic {
+		return entry, fmt.Errorf("not binary format: magic byte mismatch")
+	}
+
+	pos := 1 // Skip magic
+
+	// Read key length
+	if len(data) < pos+4 {
+		return entry, fmt.Errorf("data too short for key length")
+	}
+	keyLen := binary.LittleEndian.Uint32(data[pos:])
+	pos += 4
+
+	// Read key
+	if keyLen > 0 {
+		if len(data) < pos+int(keyLen) {
+			return entry, fmt.Errorf("data too short for key")
+		}
+		entry.Key = string(data[pos : pos+int(keyLen)])
+		pos += int(keyLen)
+	}
+
+	// Read value length
+	if len(data) < pos+4 {
+		return entry, fmt.Errorf("data too short for value length")
+	}
+	valLen := binary.LittleEndian.Uint32(data[pos:])
+	pos += 4
+
+	// Read value
+	if valLen > 0 {
+		if len(data) < pos+int(valLen) {
+			return entry, fmt.Errorf("data too short for value")
+		}
+		entry.Value = data[pos : pos+int(valLen)]
+		pos += int(valLen)
+	}
+
+	// Read version
+	if len(data) < pos+8 {
+		return entry, fmt.Errorf("data too short for version")
+	}
+	entry.Version = binary.LittleEndian.Uint64(data[pos:])
+	pos += 8
+
+	// Read timestamp
+	if len(data) < pos+8 {
+		return entry, fmt.Errorf("data too short for timestamp")
+	}
+	ts := binary.LittleEndian.Uint64(data[pos:])
+	entry.TimeStamp = time.Unix(0, int64(ts))
+	pos += 8
+
+	// Read tombstone
+	if pos < len(data) {
+		entry.Tombstone = data[pos] == 1
+	}
+
+	return entry, nil
+}
+
 func (w *SSTableWriter) WriteEntry(entry storage.Entry) error {
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return err
+	var data []byte
+	var err error
+
+	// Use binary encoding for better performance
+	if BinaryEncodingMode {
+		data = encodeEntryBinary(entry)
+	} else {
+		data, err = json.Marshal(entry)
+		if err != nil {
+			return err
+		}
 	}
 
 	var lenBuf [4]byte
@@ -88,6 +228,7 @@ func (w *SSTableWriter) WriteEntry(entry storage.Entry) error {
 		Offset:     w.offset,
 		Size:       int32(len(finalData) + 4), // +4 for length prefix
 		Compressed: compressed,
+		Binary:     BinaryEncodingMode, // Track encoding mode for read path
 	})
 	w.offset += int64(len(finalData) + 4)
 	w.count++
@@ -226,10 +367,14 @@ func InitBlockCache(sizeBytes int64) {
 	})
 }
 
+const (
+	DefaultBlockCacheSize = 1024 * 1024 * 1024 // 1GB default block cache
+)
+
 func GetBlockCache() *BlockCache {
 	if globalBlockCache == nil {
-		// Default: 128MB / 4KB = 32768 blocks
-		globalBlockCache = NewBlockCache(134217728 / DefaultBlockSize)
+		// Default: 1GB / 64KB = 16384 blocks (optimized for 64KB blocks)
+		globalBlockCache = NewBlockCache(DefaultBlockCacheSize / DefaultBlockSize)
 	}
 	return globalBlockCache
 }
@@ -324,19 +469,20 @@ func (r *SSTableReader) Get(key string) (storage.Entry, error) {
 		if err != nil {
 			return storage.Entry{}, err
 		}
-		var result storage.Entry
-		if err := json.Unmarshal(decompressed, &result); err != nil {
-			return storage.Entry{}, err
-		}
-		return result, nil
+		data = decompressed
+		// After decompression, data starts directly with magic byte (no length prefix)
+	} else {
+		// Not compressed - skip length prefix to get to the actual data
+		data = data[4:]
 	}
 
-	// Not compressed
-	var result storage.Entry
-	if err := json.Unmarshal(data[4:], &result); err != nil {
-		return storage.Entry{}, err
+	// Binary ONLY - check magic byte
+	if len(data) > 0 && data[0] == binaryMagic {
+		return decodeEntryBinary(data)
 	}
-	return result, nil
+
+	// No other formats supported
+	return storage.Entry{}, fmt.Errorf("invalid data format: no magic byte found")
 }
 
 func (r *SSTableReader) Scan(prefix string) ([]storage.Entry, error) {
@@ -375,18 +521,25 @@ func (r *SSTableReader) Scan(prefix string) ([]storage.Entry, error) {
 
 		// Decompress if needed
 		var s storage.Entry
+		blockData := data[4:] // skip length prefix
 		if entry.Compressed {
-			decompressed, err := snappy.Decode(nil, data[4:])
+			decompressed, err := snappy.Decode(nil, blockData)
 			if err != nil {
 				continue
 			}
-			if err := json.Unmarshal(decompressed, &s); err != nil {
+			blockData = decompressed
+			// After decompression, data starts directly with magic byte
+		}
+
+		// Binary ONLY - check magic byte
+		if len(blockData) > 0 && blockData[0] == binaryMagic {
+			decoded, err := decodeEntryBinary(blockData)
+			if err != nil {
 				continue
 			}
+			s = decoded
 		} else {
-			if err := json.Unmarshal(data[4:], &s); err != nil {
-				continue
-			}
+			continue // Invalid format
 		}
 		result = append(result, s)
 	}

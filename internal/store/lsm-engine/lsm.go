@@ -31,14 +31,21 @@ type LSMEngine struct {
 }
 
 type LSMConfig struct {
-	MemTableSize        int64 //soft limit for memtable
-	MaxMemtableBytes    int64
+	MemTableSize        int64 // soft limit for memtable
+	MaxMemtableBytes    int64 // total memory for all memtables
 	WALSyncInterval     time.Duration
-	CompactionThreshold int
-	L0SizeThreshold     int64 //hard limit for memtable
+	CompactionThreshold int   // SSTables per level to trigger compaction
+	L0SizeThreshold     int64 // hard limit for memtable
 	BloomFPRate         float64
-	LevelRatio          float64
+	LevelRatio          float64 // size ratio between levels
+	KeyCacheSize        int     // number of entries in key cache
 }
+
+const (
+	DefaultKeyCacheSize    = 1000000           // 1M entries (increased from 10K)
+	DefaultLevelRatio      = 10.0              // 10x ratio (fewer levels = faster)
+	DefaultL0SizeThreshold = 256 * 1024 * 1024 // 256MB (2x memtable)
+)
 
 func (e *LSMEngine) PutEntry(entry storage.Entry) error {
 	e.active.Put(entry)
@@ -58,24 +65,27 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 		return nil, err
 	}
 
-	// Apply defaults for zero values
+	// Apply defaults optimized for high throughput
 	if cfg.MemTableSize <= 0 {
-		cfg.MemTableSize = DefaultMemTableSize
+		cfg.MemTableSize = 256 * 1024 * 1024 // 256MB (increased from 64MB)
 	}
 	if cfg.MaxMemtableBytes <= 0 {
-		cfg.MaxMemtableBytes = DefaultMemTableSize * 4 // 256MB
+		cfg.MaxMemtableBytes = 1024 * 1024 * 1024 // 1GB (4x memtable)
 	}
 	if cfg.CompactionThreshold <= 0 {
-		cfg.CompactionThreshold = 4
+		cfg.CompactionThreshold = 8 // increased from 4
 	}
 	if cfg.L0SizeThreshold <= 0 {
-		cfg.L0SizeThreshold = DefaultMemTableSize * 2 // 128MB
+		cfg.L0SizeThreshold = DefaultL0SizeThreshold // 256MB
 	}
 	if cfg.BloomFPRate <= 0 {
 		cfg.BloomFPRate = 0.01
 	}
 	if cfg.LevelRatio <= 0 {
-		cfg.LevelRatio = 2.0
+		cfg.LevelRatio = DefaultLevelRatio // 10 (fewer levels = faster)
+	}
+	if cfg.KeyCacheSize <= 0 {
+		cfg.KeyCacheSize = DefaultKeyCacheSize // 1M entries
 	}
 
 	wal, err := storage.OpenWALWithConfig(filepath.Join(dir, "wal.log"), storage.WALConfig{
@@ -93,7 +103,7 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 		compCh:    make(chan struct{}, 1),
 		flushDone: make(chan struct{}, 1),
 		config:    cfg,
-		cache:     newKeyCache(10000),
+		cache:     newKeyCache(cfg.KeyCacheSize),
 	}
 
 	if err := e.loadSSTables(); err != nil {
@@ -198,8 +208,10 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 		return storage.Entry{}, storage.ErrEngineClosed
 	}
 
-	// Check active memtable first
+	e.mu.RLock()
 	entry, found := e.active.Get(key)
+	e.mu.RUnlock()
+
 	if found {
 		if entry.Tombstone {
 			e.cache.Put(key, storage.Entry{}, false)
@@ -402,14 +414,14 @@ func (e *LSMEngine) compactLoop() {
 			return
 		}
 
-		// Collect levels that need compaction (no hard cap — pyramid grows)
+		// Collect levels that need compaction
 		e.mu.RLock()
 		var levelsToCompact []int
 		for level := 0; level < len(e.levels); level++ {
 			if len(e.levels[level]) >= e.maxFilesForLevel(level) {
 				levelsToCompact = append(levelsToCompact, level)
 			} else {
-				break // Stop at first level that doesn't need compaction
+				break
 			}
 		}
 		e.mu.RUnlock()
@@ -418,15 +430,42 @@ func (e *LSMEngine) compactLoop() {
 			continue
 		}
 
-		// Compact non-adjacent levels concurrently
-		// Even levels (0, 2, 4...) can compact concurrently
-		// Odd levels (1, 3, 5...) can compact concurrently
-		// But we must compact L0 first before L1, L1 before L2, etc.
+		// Compact levels in parallel where possible:
+		// - Separate even and odd levels for parallelism
+		// - But prioritize L0 first for write performance
+		if levelsToCompact[0] == 0 {
+			e.compactLevel(0)
+			levelsToCompact = levelsToCompact[1:]
+		}
 
-		// For safety and simplicity: compact sequentially from L0 upwards
-		// This ensures correctness - L0 compaction must complete before L1 compaction
+		// Compact remaining levels in parallel (max 2 concurrent)
+		var wg sync.WaitGroup
+		pending := make([]int, 0)
 		for _, level := range levelsToCompact {
-			e.compactLevel(level)
+			pending = append(pending, level)
+			if len(pending) >= 2 {
+				// Compact 2 levels in parallel
+				for _, lvl := range pending {
+					wg.Add(1)
+					go func(l int) {
+						defer wg.Done()
+						e.compactLevel(l)
+					}(lvl)
+				}
+				wg.Wait()
+				pending = pending[:0]
+			}
+		}
+		// Compact any remaining levels
+		for _, lvl := range pending {
+			wg.Add(1)
+			go func(l int) {
+				defer wg.Done()
+				e.compactLevel(l)
+			}(lvl)
+		}
+		if len(pending) > 0 {
+			wg.Wait()
 		}
 	}
 }

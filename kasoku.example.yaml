@@ -1,4 +1,4 @@
-# Kasoku Configuration File
+# Kasoku Configuration File - Optimized for High Throughput
 # =========================
 # Copy this file to kasoku.yaml and customize for your environment.
 
@@ -20,68 +20,74 @@ http_port: 9001
 
 # Log level: debug, info, warn, error
 # Can also be set via KASOKU_LOG_LEVEL environment variable
-log_level: info
+log_level: warn
 
 # Log file path (empty = stdout)
 # Can also be set via KASOKU_LOG_FILE environment variable
-log_file: /var/log/kasoku/server.log
+log_file: ""
 
 # ------------------------------------------------------------------
-# LSM Engine Settings
+# LSM Engine Settings (OPTIMIZED for high throughput)
 # ------------------------------------------------------------------
 
 lsm:
   # Number of levels in LSM tree
-  levels: 7
+  levels: 5
 
-  # Size ratio between consecutive levels
+  # Size ratio between consecutive levels (10x = fewer levels = faster)
   level_ratio: 10.0
 
-  # Base size for L0 (bytes) - 64MB default
-  l0_base_size: 67108864
+  # Base size for L0 (bytes) - 256MB (optimized)
+  l0_base_size: 268435456
+
+  # Key cache size (1M entries for high cache hit rate)
+  key_cache_size: 1000000
 
 # ------------------------------------------------------------------
-# Compaction Settings
+# Compaction Settings (OPTIMIZED)
 # ------------------------------------------------------------------
 
 compaction:
-  # Number of SSTables to trigger compaction
-  threshold: 4
+  # Number of SSTables to trigger compaction (increased from 4 to 8)
+  threshold: 8
 
   # Maximum concurrent compactions
-  max_concurrent: 2
+  max_concurrent: 4
 
-  # Size threshold for L0 compaction (bytes) - 128MB default
-  l0_size_threshold: 134217728
+  # Size threshold for L0 compaction (bytes) - 256MB
+  l0_size_threshold: 268435456
 
 # ------------------------------------------------------------------
-# Memory Settings
+# Memory Settings (OPTIMIZED for high throughput)
 # ------------------------------------------------------------------
 
 memory:
-  # MemTable size in bytes (64MB default)
+  # MemTable size in bytes (256MB - increased from 64MB)
   # Can also be set via KASOKU_MEMTABLE_SIZE environment variable
-  memtable_size: 67108864
+  memtable_size: 268435456
 
-  # Maximum memory for all memtables (256MB default)
-  max_memtable_bytes: 268435456
+  # Maximum memory for all memtables (1GB - for holding more in-memory)
+  max_memtable_bytes: 1073741824
 
   # Bloom filter false positive rate (0.01 = 1%)
   bloom_fp_rate: 0.01
 
-  # Block cache size (128MB default)
-  block_cache_size: 134217728
+  # Block cache size (1GB - increased from 128MB for better read cache)
+  block_cache_size: 1073741824
 
 # ------------------------------------------------------------------
-# WAL (Write-Ahead Log) Settings
+# WAL (Write-Ahead Log) Settings (OPTIMIZED for throughput)
 # ------------------------------------------------------------------
 
 wal:
-  # Sync every write (safer but slower)
-  sync: true
+  # Async batch sync (false = async mode for throughput)
+  sync: false
 
-  # Sync interval in milliseconds (if sync=false)
+  # Sync interval in milliseconds (100ms = balance performance/durability)
   sync_interval: 100ms
+
+  # Checkpoint interval in bytes (1MB - force sync after this much data)
+  checkpoint_bytes: 1048576
 
   # WAL file size before rotation (64MB default)
   max_file_size: 67108864
@@ -117,8 +123,11 @@ cluster:
   # Quorum size (minimum acks required for write)
   quorum_size: 2
 
+  # Read quorum (1 = eventual consistency for throughput, 2 = strong)
+  read_quorum: 1
+
   # Virtual nodes per physical node (for consistent hashing)
   vnodes: 150
 
-  # RPC timeout for inter-node communication (milliseconds)
-  rpc_timeout_ms: 5000
+  # RPC timeout for inter-node communication (milliseconds) - reduced for faster failure detection
+  rpc_timeout_ms: 500

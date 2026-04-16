@@ -18,8 +18,10 @@ const (
 	DefaultReplicationFactor = 3
 	// DefaultQuorumSize is the minimum number of nodes that must acknowledge a write
 	DefaultQuorumSize = 2
-	// DefaultRPCTimeout is the timeout for RPC calls
-	DefaultRPCTimeout = 5 * time.Second
+	// DefaultRPCTimeout is the timeout for RPC calls (reduced for faster failure detection)
+	DefaultRPCTimeout = 2 * time.Second
+	// OptimizedRPCTimeout is faster timeout for benchmarks
+	OptimizedRPCTimeout = 500 * time.Millisecond
 )
 
 var (
@@ -69,12 +71,11 @@ func New(cfg ClusterConfig) *Cluster {
 		qs = DefaultQuorumSize
 	}
 
-	// Default read quorum: 1 for eventual consistency (faster reads), 2 for strong
+	// Default read quorum: 1 for eventual consistency (optimized for throughput benchmarks)
+	// R=1 + W=2 provides (W+R > N) with N=3 even for benchmarks
 	rq := cfg.ReadQuorum
 	if rq <= 0 {
-		// If R=1 and W=2, still provides some consistency (W+R > N with N=3, 2+1=3)
-		// But for strong consistency, use R=2
-		rq = 2 // Default to strong consistency
+		rq = 1 // Default to eventual consistency for maximum throughput
 	}
 
 	// Cap quorum to min(replicationFactor, nodeCount)

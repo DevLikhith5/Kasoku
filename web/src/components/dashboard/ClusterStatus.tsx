@@ -90,7 +90,6 @@ export function ClusterStatus({ apiBase }: { apiBase: string }) {
             // API returns: { nodes: string[], ring_distribution: {[url]: pct}, node_id, node_addr }
             const nodeUrls: string[] = raw.nodes || []
             console.log('[ClusterStatus] nodeUrls:', nodeUrls)
-            const dist: Record<string, number> = raw.ring_distribution || {}
 
             if (nodeUrls.length > 0) {
               const parsed: NodeInfo[] = nodeUrls.map((url: string) => {

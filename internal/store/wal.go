@@ -43,9 +43,18 @@ func (h WALReplayHandlerFuncs) SetVersion(version uint64) {
 }
 
 type WALConfig struct {
-	SyncInterval time.Duration
-	OnSyncError  func(error)
+	SyncInterval     time.Duration // 0 = sync every write, >0 = background sync interval
+	CheckpointBytes  int64         // checkpoint after N bytes (default 1MB)
+	MaxBufferedBytes int64         // max buffered before forced flush (default 4MB)
+	OnSyncError      func(error)
 }
+
+// Default WAL settings optimized for throughput while maintaining durability
+const (
+	DefaultWALSyncInterval     = 100 * time.Millisecond // async background sync
+	DefaultWALCheckpointBytes  = 1024 * 1024            // 1MB checkpoint
+	DefaultWALMaxBufferedBytes = 4 * 1024 * 1024        // 4MB max buffered
+)
 
 const (
 	walOpPut = byte(0)
@@ -53,13 +62,15 @@ const (
 )
 
 type WAL struct {
-	mu     sync.Mutex
-	file   *os.File
-	wbuf   *bufio.Writer
-	path   string
-	stopCh chan struct{}
-	wg     sync.WaitGroup
-	config WALConfig
+	mu           sync.Mutex
+	file         *os.File
+	wbuf         *bufio.Writer
+	path         string
+	stopCh       chan struct{}
+	wg           sync.WaitGroup
+	config       WALConfig
+	bytesWritten int64 // track bytes written for checkpoint
+	dirty        bool  // data not yet synced to disk
 }
 
 func OpenWAL(path string) (*WAL, error) {
@@ -70,21 +81,38 @@ func OpenWALWithConfig(path string, cfg WALConfig) (*WAL, error) {
 	if cfg.SyncInterval < 0 {
 		return nil, fmt.Errorf("WAL SyncInterval cannot be negative")
 	}
+
+	// Apply optimized defaults
+	if cfg.SyncInterval == 0 {
+		cfg.SyncInterval = DefaultWALSyncInterval // 100ms async sync
+	}
+	if cfg.CheckpointBytes <= 0 {
+		cfg.CheckpointBytes = DefaultWALCheckpointBytes // 1MB
+	}
+	if cfg.MaxBufferedBytes <= 0 {
+		cfg.MaxBufferedBytes = DefaultWALMaxBufferedBytes // 4MB
+	}
+
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open WAL %s: %w", path, err)
 	}
+
+	// Use larger buffer for throughput (256KB)
 	w := &WAL{
-		file:   f,
-		wbuf:   bufio.NewWriterSize(f, 32*1024),
-		path:   path,
-		config: cfg,
+		file:         f,
+		wbuf:         bufio.NewWriterSize(f, 256*1024),
+		path:         path,
+		config:       cfg,
+		bytesWritten: 0,
+		dirty:        false,
 	}
-	if cfg.SyncInterval > 0 {
-		w.stopCh = make(chan struct{})
-		w.wg.Add(1)
-		go w.backgroundSync()
-	}
+
+	// Start background sync goroutine
+	w.stopCh = make(chan struct{})
+	w.wg.Add(1)
+	go w.backgroundSync()
+
 	return w, nil
 }
 
@@ -96,13 +124,16 @@ func (w *WAL) backgroundSync() {
 		select {
 		case <-ticker.C:
 			w.mu.Lock()
-			w.wbuf.Flush()
-			if err := w.file.Sync(); err != nil {
-				if w.config.OnSyncError != nil {
-					w.config.OnSyncError(err)
-				} else {
-					fmt.Fprintf(os.Stderr, "WAL fsync error: %v\n", err)
+			if w.dirty {
+				w.wbuf.Flush()
+				if err := w.file.Sync(); err != nil {
+					if w.config.OnSyncError != nil {
+						w.config.OnSyncError(err)
+					} else {
+						fmt.Fprintf(os.Stderr, "WAL fsync error: %v\n", err)
+					}
 				}
+				w.dirty = false
 			}
 			w.mu.Unlock()
 		case <-w.stopCh:
@@ -116,11 +147,15 @@ func (w *WAL) Append(entry Entry) error {
 	defer w.mu.Unlock()
 	keyLen := len(entry.Key)
 	valLen := len(entry.Value)
-	if w.wbuf.Available() < keyLen+valLen+25 {
+	recordSize := 4 + keyLen + 4 + valLen + 8 + 8 + 1
+
+	// Check if buffer needs flush before writing
+	if w.wbuf.Available() < recordSize {
 		if err := w.wbuf.Flush(); err != nil {
 			return fmt.Errorf("WAL flush: %w", err)
 		}
 	}
+
 	var hdr [4]byte
 	binary.LittleEndian.PutUint32(hdr[:], uint32(keyLen))
 	w.wbuf.Write(hdr[:])
@@ -141,9 +176,36 @@ func (w *WAL) Append(entry Entry) error {
 		op = walOpDel
 	}
 	w.wbuf.WriteByte(op)
-	if w.config.SyncInterval == 0 {
+
+	// Track bytes written for checkpoint
+	w.bytesWritten += int64(recordSize)
+	w.dirty = true
+
+	// Check checkpoint threshold - sync and checkpoint if needed
+	if w.bytesWritten >= w.config.CheckpointBytes {
 		w.wbuf.Flush()
-		return w.file.Sync()
+		if err := w.file.Sync(); err != nil {
+			if w.config.OnSyncError != nil {
+				w.config.OnSyncError(err)
+			}
+		}
+		w.bytesWritten = 0
+	}
+
+	return nil
+}
+
+// Sync forces a synchronous flush to disk
+func (w *WAL) Sync() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.dirty {
+		w.wbuf.Flush()
+		if err := w.file.Sync(); err != nil {
+			return err
+		}
+		w.bytesWritten = 0
+		w.dirty = false
 	}
 	return nil
 }
