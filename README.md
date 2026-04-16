@@ -216,10 +216,19 @@ kasoku/
 │   └── store/
 │       ├── lsm-engine/ WAL, MemTable, SSTable, Bloom Filter, Block Cache, Compactor
 │       └── hashmap/    In-memory fallback engine for testing
+├── benchmarks/         Benchmark tools and results
+│   ├── pressure/       Dynamo-style load testing tool
+│   ├── BENCHMARKS.md   Latest benchmark results
+│   └── bulk_batch.go   Bulk load benchmark
 ├── configs/            Configuration files
 │   ├── single.yaml     Single-node optimized config
 │   ├── cluster.yaml    Cluster config (use with env vars)
 │   └── example.yaml    Full annotated reference
+├── scripts/            Startup and utility scripts
+│   ├── start-single.sh Start single-node server
+│   ├── start-cluster.sh Start 3-node cluster
+│   ├── stop.sh         Stop all processes
+│   └── run-benchmark.sh Run benchmark tests
 ├── Makefile            Build, test, and lint targets
 └── USAGE.md            Detailed API reference and operation examples
 ```
@@ -246,27 +255,19 @@ go build -o kvctl ./cmd/kvctl/main.go
 ### Run a Single Node
 
 ```bash
-# Start server with config file
-KASOKU_CONFIG=configs/single.yaml ./kasoku-server
+# Using startup script (recommended)
+./scripts/start-single.sh
 
-# Or set individual settings via environment variables
-KASOKU_CLUSTER_ENABLED=false ./kasoku-server
+# Or manually
+go build -o kasoku ./cmd/server/main.go
+KASOKU_CONFIG=configs/single.yaml ./kasoku
 ```
 
 ### Run a Three-Node Local Cluster
 
 ```bash
-# Terminal 1 - Bootstrap node
-KASOKU_NODE_ID=node-1 KASOKU_DATA_DIR=./data/node1 KASOKU_HTTP_PORT=9000 \
-  KASOKU_CONFIG=configs/cluster.yaml ./kasoku-server
-
-# Terminal 2
-KASOKU_NODE_ID=node-2 KASOKU_DATA_DIR=./data/node2 KASOKU_HTTP_PORT=9001 \
-  KASOKU_CONFIG=configs/cluster.yaml ./kasoku-server
-
-# Terminal 3
-KASOKU_NODE_ID=node-3 KASOKU_DATA_DIR=./data/node3 KASOKU_HTTP_PORT=9002 \
-  KASOKU_CONFIG=configs/cluster.yaml ./kasoku-server
+# Using startup script (recommended)
+./scripts/start-cluster.sh
 ```
 
 ### Basic Operations via CLI
