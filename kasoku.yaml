@@ -21,8 +21,13 @@ wal:
     sync_interval: 100ms
     max_file_size: 67108864
 cluster:
-    enabled: false
+    enabled: true
     node_id: node-1
-    peers: []
+    node_addr: http://localhost:9000
+    peers:
+        - http://localhost:9001
+        - http://localhost:9002
+    replication_factor: 3
+    quorum_size: 2
     gossip_port: 9002
     raft_port: 9003

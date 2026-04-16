@@ -96,6 +96,7 @@ func main() {
 			Store:             store,
 			ReplicationFactor: cfg.Cluster.ReplicationFactor,
 			QuorumSize:        cfg.Cluster.QuorumSize,
+			ReadQuorum:        cfg.Cluster.ReadQuorum,
 			RPCTimeout:        time.Duration(cfg.Cluster.RPCTimeoutMs) * time.Millisecond,
 			Logger:            logger,
 			Peers:             cfg.Cluster.Peers,

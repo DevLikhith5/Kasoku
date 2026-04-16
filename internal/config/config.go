@@ -113,6 +113,11 @@ type ClusterConfig struct {
 	// Quorum size (minimum acks for write)
 	QuorumSize int `yaml:"quorum_size" env:"KASOKU_QUORUM_SIZE" default:"2"`
 
+	// Read quorum (minimum replicas to read from)
+	// R = 2 (strong consistency, W+R > N)
+	// R = 1 (eventual consistency, faster but may read stale)
+	ReadQuorum int `yaml:"read_quorum" env:"KASOKU_READ_QUORUM" default:"2"`
+
 	// Virtual nodes per physical node (for consistent hashing)
 	VNodes int `yaml:"vnodes" env:"KASOKU_VNODES" default:"150"`
 

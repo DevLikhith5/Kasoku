@@ -147,6 +147,19 @@ func (ml *MemberList) MemberCount() int {
 	return len(ml.members)
 }
 
+func (ml *MemberList) AliveCount() int {
+	ml.mu.RLock()
+	defer ml.mu.RUnlock()
+
+	count := 0
+	for _, m := range ml.members {
+		if m.State == MemberStateAlive {
+			count++
+		}
+	}
+	return count
+}
+
 func (ml *MemberList) Tick() {
 	ml.mu.Lock()
 	defer ml.mu.Unlock()

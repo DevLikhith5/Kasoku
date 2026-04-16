@@ -55,6 +55,7 @@ type Node struct {
 	done           chan struct{} // shutdown signal
 	stopOnce       sync.Once     // prevents double-close of done
 	wg             sync.WaitGroup
+	mu             sync.RWMutex
 }
 
 func NewNode(cfg NodeConfig) (*Node, error) {
@@ -196,7 +197,8 @@ func (n *Node) GetStatus() map[string]any {
 		"node_id":       n.cfg.NodeID,
 		"http_addr":     n.cfg.HTTPAddr,
 		"ring_nodes":    n.ring.NodeCount(),
-		"members":       n.members.MemberCount(),
+		"total_members": n.members.MemberCount(),
+		"alive_members": n.members.AliveCount(),
 		"replication":   n.cfg.N,
 		"write_quorum":  n.cfg.W,
 		"read_quorum":   n.cfg.R,
@@ -230,7 +232,22 @@ func (n *Node) HandleReplicateDelete(ctx context.Context, key string) (bool, err
 }
 
 func (n *Node) HandleGossip(remoteMembers []string) []string {
-	return n.members.Merge(remoteMembers)
+	merged := n.members.Merge(remoteMembers)
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	for _, nodeID := range merged {
+		if nodeID == n.cfg.NodeID || nodeID == n.cfg.HTTPAddr {
+			continue
+		}
+		if !n.ring.HasNode(nodeID) {
+			n.ring.AddNode(nodeID)
+			n.cluster.AddPeer(nodeID, nodeID)
+		}
+	}
+
+	return merged
 }
 
 func (n *Node) HandleHint(key string, value []byte, targetNode string) error {
@@ -277,8 +294,19 @@ func (n *Node) fetchRemoteMerkle(peerID string) (*merkle.Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create merkle request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	getClient := func() *http.Client {
+		return &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 50,
+				IdleConnTimeout:     30 * time.Second,
+			},
+			Timeout: 10 * time.Second,
+		}
+	}
+	resp, err := getClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("merkle request failed: %w", err)
 	}
@@ -302,12 +330,19 @@ func (n *Node) fetchRemoteMerkle(peerID string) (*merkle.Node, error) {
 func (n *Node) joinSeed(seedAddr string) error {
 	n.logger.Info("joining seed", "addr", seedAddr)
 
-	// Use the seed address as both node ID and address
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	client := rpc.NewClient(seedAddr)
+	if err := client.HealthCheck(ctx); err != nil {
+		n.logger.Warn("seed unreachable, adding optimistically", "addr", seedAddr, "error", err)
+	}
+
 	n.members.AddMember(seedAddr)
 	n.ring.AddNode(seedAddr)
 	n.cluster.AddPeer(seedAddr, seedAddr)
 
-	n.logger.Info("joined seed successfully", "addr", seedAddr)
+	n.logger.Info("joined seed", "addr", seedAddr)
 	return nil
 }
 
@@ -343,6 +378,7 @@ func (n *Node) gossipLoop() {
 				continue
 			}
 			n.members.Merge(theirMembers)
+			n.phiDetectors.Heartbeat(peer)
 			n.logger.Debug("gossip completed", "peer", peer, "remote_members", len(theirMembers))
 		case <-n.done:
 			return

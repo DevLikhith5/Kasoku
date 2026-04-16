@@ -11,8 +11,11 @@ export PATH=$PATH:/usr/local/go/bin:/opt/homebrew/bin
 go build -o kasoku ./cmd/server/main.go
 echo "      Build OK"
 
-# Create data directories
+# Kill old processes
 echo "[2/4] Preparing data directories..."
+pkill -f "./kasoku" 2>/dev/null || true
+sleep 1
+rm -rf data/node-1 data/node-2 data/node-3
 mkdir -p data/node-1 data/node-2 data/node-3
 
 # Cleanup handler
@@ -41,7 +44,7 @@ sleep 0.5
 
 KASOKU_CONFIG=kasoku-node3.yaml ./kasoku > /tmp/kasoku-node3.log 2>&1 &
 PIDS+=($!)
-sleep 1
+sleep 3
 
 echo ""
 echo "[4/4] Verifying nodes are up..."

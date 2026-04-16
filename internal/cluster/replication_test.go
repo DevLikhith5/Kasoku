@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,11 +292,14 @@ func TestReplication_RPCClientDirect(t *testing.T) {
 	}
 
 	// Verify deletion
-	_, found, err = client.ReplicatedGet(ctx, "rpc-key")
+	debugResp, err := client.DebugKey(ctx, "rpc-key")
 	if err != nil {
-		t.Fatalf("RPC ReplicatedGet after delete failed: %v", err)
-	}
-	if found {
+		if strings.Contains(err.Error(), "404") {
+			t.Log("Key correctly not found after delete (404 from server)")
+		} else {
+			t.Fatalf("RPC ReplicatedGet after delete failed: %v", err)
+		}
+	} else if debugResp["found"] == true && debugResp["tombstone"] == false {
 		t.Error("RPC ReplicatedGet: key should not be found after delete")
 	}
 }

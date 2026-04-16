@@ -39,6 +39,7 @@ type Cluster struct {
 	nodeAddrMap       map[string]string      // nodeID -> address
 	replicationFactor int
 	quorumSize        int
+	readQuorum        int // R = 1 for eventual, R = 2 for strong
 	rpcTimeout        time.Duration
 	logger            *slog.Logger
 	peers             []string
@@ -51,6 +52,7 @@ type ClusterConfig struct {
 	Store             storage.StorageEngine
 	ReplicationFactor int
 	QuorumSize        int
+	ReadQuorum        int // R value for reads (1 = eventual, 2 = strong)
 	RPCTimeout        time.Duration
 	Logger            *slog.Logger
 	Peers             []string
@@ -65,6 +67,23 @@ func New(cfg ClusterConfig) *Cluster {
 	qs := cfg.QuorumSize
 	if qs <= 0 {
 		qs = DefaultQuorumSize
+	}
+
+	// Default read quorum: 1 for eventual consistency (faster reads), 2 for strong
+	rq := cfg.ReadQuorum
+	if rq <= 0 {
+		// If R=1 and W=2, still provides some consistency (W+R > N with N=3, 2+1=3)
+		// But for strong consistency, use R=2
+		rq = 2 // Default to strong consistency
+	}
+
+	// Cap quorum to min(replicationFactor, nodeCount)
+	// For single node, allow quorum = 1
+	if qs > rf {
+		qs = rf
+		if qs == 0 {
+			qs = 1
+		}
 	}
 
 	timeout := cfg.RPCTimeout
@@ -84,6 +103,7 @@ func New(cfg ClusterConfig) *Cluster {
 		store:             cfg.Store,
 		replicationFactor: rf,
 		quorumSize:        qs,
+		readQuorum:        rq,
 		rpcTimeout:        timeout,
 		logger:            logger,
 		peers:             cfg.Peers,
@@ -219,6 +239,77 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 	}
 
 	c.logger.Debug("replicated put completed", "key", key, "acks", successCount)
+	return nil
+}
+
+// ReplicatedBatchPut coordinates high-throughput replicated writes for a batch of entries.
+// It groups entries by target node and performs binary-encoded batch RPCs to minimize overhead.
+func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]byte) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// Group entries by the replicas that should receive them
+	nodeBatches := make(map[string][]rpc.BatchWriteEntry)
+
+	c.mu.RLock()
+	for key, value := range entries {
+		replicas := c.getReplicasForKey(key)
+		for _, replicaAddr := range replicas {
+			nodeBatches[replicaAddr] = append(nodeBatches[replicaAddr], rpc.BatchWriteEntry{
+				Key:   key,
+				Value: value,
+			})
+		}
+	}
+	c.mu.RUnlock()
+
+	// Fan out batch RPCs to all involved nodes
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(nodeBatches))
+
+	for addr, batch := range nodeBatches {
+		if addr == c.nodeAddr {
+			// Local batch write
+			wg.Add(1)
+			go func(b []rpc.BatchWriteEntry) {
+				defer wg.Done()
+				for _, e := range b {
+					if err := c.store.Put(e.Key, e.Value); err != nil {
+						errCh <- fmt.Errorf("local batch write failed: %w", err)
+						return
+					}
+				}
+			}(batch)
+			continue
+		}
+
+		// Remote batch write
+		wg.Add(1)
+		go func(nodeAddr string, b []rpc.BatchWriteEntry) {
+			defer wg.Done()
+			client, ok := c.getClient(nodeAddr)
+			if !ok {
+				errCh <- fmt.Errorf("no client for node: %s", nodeAddr)
+				return
+			}
+
+			if _, err := client.BatchReplicatedPut(ctx, b); err != nil {
+				errCh <- fmt.Errorf("remote batch write to %s failed: %w", nodeAddr, err)
+			}
+		}(addr, batch)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	// Return first error encountered
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

@@ -316,36 +316,41 @@ kasoku > INFO`}</pre>
                 <div className="docs-icon"><Zap size={18} strokeWidth={2} /></div>
                 Performance Benchmarks
               </h2>
-              <p>Benchmarks executed on Apple M1 (ARM64). Sequential write speed is heavily influenced by WAL fsync policy.</p>
+              <p>Benchmarks on Apple M1 (8-core ARM64). Kasoku supports both original Dynamo single-key and batch operations.</p>
               
               <div className="docs-table-wrap">
                 <table className="docs-table">
                    <thead>
                     <tr>
                       <th>Operation</th>
-                      <th>Config</th>
-                      <th>Result</th>
+                      <th>Type</th>
+                      <th>Single Node</th>
+                      <th>3-Node Cluster</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td>Write (Sync)</td>
-                      <td>Fsync on write</td>
-                      <td>~267 ops/sec</td>
+                      <td>Writes</td>
+                      <td>Single-key</td>
+                      <td>~17K ops/sec</td>
+                      <td>~4K ops/sec</td>
                     </tr>
                     <tr>
-                      <td>Write (Async)</td>
-                      <td>100ms interval</td>
-                      <td>3.5M ops/sec</td>
+                      <td>Reads</td>
+                      <td>Single-Key (Dynamo)</td>
+                      <td>~189K ops/sec</td>
+                      <td>~59K ops/sec</td>
                     </tr>
                     <tr>
-                      <td>Read Seq</td>
-                      <td>MemTable + Cache</td>
-                      <td>7.3M ops/sec</td>
+                      <td>Reads</td>
+                      <td>Batch (50 keys)</td>
+                      <td>~187K ops/sec</td>
+                      <td>~800K ops/sec</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
+              <p><strong>Key insights:</strong> Cluster writes ~4x slower due to quorum replication (local + remote). Batch reads 10x+ faster than single-key due to HTTP overhead amortization.</p>
             </section>
           </div>
         </main>

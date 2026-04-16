@@ -1,0 +1,23 @@
+data_dir: ./data/single
+port: 9000
+http_port: 9000
+log_level: error
+lsm:
+    levels: 7
+    level_ratio: 10
+    l0_base_size: 33554432
+compaction:
+    threshold: 4
+    max_concurrent: 4
+    l0_size_threshold: 67108864
+memory:
+    memtable_size: 33554432
+    max_memtable_bytes: 134217728
+    bloom_fp_rate: 0.01
+    block_cache_size: 134217728
+wal:
+    sync: false
+    sync_interval: 1ms
+    max_file_size: 33554432
+cluster:
+    enabled: false

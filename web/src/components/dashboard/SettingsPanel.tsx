@@ -44,7 +44,7 @@ export function SettingsPanel({ apiBase }: { apiBase: string }) {
         if (cancelled || !nd) return
 
         const nodeAddr = nd.addr || 'http://localhost:9000'
-        const nodeId = nd.node_id || 'node-1'
+        const nodeId = nd.node_id || 'this-node'
         const stats = nd.stats || {}
 
         const secs: ConfigSection[] = [
@@ -70,25 +70,62 @@ export function SettingsPanel({ apiBase }: { apiBase: string }) {
         try {
           const statusRes = await fetch(api('/api/v1/cluster/status'))
           if (statusRes.ok) {
-            const statusData = await statusRes.json()
+            const statusRaw = await statusRes.json()
+            const data = statusRaw.data || statusRaw
+            const nodeCount = data.node_count || (data.nodes || []).length
+            const rf = data.replication_factor || 3
             secs.push({
               section: 'Cluster',
               fields: [
-                { key: 'cluster.enabled', label: 'Cluster Mode', value: 'Enabled' },
-                { key: 'cluster.members', label: 'Members', value: String((statusData.members || []).length) },
+                { key: 'cluster.mode', label: 'Cluster Mode', value: 'Enabled' },
+                { key: 'cluster.nodes', label: 'Node Count', value: String(nodeCount) },
+                { key: 'cluster.replication_factor', label: 'Replication Factor', value: String(rf) },
+                { key: 'cluster.node_addr', label: 'This Node', value: data.node_addr || 'N/A' },
               ],
             })
           } else {
             secs.push({
               section: 'Cluster',
-              fields: [{ key: 'cluster.enabled', label: 'Cluster Mode', value: 'Disabled (single-node)' }],
+              fields: [{ key: 'cluster.mode', label: 'Cluster Mode', value: 'Disabled (single-node)' }],
             })
           }
         } catch {
           secs.push({
             section: 'Cluster',
-            fields: [{ key: 'cluster.enabled', label: 'Cluster Mode', value: 'Disabled (single-node)' }],
+            fields: [{ key: 'cluster.mode', label: 'Cluster Mode', value: 'Disabled (single-node)' }],
           })
+        }
+
+        // Try to get all node details (excluding this node to avoid duplication)
+        try {
+          const statusRes = await fetch(api('/api/v1/cluster/status'))
+          if (statusRes.ok) {
+            const statusRaw = await statusRes.json()
+            const data = statusRaw.data || statusRaw
+            const nodeDetails = data.node_details || []
+            
+            // Filter out this node (already shown in Node section)
+            // Compare against both node_id and addr to handle any inconsistencies
+            const otherNodes = nodeDetails.filter((n: any) => 
+              n.node_id !== nodeId && n.node_id !== nodeAddr && 
+              n.addr !== nodeId && n.addr !== nodeAddr
+            )
+            
+            if (otherNodes.length > 0) {
+              secs.push({
+                section: 'Other Nodes',
+                fields: otherNodes.map((n: any) => ({
+                  key: `node_${n.node_id}`,
+                  label: n.node_id,
+                  value: n.alive 
+                    ? `Keys: ${n.stats?.key_count ?? 0}, Disk: ${(n.stats?.disk_bytes ?? 0 / 1024 / 1024).toFixed(1)}MB`
+                    : `OFFLINE: ${n.error || 'unreachable'}`,
+                })),
+              })
+            }
+          }
+        } catch {
+          // Ignore - node details are optional
         }
 
         setSections(secs)

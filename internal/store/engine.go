@@ -34,6 +34,7 @@ type EngineStats struct {
 
 type StorageEngine interface {
 	Get(key string) (Entry, error)
+	MultiGet(keys []string) (map[string]Entry, error)
 	Put(key string, value []byte) error
 	Delete(key string) error
 	// Keys returns all non-deleted keys

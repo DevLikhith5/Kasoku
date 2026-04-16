@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
   LineChart,
@@ -7,7 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { Activity } from 'lucide-react'
+import { Activity, Play, Loader2 } from 'lucide-react'
 
 interface MetricCardData {
   label: string
@@ -33,13 +33,63 @@ export function MetricsView({ apiBase }: { apiBase: string }) {
   const [chartData, setChartData] = useState<MetricPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [serverDown, setServerDown] = useState(false)
+  const [benchmarking, setBenchmarking] = useState(false)
+  const [benchmarkPhase, setBenchmarkPhase] = useState('')
+  const [benchmarkResults, setBenchmarkResults] = useState<string>('')
 
   const prevRef = useRef<Record<string, number>>({})
 
   const api = (path: string) => {
-    if (apiBase.startsWith('http')) return `${apiBase}${path}`
+    // Use Vite proxy to avoid CORS
     return path
   }
+
+  const runAllBenchmarks = useCallback(async () => {
+    setBenchmarking(true)
+    setBenchmarkPhase('write')
+    setBenchmarkResults('Running network benchmark (pressure-tool)...')
+    
+    try {
+      const res = await fetch(api('/api/v1/benchmark/network?workers=30&duration=10'), {
+        method: 'POST',
+      })
+      if (!res.ok) throw new Error('Benchmark failed')
+      
+      const data = await res.json()
+      setBenchmarkPhase('done')
+      
+      // Parse the pressure-tool output to extract key numbers
+      const output = data.data.pressure_output || ''
+      
+      // Extract numbers
+      const writes = output.match(/Writes[\s\S]*?avg\s+(\d+)/)?.[1] || 'N/A'
+      const reads = output.match(/Reads[\s\S]*?avg\s+(\d+)/)?.[1] || 'N/A'
+      const total = output.match(/Total[\s\S]*?(\d+)\s+ops\/sec/)?.[1] || 'N/A'
+      const latency = output.match(/Latency p50[\s\S]*?([\d.]+ms)/)?.[1] || 'N/A'
+      
+      setBenchmarkResults(`${data.data.mode === 'cluster' ? '3-Node Cluster' : 'Single-Node'} Benchmark:
+
+Nodes: ${data.data.nodes}
+Workers: ${data.data.workers}
+Duration: ${data.data.duration_sec}s
+
+Writes:  ${writes} ops/sec
+Reads:  ${reads} ops/sec  
+Total: ${total} ops/sec
+
+p50 Latency: ${latency}
+
+See full output below.`)
+    } catch (e) {
+      setBenchmarkPhase('error')
+      setBenchmarkResults(`Error: ${e instanceof Error ? e.message : 'Failed to run benchmark'}
+
+Run manually:
+./pressure-tool -workers=60 -write-duration=10s -read-duration=10s -batch-get=1`)
+    }
+    
+    setBenchmarking(false)
+  }, [api])
 
   useEffect(() => {
     let cancelled = false
@@ -56,12 +106,15 @@ export function MetricsView({ apiBase }: { apiBase: string }) {
         // Parse Prometheus text format
         const parsed: Record<string, number> = {}
         for (const line of text.split('\n')) {
-          if (line.startsWith('#') || !line.trim()) continue
-          // Match with or without labels (e.g. go_goroutines or kasoku_requests_total{operation="get"}) 
-          const match = line.match(/^(\w+(?:{[^}]*})?)\s+([\d.eE+\-]+)$/)
-          if (match) {
-            const key = match[1]
-            parsed[key] = parseFloat(match[2])
+          if (!line || line.startsWith('#')) continue
+          // More lenient matching - split on last space
+          const parts = line.trim().split(/\s+/)
+          if (parts.length >= 2) {
+            const key = parts[0]
+            const val = parseFloat(parts[parts.length - 1])
+            if (!isNaN(val)) {
+              parsed[key] = val
+            }
           }
         }
 
@@ -71,7 +124,6 @@ export function MetricsView({ apiBase }: { apiBase: string }) {
 
           const goroutines = parsed['go_goroutines'] || 0
           const heapAlloc = parsed['go_memstats_heap_alloc_bytes'] || 0
-          const heapSys = parsed['go_memstats_heap_sys_bytes'] || 0
 
           // Try to get engine metrics from /api/v1/node fallback
           let nodeData: any = null
@@ -83,15 +135,20 @@ export function MetricsView({ apiBase }: { apiBase: string }) {
             }
           } catch { /* ignore */ }
 
-          const keyCount = parsed['kasoku_storage_engine_keys_total'] ?? nodeData?.stats?.KeyCount ?? 0
-          const diskBytes = parsed['kasoku_storage_engine_bytes{type="disk"}'] ?? nodeData?.stats?.DiskBytes ?? 0
-          const memBytes = parsed['kasoku_storage_engine_bytes{type="memory"}'] ?? nodeData?.stats?.MemBytes ?? 0
+          const keyCount = nodeData?.stats?.KeyCount ?? parsed['kasoku_storage_engine_keys_total'] ?? 0
+          const diskBytes = nodeData?.stats?.DiskBytes ?? parsed['kasoku_storage_engine_bytes{type="disk"}'] ?? 0
+          const memBytes = nodeData?.stats?.MemBytes ?? parsed['kasoku_storage_engine_bytes{type="memory"}'] ?? 0
 
           const activeNodes = parsed['kasoku_cluster_nodes_active'] ?? 1
           const pendingHints = parsed['kasoku_cluster_pending_hints'] ?? 0
 
-          const getReqs = parsed['kasoku_requests_total{operation="get",status="success"}'] || 0
-          const putReqs = parsed['kasoku_requests_total{operation="put",status="success"}'] || 0
+          // Try different label orderings since Prometheus sorts labels alphabetically
+          const getReqs = 
+            parsed['kasoku_requests_total{operation="get",status="success"}'] ||
+            parsed['kasoku_requests_total{status="success",operation="get"}'] || 0
+          const putReqs = 
+            parsed['kasoku_requests_total{operation="put",status="success"}'] ||
+            parsed['kasoku_requests_total{status="success",operation="put"}'] || 0
 
           const prevGets = prevRef.current['gets'] ?? getReqs
           const prevPuts = prevRef.current['puts'] ?? putReqs
@@ -100,17 +157,19 @@ export function MetricsView({ apiBase }: { apiBase: string }) {
           prevRef.current['puts'] = putReqs
 
           // Polling every 5 seconds, so operations per second is delta / 5.
-          // Fallback to 0 if negative.
-          const getRate = Math.max(0, (getReqs - prevGets) / 5)
-          const putRate = Math.max(0, (putReqs - prevPuts) / 5)
+          // On first fetch (prev == current), rate will be 0. Use raw values for initial display.
+          const getDelta = getReqs - prevGets
+          const putDelta = putReqs - prevPuts
+          const getRate = getDelta >= 0 ? getDelta / 5 : getReqs / 5
+          const putRate = putDelta >= 0 ? putDelta / 5 : putReqs / 5
 
           const cards: MetricCardData[] = [
             { label: 'Keys', value: keyCount.toLocaleString() },
             { label: 'Disk Used', value: diskBytes > 1024 * 1024 ? `${(diskBytes / (1024 * 1024)).toFixed(1)} MB` : `${(diskBytes / 1024).toFixed(0)} KB` },
             { label: 'MemTable', value: memBytes > 1024 * 1024 ? `${(memBytes / (1024 * 1024)).toFixed(1)} MB` : `${memBytes} B` },
+            { label: 'Cluster Nodes', value: String(activeNodes) },
             { label: 'Goroutines', value: goroutines.toFixed(0) },
             { label: 'Heap Alloc', value: heapAlloc > 1024 * 1024 ? `${(heapAlloc / (1024 * 1024)).toFixed(1)} MB` : `${(heapAlloc / 1024).toFixed(0)} KB` },
-            { label: 'Heap Sys', value: heapSys > 1024 * 1024 ? `${(heapSys / (1024 * 1024)).toFixed(1)} MB` : `${(heapSys / 1024).toFixed(0)} KB` },
           ]
 
           setMetrics(cards)
@@ -181,10 +240,42 @@ export function MetricsView({ apiBase }: { apiBase: string }) {
   return (
     <div className="metrics">
       <div className="metrics-header">
-        <h1 className="metrics-title">Metrics</h1>
+        <h1 className="metrics-title">Metrics & Benchmark</h1>
         <p className="metrics-subtitle">
           Real-time performance data from the Go runtime and LSM engine.
         </p>
+        
+        <div className="benchmark-buttons" style={{ display: 'flex', gap: '12px', marginTop: '16px', marginBottom: '16px' }}>
+          <button 
+            className="btn btn-primary" 
+            onClick={runAllBenchmarks}
+            disabled={benchmarking}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '180px' }}
+          >
+            {benchmarking ? (
+              <>
+                <Loader2 className="spin" size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                {benchmarkPhase === 'init' && 'Starting...'}
+                {benchmarkPhase === 'write' && 'Writes...'}
+                {benchmarkPhase === 'read' && 'Reads...'}
+                {benchmarkPhase === 'batch' && 'Batch...'}
+                {benchmarkPhase === 'done' && 'Done!'}
+                {benchmarkPhase === 'error' && 'Error'}
+              </>
+            ) : (
+              <>
+                <Play size={16} />
+                Run Full Benchmark
+              </>
+            )}
+          </button>
+        </div>
+        
+        {benchmarkResults && (
+          <pre className="benchmark-results" style={{ background: 'var(--bg-secondary)', padding: '16px', borderRadius: '8px', fontSize: '12px', marginBottom: '16px', whiteSpace: 'pre-wrap' }}>
+            {benchmarkResults}
+          </pre>
+        )}
       </div>
 
       {metrics.length > 0 && (

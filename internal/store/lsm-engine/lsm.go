@@ -27,6 +27,7 @@ type LSMEngine struct {
 	flushDone chan struct{} // signaled when a flush completes, used for backpressure
 	wg        sync.WaitGroup
 	config    LSMConfig
+	cache     *KeyCache
 }
 
 type LSMConfig struct {
@@ -92,6 +93,7 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 		compCh:    make(chan struct{}, 1),
 		flushDone: make(chan struct{}, 1),
 		config:    cfg,
+		cache:     newKeyCache(10000),
 	}
 
 	if err := e.loadSSTables(); err != nil {
@@ -150,6 +152,7 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 
 	e.mu.Lock()
 	e.active.Put(entry)
+	e.cache.Invalidate(key)
 	full := e.active.IsFull()
 	// Hard limit: block writes if active exceeds L0SizeThreshold
 	overHardLimit := e.active.Size() >= e.config.L0SizeThreshold
@@ -195,21 +198,43 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 		return storage.Entry{}, storage.ErrEngineClosed
 	}
 
+	// Check active memtable first
+	entry, found := e.active.Get(key)
+	if found {
+		if entry.Tombstone {
+			e.cache.Put(key, storage.Entry{}, false)
+			return storage.Entry{}, storage.ErrKeyNotFound
+		}
+		e.cache.Put(key, entry, true)
+		return entry, nil
+	}
+
+	if item, ok := e.cache.Get(key); ok {
+		if item.found {
+			return item.entry, nil
+		}
+		return storage.Entry{}, storage.ErrKeyNotFound
+	}
+
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	if entry, ok := e.active.Get(key); ok {
 		if entry.Tombstone {
+			e.cache.Put(key, storage.Entry{}, false)
 			return storage.Entry{}, storage.ErrKeyNotFound
 		}
+		e.cache.Put(key, entry, true)
 		return entry, nil
 	}
 
 	for _, mem := range e.immutable {
 		if entry, ok := mem.Get(key); ok {
 			if entry.Tombstone {
+				e.cache.Put(key, storage.Entry{}, false)
 				return storage.Entry{}, storage.ErrKeyNotFound
 			}
+			e.cache.Put(key, entry, true)
 			return entry, nil
 		}
 	}
@@ -230,20 +255,124 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 			}
 
 			if entry.Tombstone {
+				e.cache.Put(key, storage.Entry{}, false)
 				return storage.Entry{}, storage.ErrKeyNotFound
 			}
 
+			e.cache.Put(key, entry, true)
 			return entry, nil
 		}
 	}
 
+	e.cache.Put(key, storage.Entry{}, false)
 	return storage.Entry{}, storage.ErrKeyNotFound
+}
+
+// MultiGet retrieves multiple keys in a single pass, optimizing for throughput
+// by reducing locking overhead and batching Bloom filter checks.
+func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
+	if e.closed.Load() {
+		return nil, storage.ErrEngineClosed
+	}
+
+	results := make(map[string]storage.Entry, len(keys))
+	pendingKeys := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		pendingKeys[k] = struct{}{}
+	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	// 1. Check active memtable
+	for k := range pendingKeys {
+		if entry, ok := e.active.Get(k); ok {
+			if !entry.Tombstone {
+				results[k] = entry
+			}
+			delete(pendingKeys, k)
+		}
+	}
+	if len(pendingKeys) == 0 {
+		return results, nil
+	}
+
+	// 2. Check immutable memtables
+	for _, mem := range e.immutable {
+		for k := range pendingKeys {
+			if entry, ok := mem.Get(k); ok {
+				if !entry.Tombstone {
+					results[k] = entry
+				}
+				delete(pendingKeys, k)
+			}
+		}
+		if len(pendingKeys) == 0 {
+			return results, nil
+		}
+	}
+
+	// 3. Check SSTables level by level
+	for _, level := range e.levels {
+		for _, sst := range level {
+			// Check bloom filter for all pending keys first
+			var sstPending []string
+			for k := range pendingKeys {
+				if sst.filter.MightContain([]byte(k)) {
+					sstPending = append(sstPending, k)
+				}
+			}
+
+			if len(sstPending) == 0 {
+				continue
+			}
+
+			// For keys that MIGHT be in this SSTable, do the actual lookups
+			for _, k := range sstPending {
+				entry, err := sst.Get(k)
+				if err == storage.ErrKeyNotFound {
+					continue
+				}
+				if err != nil {
+					return nil, err
+				}
+
+				if !entry.Tombstone {
+					results[k] = entry
+				}
+				delete(pendingKeys, k)
+			}
+
+			if len(pendingKeys) == 0 {
+				return results, nil
+			}
+		}
+	}
+
+	return results, nil
 }
 
 func (e *LSMEngine) flushLoop() {
 	defer e.wg.Done()
 
-	for range e.flushCh {
+	for {
+		// Drain all pending flush signals
+		select {
+		case <-e.flushCh:
+		default:
+			// No pending flush, wait for one
+		}
+
+		select {
+		case <-e.flushCh:
+			// Got a flush signal, process it
+		case <-e.flushDone:
+			// Someone else is flushing, keep waiting
+			continue
+		case <-time.After(100 * time.Millisecond):
+			// Periodic check for pending data
+		}
+
 		if e.closed.Load() {
 			return
 		}
@@ -707,7 +836,7 @@ func (e *LSMEngine) Stats() storage.EngineStats {
 		memBytes += mem.Size()
 	}
 
-	// Only count SSTable files (exclude WAL since it's transient and will be cleaned up)
+	// Count both SSTable files and WAL for actual disk usage
 	var diskBytes int64
 
 	for _, level := range e.levels {
@@ -718,6 +847,13 @@ func (e *LSMEngine) Stats() storage.EngineStats {
 					diskBytes += info.Size()
 				}
 			}
+		}
+	}
+
+	// Add WAL file size (it's part of persisted data)
+	if e.wal != nil {
+		if walSize, err := e.wal.Size(); err == nil {
+			diskBytes += walSize
 		}
 	}
 	e.mu.RUnlock()

@@ -149,3 +149,11 @@ func (m *Metrics) SetPendingHints(count int) {
 func (m *Metrics) SetPhiSuspicion(nodeID string, phi float64) {
 	phiSuspicion.WithLabelValues(nodeID).Set(phi)
 }
+
+func (m *Metrics) RecordBatchPut(count int) {
+	requestsTotal.WithLabelValues("batch_put", "success").Add(float64(count))
+}
+
+func (m *Metrics) RecordBatchGet(count int) {
+	requestsTotal.WithLabelValues("batch_get", "success").Add(float64(count))
+}

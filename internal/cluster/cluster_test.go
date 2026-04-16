@@ -46,6 +46,18 @@ func (s *MockStore) Get(key string) (storage.Entry, error) {
 	return storage.Entry{Key: key, Value: val}, nil
 }
 
+func (s *MockStore) MultiGet(keys []string) (map[string]storage.Entry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make(map[string]storage.Entry, len(keys))
+	for _, k := range keys {
+		if val, ok := s.data[k]; ok {
+			result[k] = storage.Entry{Key: k, Value: val}
+		}
+	}
+	return result, nil
+}
+
 func (s *MockStore) Delete(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

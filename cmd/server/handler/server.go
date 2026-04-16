@@ -72,6 +72,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/scan", s.handleScan)
 	mux.HandleFunc("/api/v1/keys", s.handleKeys)
 
+	// Batch endpoints
+	mux.HandleFunc("/api/v1/batch", s.handleBatchPut)
+	mux.HandleFunc("/api/v1/batch/get", s.handleBatchGet)
+
 	// Node info endpoint
 	mux.HandleFunc("/api/v1/node", s.handleNodeInfo)
 
@@ -83,6 +87,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 		// Internal replication endpoints (used by rpc.Client)
 		mux.HandleFunc("/internal/replicate", s.handleInternalReplicate)
+		mux.HandleFunc("/internal/replicate/batch", s.handleInternalBatchReplicate)
 	}
 
 	// Hash ring visualization endpoint
@@ -90,6 +95,15 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// Metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())
+
+	// Flush endpoint
+	mux.HandleFunc("/api/v1/flush", s.handleFlush)
+
+	// Simple benchmark endpoint
+	mux.HandleFunc("/api/v1/benchmark", s.handleBenchmark)
+
+	// Network benchmark endpoint
+	mux.HandleFunc("/api/v1/benchmark/network", s.handleNetworkBenchmark)
 }
 
 func (s *Server) SetCluster(c *cluster.Cluster) {

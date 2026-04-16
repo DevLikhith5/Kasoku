@@ -10,6 +10,12 @@ interface NodeInfo {
   phi: number
 }
 
+interface TooltipState {
+  x: number
+  y: number
+  content: string
+}
+
 const VNODE_COUNT = 150
 const REPLICA_COUNT = 3
 
@@ -19,6 +25,7 @@ export function ClusterStatus({ apiBase }: { apiBase: string }) {
   const [clusterDisabled, setClusterDisabled] = useState(false)
   const [testKey, setTestKey] = useState('')
   const [activeTab, setActiveTab] = useState<'ring' | 'distribution'>('ring')
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null)
 
   const api = (path: string) => {
     if (apiBase.startsWith('http')) return `${apiBase}${path}`
@@ -78,21 +85,26 @@ export function ClusterStatus({ apiBase }: { apiBase: string }) {
           if (!cancelled) {
             const raw = data.data || data
 
+            console.log('[ClusterStatus] raw:', JSON.stringify(raw))
+
             // API returns: { nodes: string[], ring_distribution: {[url]: pct}, node_id, node_addr }
             const nodeUrls: string[] = raw.nodes || []
+            console.log('[ClusterStatus] nodeUrls:', nodeUrls)
             const dist: Record<string, number> = raw.ring_distribution || {}
 
             if (nodeUrls.length > 0) {
-              const parsed: NodeInfo[] = nodeUrls.map((url: string) => ({
-                id: url,
-                addr: url,
-                // All nodes in the ring are considered alive; phi is not yet exposed by the API
-                status: 'alive' as const,
-                phi: dist[url] ?? 0,
-              }))
+              const parsed: NodeInfo[] = nodeUrls.map((url: string) => {
+                const shortId = url.replace('http://localhost:9000', 'node-1').replace('http://localhost:9001', 'node-2').replace('http://localhost:9002', 'node-3')
+                return {
+                  id: shortId,
+                  addr: url,
+                  status: 'alive' as const,
+                  phi: 100,
+                }
+              })
+              console.log('[ClusterStatus] Setting nodes:', parsed)
               setNodes(parsed)
-            } else {
-              // Fallback: try members array format
+            } else if (raw.members && raw.members.length > 0) {
               const members = raw.members || []
               const parsed: NodeInfo[] = members.map((m: any) => ({
                 id: m.node_id || m.id || 'unknown',
@@ -101,6 +113,14 @@ export function ClusterStatus({ apiBase }: { apiBase: string }) {
                 phi: m.phi || 0,
               }))
               setNodes(parsed)
+            } else {
+              // Fallback to single node if nothing found
+              setNodes([{
+                id: raw.node_addr || 'node-1',
+                addr: raw.node_addr || 'http://localhost:9000',
+                status: 'alive',
+                phi: 100,
+              }])
             }
           }
         }
@@ -210,7 +230,7 @@ export function ClusterStatus({ apiBase }: { apiBase: string }) {
 
           {activeTab === 'ring' && (
             <div className="cluster-ring-viz">
-              <HashRingVisual ring={ring} highlightedRoute={route} />
+              <HashRingVisual ring={ring} highlightedRoute={route} tooltip={tooltip} setTooltip={setTooltip} />
             </div>
           )}
 
@@ -277,9 +297,13 @@ export function ClusterStatus({ apiBase }: { apiBase: string }) {
 function HashRingVisual({
   ring,
   highlightedRoute,
+  tooltip,
+  setTooltip,
 }: {
   ring: HashRing
   highlightedRoute: KeyRoute | null
+  tooltip: TooltipState | null
+  setTooltip: (t: TooltipState | null) => void
 }) {
   const cx = 200
   const cy = 200
@@ -338,6 +362,18 @@ function HashRingVisual({
                 r={isHighlighted ? 4 : 2}
                 fill={isHighlighted ? '#ef4444' : color}
                 opacity={isHighlighted ? 1 : 0.5}
+                style={{ cursor: 'pointer' }}
+                onMouseEnter={(e) => {
+                  const svgRect = e.currentTarget.closest('svg')?.getBoundingClientRect()
+                  if (svgRect) {
+                    setTooltip({
+                      x: e.clientX - svgRect.left + 10,
+                      y: e.clientY - svgRect.top - 10,
+                      content: `${vnode.nodeId}#vnode${vnode.index}\nPos: ${vnode.position >>> 0}`,
+                    })
+                  }
+                }}
+                onMouseLeave={() => setTooltip(null)}
               />
               {isHighlighted && (
                 <circle
@@ -463,6 +499,19 @@ function HashRingVisual({
           {ring.totalVNodes} vnodes
         </text>
       </svg>
+
+      {/* Tooltip */}
+      {tooltip && (
+        <div
+          className="vnode-tooltip"
+          style={{
+            left: tooltip.x,
+            top: tooltip.y,
+          }}
+        >
+          {tooltip.content}
+        </div>
+      )}
 
       {/* Legend */}
       <div className="hash-ring-legend">

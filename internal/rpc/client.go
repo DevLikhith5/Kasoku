@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
 type Client struct {
@@ -39,9 +41,10 @@ type ReplicatedReadRequest struct {
 }
 
 type ReplicatedReadResponse struct {
-	Found bool   `json:"found"`
-	Value []byte `json:"value,omitempty"`
-	Error string `json:"error,omitempty"`
+	Found     bool   `json:"found"`
+	Value     []byte `json:"value,omitempty"`
+	Tombstone bool   `json:"tombstone,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 type ReplicatedDeleteRequest struct {
@@ -81,7 +84,67 @@ func (c *Client) ReplicatedGet(ctx context.Context, key string) ([]byte, bool, e
 		return nil, false, nil
 	}
 
+	if resp.Tombstone {
+		return nil, false, nil
+	}
+
 	return resp.Value, true, nil
+}
+
+func (c *Client) ReplicatedGetForDebug(ctx context.Context, key string) (*ReplicatedReadResponse, error) {
+	reqBody := ReplicatedReadRequest{
+		Key: key,
+	}
+
+	url := fmt.Sprintf("%s/internal/replicate", c.baseURL)
+
+	var resp ReplicatedReadResponse
+	err := c.doRequest(ctx, http.MethodGet, url, reqBody, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
+func (c *Client) DebugKey(ctx context.Context, key string) (map[string]any, error) {
+	url := fmt.Sprintf("%s/internal/debug/key/%s", c.baseURL, key)
+
+	var resp map[string]any
+	err := c.doRequest(ctx, http.MethodGet, url, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+func (c *Client) ReplicatedGetEntry(ctx context.Context, key string) (storage.Entry, bool, error) {
+	reqBody := ReplicatedReadRequest{
+		Key: key,
+	}
+
+	url := fmt.Sprintf("%s/internal/replicate/get", c.baseURL)
+
+	var resp map[string]any
+	err := c.doRequest(ctx, http.MethodPost, url, reqBody, &resp)
+	if err != nil {
+		return storage.Entry{}, false, err
+	}
+
+	found, ok := resp["found"].(bool)
+	if !ok || !found {
+		return storage.Entry{}, false, nil
+	}
+
+	entry := storage.Entry{
+		Key:       resp["key"].(string),
+		Value:     []byte(resp["value"].(string)),
+		Version:   uint64(resp["version"].(float64)),
+		Tombstone: resp["tombstone"].(bool),
+	}
+
+	return entry, true, nil
 }
 
 func (c *Client) ReplicatedDelete(ctx context.Context, key string) (bool, error) {
@@ -142,6 +205,47 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body, result
 	return nil
 }
 
+// doInternalRequest performs an inter-node RPC using binary gob encoding.
+// This is significantly faster than JSON-based doRequest and is used for
+// high-throughput replication traffic.
+func (c *Client) doInternalRequest(ctx context.Context, method, url string, body, result interface{}) error {
+	var reqBody io.Reader
+
+	if body != nil {
+		data, err := GobEncode(body)
+		if err != nil {
+			return fmt.Errorf("failed to gob encode request: %w", err)
+		}
+		reqBody = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", GobContentType)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("internal request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("internal request failed with status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	if result != nil {
+		if err := GobDecodeStream(resp.Body, result); err != nil {
+			return fmt.Errorf("failed to gob decode response: %w", err)
+		}
+	}
+
+	return nil
+}
+
 type GossipRequest struct {
 	Members []string `json:"members"`
 }
@@ -185,4 +289,28 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+type NodeInfoResponse struct {
+	NodeID string    `json:"node_id"`
+	Addr   string    `json:"addr"`
+	Stats  NodeStats `json:"stats"`
+}
+
+type NodeStats struct {
+	KeyCount  int64 `json:"key_count"`
+	DiskBytes int64 `json:"disk_bytes"`
+	MemBytes  int64 `json:"mem_bytes"`
+}
+
+func (c *Client) GetNodeInfo(ctx context.Context) (*NodeInfoResponse, error) {
+	url := fmt.Sprintf("%s/api/v1/node", c.baseURL)
+
+	var resp NodeInfoResponse
+	err := c.doRequest(ctx, http.MethodGet, url, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
 }

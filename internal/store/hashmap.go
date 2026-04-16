@@ -91,6 +91,23 @@ func (h *HashMapEngine) Get(key string) (Entry, error) {
 	return entry, nil
 }
 
+func (h *HashMapEngine) MultiGet(keys []string) (map[string]Entry, error) {
+	if h.closed.Load() {
+		return nil, ErrEngineClosed
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	result := make(map[string]Entry, len(keys))
+	for _, key := range keys {
+		entry, ok := h.data[key]
+		if ok && !entry.Tombstone {
+			result[key] = entry
+		}
+	}
+	return result, nil
+}
+
 func (h *HashMapEngine) Delete(key string) error {
 	if err := h.validate(key, nil); err != nil {
 		return err

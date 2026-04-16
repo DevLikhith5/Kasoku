@@ -7,11 +7,32 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
+
+var (
+	httpClient     *http.Client
+	httpClientOnce sync.Once
+)
+
+func getHTTPClient() *http.Client {
+	httpClientOnce.Do(func() {
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 50,
+				IdleConnTimeout:     30 * time.Second,
+				DisableKeepAlives:   false,
+			},
+			Timeout: 10 * time.Second,
+		}
+	})
+	return httpClient
+}
 
 type replicaResult struct {
 	nodeID string
@@ -65,19 +86,25 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 		}(nodeID)
 	}
 
-	// Count acks — wait for ALL replicas to respond
+	// Count acks — EARLY EXIT once quorum reached
 	acks, failures := 0, 0
 	for range replicas {
 		res := <-results
 		if res.err == nil {
 			acks++
-			if acks >= n.cfg.W {
-				quorumReached.Store(true)
-			}
 		} else {
 			failures++
-			n.logger.Warn("replica write failed",
+			n.logger.Debug("replica write failed",
 				"node", res.nodeID, "error", res.err)
+		}
+		// Early exit: return as soon as quorum is reached
+		if acks >= n.cfg.W {
+			quorumReached.Store(true)
+			// Drain remaining results to avoid goroutine leak
+			for i := len(replicas) - acks - failures; i > 0; i-- {
+				<-results
+			}
+			return nil
 		}
 	}
 
@@ -268,7 +295,7 @@ func (n *Node) remoteReplicate(ctx context.Context,
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("replicate request failed: %w", err)
 	}
@@ -298,7 +325,7 @@ func (n *Node) remoteGet(ctx context.Context, nodeID, key string) (storage.Entry
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := getHTTPClient().Do(req)
 	if err != nil {
 		return storage.Entry{}, fmt.Errorf("remote get failed: %w", err)
 	}
