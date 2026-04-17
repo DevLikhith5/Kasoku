@@ -358,12 +358,14 @@ func (bc *BlockCache) Put(key string, data []byte) {
 
 // NewBlockCache creates a global block cache (can be shared across SSTables)
 var globalBlockCache *BlockCache
-var blockCacheOnce sync.Once
+var globalBlockCacheOnce sync.Once
 
 func InitBlockCache(sizeBytes int64) {
-	blockCacheOnce.Do(func() {
-		maxBlocks := max(int(sizeBytes)/DefaultBlockSize, 1)
-		globalBlockCache = NewBlockCache(maxBlocks)
+	globalBlockCacheOnce.Do(func() {
+		if globalBlockCache == nil {
+			maxBlocks := max(int(sizeBytes)/DefaultBlockSize, 1)
+			globalBlockCache = NewBlockCache(maxBlocks)
+		}
 	})
 }
 
@@ -372,10 +374,12 @@ const (
 )
 
 func GetBlockCache() *BlockCache {
-	if globalBlockCache == nil {
-		// Default: 1GB / 64KB = 16384 blocks (optimized for 64KB blocks)
-		globalBlockCache = NewBlockCache(DefaultBlockCacheSize / DefaultBlockSize)
-	}
+	globalBlockCacheOnce.Do(func() {
+		if globalBlockCache == nil {
+			// Default: 1GB / 64KB = 16384 blocks (optimized for 64KB blocks)
+			globalBlockCache = NewBlockCache(DefaultBlockCacheSize / DefaultBlockSize)
+		}
+	})
 	return globalBlockCache
 }
 

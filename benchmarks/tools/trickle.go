@@ -1,3 +1,5 @@
+//go:build notest
+
 package main
 
 import (
