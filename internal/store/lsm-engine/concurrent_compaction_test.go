@@ -115,6 +115,12 @@ func TestIterator_LSMEngine(t *testing.T) {
 		require.NoError(t, engine.Put(key, value))
 	}
 
+	// Force flush to ensure all data is in SSTables before iterator tests
+	require.NoError(t, engine.Flush())
+
+	// Allow background operations to settle
+	time.Sleep(50 * time.Millisecond)
+
 	t.Run("iterate all keys", func(t *testing.T) {
 		it, err := engine.Iter("")
 		require.NoError(t, err)

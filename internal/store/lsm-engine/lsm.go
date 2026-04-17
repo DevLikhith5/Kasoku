@@ -873,12 +873,84 @@ func (e *LSMEngine) Iter(prefix string) (*Iterator, error) {
 		return nil, storage.ErrEngineClosed
 	}
 
-	entries, err := e.Scan(prefix)
+	// Take a snapshot of current state to avoid race with concurrent flush/compaction
+	entries, err := e.snapshotScan(prefix)
 	if err != nil {
 		return nil, err
 	}
 
 	return NewIterator(entries, prefix), nil
+}
+
+// snapshotScan takes a consistent snapshot of current entries
+func (e *LSMEngine) snapshotScan(prefix string) ([]storage.Entry, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	// Copy current levels to avoid race with compaction
+	var snapshotLevels [][]*SSTableReader
+	for _, level := range e.levels {
+		levelCopy := make([]*SSTableReader, len(level))
+		copy(levelCopy, level)
+		snapshotLevels = append(snapshotLevels, levelCopy)
+	}
+
+	// Copy memtables
+	activeCopy := e.active
+	immutableCopy := make([]*MemTable, len(e.immutable))
+	copy(immutableCopy, e.immutable)
+
+	result := make(map[string]storage.Entry)
+
+	// Scan SSTables (newest first)
+	for _, level := range snapshotLevels {
+		for i := len(level) - 1; i >= 0; i-- {
+			sst := level[i]
+			entries, err := sst.Scan(prefix)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if !entry.Tombstone {
+					result[entry.Key] = entry
+				} else {
+					delete(result, entry.Key)
+				}
+			}
+		}
+	}
+
+	// Scan immutable memtables
+	for i := len(immutableCopy) - 1; i >= 0; i-- {
+		for _, entry := range immutableCopy[i].Scan(prefix) {
+			if !entry.Tombstone {
+				result[entry.Key] = entry
+			} else {
+				delete(result, entry.Key)
+			}
+		}
+	}
+
+	// Scan active memtable (newest - takes precedence)
+	for _, entry := range activeCopy.Scan(prefix) {
+		if !entry.Tombstone {
+			result[entry.Key] = entry
+		} else {
+			delete(result, entry.Key)
+		}
+	}
+
+	// Convert map to sorted slice
+	entries := make([]storage.Entry, 0, len(result))
+	for _, entry := range result {
+		entries = append(entries, entry)
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Key < entries[j].Key
+	})
+
+	return entries, nil
 }
 
 func (e *LSMEngine) Stats() storage.EngineStats {

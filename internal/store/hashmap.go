@@ -187,6 +187,10 @@ func (h *HashMapEngine) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	if h.closed.Load() {
+		return nil // Already closed, safe to call multiple times
+	}
+
 	h.closed.Store(true)
 	if h.wal != nil {
 		return h.wal.Close()

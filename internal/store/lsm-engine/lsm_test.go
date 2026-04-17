@@ -323,13 +323,24 @@ func TestLSMEngine_CrashRecovery(t *testing.T) {
 		engine1.Put("key1", []byte("value1_updated"))
 		engine1.Delete("key2")
 
-		// Simulate crash (close without graceful shutdown)
+		// Force flush to ensure data is in SSTables before crash simulation
+		require.NoError(t, engine1.Flush())
+
+		// Simulate crash: close without graceful shutdown
+		// First stop background goroutines by setting closed flag
+		engine1.closed.Store(true)
+
+		// Now close the WAL (it's safe now since background loops are stopped)
 		engine1.wal.Close()
+
+		// Close all SSTables
+		engine1.mu.Lock()
 		for _, level := range engine1.levels {
 			for _, sst := range level {
 				sst.Close()
 			}
 		}
+		engine1.mu.Unlock()
 
 		// Create new engine - should recover from WAL
 		engine2, err := NewLSMEngine(dir)
