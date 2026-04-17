@@ -12,20 +12,20 @@ lsm:
     key_cache_size: 1000000
 
 compaction:
-    threshold: 8
+    threshold: 16
     max_concurrent: 4
-    l0_size_threshold: 67108864
+    l0_size_threshold: 1073741824
 
 memory:
-    memtable_size: 67108864
-    max_memtable_bytes: 268435456
+    memtable_size: 134217728
+    max_memtable_bytes: 1073741824
     bloom_fp_rate: 0.01
-    block_cache_size: 268435456
+    block_cache_size: 536870912
 
 wal:
     sync: false
     sync_interval: 100ms
-    checkpoint_bytes: 1048576
+    checkpoint_bytes: 67108864
     max_file_size: 67108864
 
 cluster:
