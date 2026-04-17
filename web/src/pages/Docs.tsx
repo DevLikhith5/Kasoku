@@ -316,7 +316,7 @@ kasoku > INFO`}</pre>
                 <div className="docs-icon"><Zap size={18} strokeWidth={2} /></div>
                 Performance Benchmarks
               </h2>
-              <p>Benchmarks on Apple M1 (8-core ARM64). Kasoku supports both original Dynamo single-key and batch operations.</p>
+              <p>Benchmarks on Apple M1 (8-core ARM64) using the <code>pressure</code> load testing tool (Dynamo-style).</p>
               
               <div className="docs-table-wrap">
                 <table className="docs-table">
@@ -325,32 +325,83 @@ kasoku > INFO`}</pre>
                       <th>Operation</th>
                       <th>Type</th>
                       <th>Single Node</th>
-                      <th>3-Node Cluster</th>
+                      <th>3-Node Cluster (RF=3)</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
-                      <td>Writes</td>
+                      <td><strong>Writes</strong></td>
                       <td>Single-key</td>
-                      <td>~17K ops/sec</td>
-                      <td>~4K ops/sec</td>
+                      <td>83,500 ops/sec</td>
+                      <td>46,240 ops/sec</td>
                     </tr>
                     <tr>
-                      <td>Reads</td>
-                      <td>Single-Key (Dynamo)</td>
-                      <td>~189K ops/sec</td>
-                      <td>~59K ops/sec</td>
+                      <td><strong>Reads</strong></td>
+                      <td>Single-Key</td>
+                      <td>~30,000 ops/sec</td>
+                      <td>108,985 ops/sec</td>
                     </tr>
                     <tr>
-                      <td>Reads</td>
-                      <td>Batch (50 keys)</td>
-                      <td>~187K ops/sec</td>
-                      <td>~800K ops/sec</td>
+                      <td><strong>Batch Reads</strong></td>
+                      <td>50 keys/batch</td>
+                      <td>377,000 ops/sec (peak)</td>
+                      <td>377,800 ops/sec (peak)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Latency p50</strong></td>
+                      <td>—</td>
+                      <td>59µs (writes)</td>
+                      <td>85µs (reads)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Latency p99</strong></td>
+                      <td>—</td>
+                      <td>1.64ms (writes)</td>
+                      <td>1.60ms (reads)</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
-              <p><strong>Key insights:</strong> Cluster writes ~4x slower due to quorum replication (local + remote). Batch reads 10x+ faster than single-key due to HTTP overhead amortization.</p>
+
+              <h3>Dynamo-Style Features</h3>
+              <p>Kasoku implements the core Dynamo paper features for production-grade distributed storage:</p>
+              
+              <div className="docs-features">
+                <div className="docs-feature">
+                  <h4>Sloppy Quorum</h4>
+                  <p>When preferred replica nodes are down, automatically continues to next healthy nodes instead of failing the write. Ensures availability during node failures.</p>
+                </div>
+                <div className="docs-feature">
+                  <h4>Vector Clocks</h4>
+                  <p>Every write carries a vector clock (map of nodeID → counter) for tracking causal ordering. Detects Before, After, and Concurrent (conflict) relationships.</p>
+                </div>
+                <div className="docs-feature">
+                  <h4>Conflict Resolution</h4>
+                  <p>Last-write-wins using vector clock comparison. Concurrent writes detected and resolved automatically.</p>
+                </div>
+                <div className="docs-feature">
+                  <h4>Read Repair</h4>
+                  <p>On quorum reads, coordinator detects stale replicas and automatically pushes the latest value to them.</p>
+                </div>
+                <div className="docs-feature">
+                  <h4>Hinted Handoff</h4>
+                  <p>Writes to unavailable nodes are stored locally as hints. Background thread retries delivery every 10 seconds. Hints expire after 24 hours.</p>
+                </div>
+                <div className="docs-feature">
+                  <h4>Anti-Entropy with Merkle Trees</h4>
+                  <p>Background sync every 30 seconds. SHA-256 Merkle tree comparison in O(K log N) time where K = number of differing keys.</p>
+                </div>
+                <div className="docs-feature">
+                  <h4>Phi Accrual Failure Detection</h4>
+                  <p>Statistical failure detector that adapts to network conditions. Nodes marked unhealthy when phi exceeds threshold (default 8.0).</p>
+                </div>
+                <div className="docs-feature">
+                  <h4>Gossip Protocol</h4>
+                  <p>Epidemic membership propagation. Eventual consistency of cluster state in O(log N) gossip rounds.</p>
+                </div>
+              </div>
+
+              <p><strong>Key insights:</strong> Cluster writes are ~55% of single-node due to quorum replication (W=2). Cluster reads with R=1 (eventual consistency) actually exceed single-node due to parallel data distribution. Batch operations are 4-10x faster than single-key due to HTTP overhead amortization.</p>
             </section>
           </div>
         </main>

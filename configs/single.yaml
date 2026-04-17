@@ -8,17 +8,17 @@ log_level: error
 lsm:
     levels: 5
     level_ratio: 10
-    l0_base_size: 268435456
+    l0_base_size: 67108864
     key_cache_size: 1000000
 
 compaction:
     threshold: 8
     max_concurrent: 4
-    l0_size_threshold: 268435456
+    l0_size_threshold: 67108864
 
 memory:
-    memtable_size: 268435456
-    max_memtable_bytes: 1073741824
+    memtable_size: 67108864
+    max_memtable_bytes: 268435456
     bloom_fp_rate: 0.01
     block_cache_size: 1073741824
 
