@@ -337,6 +337,9 @@ func (w *WAL) Close() error {
 	defer w.mu.Unlock()
 	w.closed = true
 	w.wbuf.Flush()
+	if err := w.file.Sync(); err != nil {
+		return fmt.Errorf("WAL sync on close: %w", err)
+	}
 	return w.file.Close()
 }
 
