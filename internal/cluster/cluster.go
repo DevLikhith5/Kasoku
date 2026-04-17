@@ -171,6 +171,8 @@ func (c *Cluster) RemovePeer(nodeID, peerAddr string) {
 // ReplicatedPut writes a key-value pair to the cluster with replication
 // The coordinator pattern: this node coordinates the write to all replicas
 func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) error {
+	totalStart := time.Now()
+
 	c.mu.RLock()
 	replicas := c.getReplicasForKey(key)
 	c.mu.RUnlock()
@@ -191,12 +193,14 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 	}
 
 	// Write to local store first — if this fails, the whole operation fails
+	localStart := time.Now()
 	if isReplica {
 		if err := c.store.Put(key, value); err != nil {
 			c.logger.Error("local write failed", "key", key, "error", err)
 			return fmt.Errorf("local write failed: %w", err)
 		}
 	}
+	localEnd := time.Now()
 
 	// Replicate to other nodes
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
@@ -209,6 +213,7 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	replicationStart := time.Now()
 
 	for _, replica := range replicas {
 		if replica == c.nodeID {
@@ -225,8 +230,12 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 				return
 			}
 
+			replicaStart := time.Now()
 			if err := client.ReplicatedPut(timeoutCtx, key, value); err != nil {
-				c.logger.Debug("replication to replica failed", "replica", replicaAddr, "error", err)
+				c.logger.Debug("replication to replica failed",
+					"replica", replicaAddr,
+					"error", err,
+					"timing.replica_ms", time.Since(replicaStart).Milliseconds())
 				return
 			}
 
@@ -237,12 +246,19 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 	}
 
 	wg.Wait()
+	replicationEnd := time.Now()
+
+	c.logger.Debug("replicated put completed",
+		"key", key,
+		"acks", successCount,
+		"timing.local_ms", localEnd.Sub(localStart).Milliseconds(),
+		"timing.replication_ms", replicationEnd.Sub(replicationStart).Milliseconds(),
+		"timing.total_ms", time.Since(totalStart).Milliseconds())
 
 	if successCount < c.quorumSize {
 		return fmt.Errorf("%w: got %d acks, need %d", ErrQuorumNotReached, successCount, c.quorumSize)
 	}
 
-	c.logger.Debug("replicated put completed", "key", key, "acks", successCount)
 	return nil
 }
 
