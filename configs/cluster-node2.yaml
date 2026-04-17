@@ -14,11 +14,11 @@ lsm:
 compaction:
     threshold: 16
     max_concurrent: 4
-    l0_size_threshold: 1073741824
+    l0_size_threshold: 2147483648
 
 memory:
-    memtable_size: 134217728
-    max_memtable_bytes: 1073741824
+    memtable_size: 268435456
+    max_memtable_bytes: 2147483648
     bloom_fp_rate: 0.01
     block_cache_size: 536870912
 

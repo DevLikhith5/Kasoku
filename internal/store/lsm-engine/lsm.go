@@ -322,6 +322,7 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 
 // MultiGet retrieves multiple keys in a single pass, optimizing for throughput
 // by reducing locking overhead and batching Bloom filter checks.
+// Lock-free reads from memtables; takes brief lock snapshot of levels for SSTable iteration.
 func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
 	if e.closed.Load() {
 		return nil, storage.ErrEngineClosed
@@ -333,10 +334,7 @@ func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
 		pendingKeys[k] = struct{}{}
 	}
 
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	// 1. Check active memtable
+	// 1. Check active memtable (lock-free)
 	for k := range pendingKeys {
 		if entry, ok := e.active.Get(k); ok {
 			if !entry.Tombstone {
@@ -349,7 +347,7 @@ func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
 		return results, nil
 	}
 
-	// 2. Check immutable memtables
+	// 2. Check immutable memtables (lock-free - immutable is append-only)
 	for _, mem := range e.immutable {
 		for k := range pendingKeys {
 			if entry, ok := mem.Get(k); ok {
@@ -364,10 +362,17 @@ func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
 		}
 	}
 
-	// 3. Check SSTables level by level
-	for _, level := range e.levels {
+	// 3. Take brief snapshot of levels for SSTable iteration
+	e.mu.RLock()
+	levelSnapshot := make([][]*SSTableReader, len(e.levels))
+	for i, level := range e.levels {
+		levelSnapshot[i] = level
+	}
+	e.mu.RUnlock()
+
+	// 4. Check SSTables level by level (lock-free iteration)
+	for _, level := range levelSnapshot {
 		for _, sst := range level {
-			// Check bloom filter for all pending keys first
 			var sstPending []string
 			for k := range pendingKeys {
 				if sst.filter.MightContain([]byte(k)) {
@@ -379,7 +384,6 @@ func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
 				continue
 			}
 
-			// For keys that MIGHT be in this SSTable, do the actual lookups
 			for _, k := range sstPending {
 				entry, err := sst.Get(k)
 				if err == storage.ErrKeyNotFound {
