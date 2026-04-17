@@ -23,9 +23,10 @@ func getHTTPClient() *http.Client {
 	httpClientOnce.Do(func() {
 		httpClient = &http.Client{
 			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 50,
-				IdleConnTimeout:     30 * time.Second,
+				MaxIdleConns:        200,
+				MaxIdleConnsPerHost: 100,
+				MaxConnsPerHost:     100,
+				IdleConnTimeout:     90 * time.Second,
 				DisableKeepAlives:   false,
 			},
 			Timeout: 10 * time.Second,
@@ -297,22 +298,27 @@ func compareVectorClocks(a, b storage.VectorClock) Ordering {
 
 func (n *Node) readRepair(ctx context.Context, key string,
 	latest replicaResult, all []replicaResult) {
+	var wg sync.WaitGroup
 	for _, r := range all {
 		if r.entry.Version < latest.entry.Version && r.nodeID != n.cfg.NodeID {
-			n.logger.Debug("read repair",
-				"node", r.nodeID,
-				"stale", r.entry.Version,
-				"latest", latest.entry.Version)
-			rCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-			// Bug 3 fix: log and store hint on read repair failure instead of silently ignoring
-			if err := n.remoteReplicate(rCtx, r.nodeID, key, latest.entry.Value, false, latest.entry.Version); err != nil {
-				n.logger.Warn("read repair failed, storing hint",
-					"node", r.nodeID, "key", key, "error", err)
-				_ = n.hints.Store(key, latest.entry.Value, r.nodeID)
-			}
-			cancel()
+			wg.Add(1)
+			go func(r replicaResult) {
+				defer wg.Done()
+				n.logger.Debug("read repair",
+					"node", r.nodeID,
+					"stale", r.entry.Version,
+					"latest", latest.entry.Version)
+				rCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+				defer cancel()
+				if err := n.remoteReplicate(rCtx, r.nodeID, key, latest.entry.Value, false, latest.entry.Version); err != nil {
+					n.logger.Warn("read repair failed, storing hint",
+						"node", r.nodeID, "key", key, "error", err)
+					_ = n.hints.Store(key, latest.entry.Value, r.nodeID)
+				}
+			}(r)
 		}
 	}
+	wg.Wait()
 }
 
 func (n *Node) remoteReplicate(ctx context.Context,

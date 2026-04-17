@@ -32,11 +32,13 @@ type LSMEngine struct {
 }
 
 type LSMConfig struct {
-	MemTableSize        int64 // soft limit for memtable
-	MaxMemtableBytes    int64 // total memory for all memtables
-	WALSyncInterval     time.Duration
-	CompactionThreshold int   // SSTables per level to trigger compaction
-	L0SizeThreshold     int64 // hard limit for memtable
+	MemTableSize        int64         // soft limit for memtable
+	MaxMemtableBytes    int64         // total memory for all memtables
+	WALSyncInterval     time.Duration // background sync interval (0 = sync every write)
+	WALCheckpointBytes  int64         // bytes written before checkpoint sync (0 = use default)
+	WALMaxBufferedBytes int64         // max buffered before forced flush (0 = use default)
+	CompactionThreshold int           // SSTables per level to trigger compaction
+	L0SizeThreshold     int64         // hard limit for memtable
 	BloomFPRate         float64
 	LevelRatio          float64 // size ratio between levels
 	KeyCacheSize        int     // number of entries in key cache
@@ -91,7 +93,9 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 	}
 
 	wal, err := storage.OpenWALWithConfig(filepath.Join(dir, "wal.log"), storage.WALConfig{
-		SyncInterval: cfg.WALSyncInterval,
+		SyncInterval:     cfg.WALSyncInterval,
+		CheckpointBytes:  cfg.WALCheckpointBytes,
+		MaxBufferedBytes: cfg.WALMaxBufferedBytes,
 	})
 	if err != nil {
 		return nil, err

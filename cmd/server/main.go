@@ -48,6 +48,8 @@ func main() {
 		MemTableSize:        cfg.Memory.MemTableSize,
 		MaxMemtableBytes:    cfg.Memory.MaxMemtableBytes,
 		WALSyncInterval:     cfg.WAL.SyncInterval,
+		WALCheckpointBytes:  cfg.WAL.CheckpointBytes,
+		WALMaxBufferedBytes: cfg.WAL.MaxBufferedBytes,
 		CompactionThreshold: cfg.Compaction.Threshold,
 		L0SizeThreshold:     cfg.Compaction.L0SizeThreshold,
 		BloomFPRate:         cfg.Memory.BloomFPRate,
