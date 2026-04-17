@@ -235,9 +235,8 @@ func TestLSMEngine_FlushMemTable_WithData(t *testing.T) {
 	engine.Put("key1", []byte("value1"))
 	engine.Put("key2", []byte("value2"))
 
-	// Manually trigger flush by making memtable full
-	// This is internal, so we just verify the data is stored
-	time.Sleep(100 * time.Millisecond)
+	// Force flush to ensure data is in SSTables
+	require.NoError(t, engine.Flush())
 
 	// Data should still be accessible
 	entry, err := engine.Get("key1")
