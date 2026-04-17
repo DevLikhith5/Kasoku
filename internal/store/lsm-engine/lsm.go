@@ -172,14 +172,6 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	e.active.Put(entry)
 	e.cache.Invalidate(key)
 	full := e.active.IsFull()
-	// Hard limit: block writes if active exceeds L0SizeThreshold
-	overHardLimit := e.active.Size() >= e.config.L0SizeThreshold
-	// System cap: block if total memtable memory exceeds MaxMemtableBytes
-	totalMem := e.active.Size()
-	for _, mem := range e.immutable {
-		totalMem += mem.Size()
-	}
-	overSystemCap := totalMem >= e.config.MaxMemtableBytes
 	e.mu.Unlock()
 
 	if full {
@@ -187,25 +179,6 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 		case e.flushCh <- struct{}{}:
 		default:
 		}
-	}
-
-	// Backpressure: wait for at least one flush to complete
-	for overHardLimit || overSystemCap {
-		if overSystemCap {
-			slog.Warn("[BACKPRESSURE] blocking writes: total memtable exceeds system cap", "cap_bytes", e.config.MaxMemtableBytes)
-		} else {
-			slog.Warn("[BACKPRESSURE] blocking writes: active memtable exceeds hard limit", "limit_bytes", e.config.L0SizeThreshold)
-		}
-		<-e.flushDone
-		// Re-check after flush
-		e.mu.RLock()
-		totalMem = e.active.Size()
-		for _, mem := range e.immutable {
-			totalMem += mem.Size()
-		}
-		overHardLimit = e.active.Size() >= e.config.L0SizeThreshold
-		overSystemCap = totalMem >= e.config.MaxMemtableBytes
-		e.mu.RUnlock()
 	}
 
 	return nil
@@ -804,12 +777,6 @@ func (e *LSMEngine) Delete(key string) error {
 	e.mu.Lock()
 	e.active.Put(entry)
 	full := e.active.IsFull()
-	overHardLimit := e.active.Size() >= e.config.L0SizeThreshold
-	totalMem := e.active.Size()
-	for _, mem := range e.immutable {
-		totalMem += mem.Size()
-	}
-	overSystemCap := totalMem >= e.config.MaxMemtableBytes
 	e.mu.Unlock()
 
 	if full {
@@ -817,23 +784,6 @@ func (e *LSMEngine) Delete(key string) error {
 		case e.flushCh <- struct{}{}:
 		default:
 		}
-	}
-
-	for overHardLimit || overSystemCap {
-		if overSystemCap {
-			slog.Warn("[BACKPRESSURE] blocking deletes: total memtable exceeds system cap", "cap_bytes", e.config.MaxMemtableBytes)
-		} else {
-			slog.Warn("[BACKPRESSURE] blocking deletes: active memtable exceeds hard limit", "limit_bytes", e.config.L0SizeThreshold)
-		}
-		<-e.flushDone
-		e.mu.RLock()
-		totalMem = e.active.Size()
-		for _, mem := range e.immutable {
-			totalMem += mem.Size()
-		}
-		overHardLimit = e.active.Size() >= e.config.L0SizeThreshold
-		overSystemCap = totalMem >= e.config.MaxMemtableBytes
-		e.mu.RUnlock()
 	}
 
 	return nil
