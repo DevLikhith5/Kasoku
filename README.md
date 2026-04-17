@@ -147,9 +147,9 @@ Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testin
 
 | Operation | Type | Throughput | Latency p50 | Latency p99 |
 | :--- | :--- | ---: | ---: | ---: |
-| **Writes** | Single-key | **118,000 ops/sec** | 70µs | 675µs |
-| **Reads** | Single-Key | **308,000 ops/sec** | 56µs | 647µs |
-| **Reads** | Batch (25 keys) | **435,000 ops/sec** | — | — |
+| **Writes** | Single-key | **33,000 ops/sec** | 491µs | 4.72ms |
+| **Reads** | Single-Key | **166,000 ops/sec** | 118µs | 428µs |
+| **Batch Reads** | Batch (25 keys) | **200,000+ ops/sec** | — | — |
 
 ### 3-Node Cluster (RF=3, W=2, R=1)
 
@@ -166,7 +166,7 @@ Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testin
 | **Dynamo Paper (2007)** | ~100,000+ ops/sec | ~100,000+ ops/sec | N/A |
 | **DynamoDB** | ~50,000+ ops/sec | ~50,000+ ops/sec | ~200,000+ ops/sec |
 | **Cassandra** | ~50,000 ops/sec | ~50,000 ops/sec | ~100,000 ops/sec |
-| **Kasoku (single node)** | **118,000 ops/sec** | **308,000 ops/sec** | **435,000 ops/sec** |
+| **Kasoku (single node)** | **33,000 ops/sec** | **166,000 ops/sec** | **200,000+ ops/sec** |
 | **Kasoku (cluster)** | **24,000-62,000 ops/sec** | **28,000 ops/sec** | **262,000 ops/sec** |
 
 ### Optimizations Applied
