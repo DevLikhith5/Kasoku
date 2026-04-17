@@ -27,8 +27,9 @@ func NewClient(nodeAddr string) *Client {
 }
 
 type ReplicatedWriteRequest struct {
-	Key   string `json:"key"`
-	Value []byte `json:"value"`
+	Key         string            `json:"key"`
+	Value       []byte            `json:"value"`
+	VectorClock map[string]uint64 `json:"vector_clock,omitempty"`
 }
 
 type ReplicatedWriteResponse struct {

@@ -170,3 +170,15 @@ func (r *Ring) GetAllNodes() []string {
 	}
 	return nodes
 }
+
+func (r *Ring) GetAllNodesSorted() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	nodes := make([]string, 0, len(r.nodes))
+	for nodeID := range r.nodes {
+		nodes = append(nodes, nodeID)
+	}
+	sort.Strings(nodes)
+	return nodes
+}

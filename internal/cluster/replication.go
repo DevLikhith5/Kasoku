@@ -55,7 +55,10 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 	}
 
 	results := make(chan replicaResult, len(replicas))
-	version := n.versionCounter.next()
+
+	// Generate vector clock for this write
+	vc := n.getOrCreateVectorClock(key)
+	vc = vc.Increment(n.cfg.NodeID)
 
 	// Adaptive timeout
 	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
@@ -69,11 +72,11 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 			defer cancel()
 			var err error
 			if nid == n.cfg.NodeID {
-				// Local write — directly into our LSM engine
-				err = n.engine.Put(key, value)
+				// Local write — directly into our LSM engine with vector clock
+				err = n.engine.PutWithVectorClock(key, value, vc)
 			} else {
 				// Remote write — HTTP call to peer
-				err = n.remoteReplicate(rCtx, nid, key, value, false, version)
+				err = n.remoteReplicateWithVC(rCtx, nid, key, value, false, vc)
 			}
 			// Record latency for adaptive timeout
 			n.timeoutTracker.Record(nid, time.Since(start))
@@ -242,11 +245,54 @@ func (n *Node) ReplicatedDelete(ctx context.Context, key string) error {
 func latestEntry(responses []replicaResult) replicaResult {
 	latest := responses[0]
 	for _, r := range responses[1:] {
-		if r.entry.Version > latest.entry.Version {
+		ord := compareVectorClocks(r.entry.VectorClock, latest.entry.VectorClock)
+		if ord == After {
 			latest = r
 		}
 	}
 	return latest
+}
+
+func compareVectorClocks(a, b storage.VectorClock) Ordering {
+	if a == nil {
+		return After
+	}
+	if b == nil {
+		return Before
+	}
+
+	aLessB := false
+	bLessA := false
+
+	allKeys := make(map[string]bool)
+	for k := range a {
+		allKeys[k] = true
+	}
+	for k := range b {
+		allKeys[k] = true
+	}
+
+	for k := range allKeys {
+		av := a[k]
+		bv := b[k]
+		if av < bv {
+			aLessB = true
+		}
+		if av > bv {
+			bLessA = true
+		}
+	}
+
+	if aLessB && !bLessA {
+		return Before
+	}
+	if !aLessB && bLessA {
+		return After
+	}
+	if !aLessB && !bLessA {
+		return After
+	}
+	return Concurrent
 }
 
 func (n *Node) readRepair(ctx context.Context, key string,
@@ -283,6 +329,44 @@ func (n *Node) remoteReplicate(ctx context.Context,
 		"value":     value,
 		"tombstone": tombstone,
 		"version":   version,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal replicate request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/internal/replicate", addr)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create replicate request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := getHTTPClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("replicate request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("replicate failed: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// remoteReplicateWithVC sends replication request with vector clock
+func (n *Node) remoteReplicateWithVC(ctx context.Context,
+	nodeID, key string, value []byte, tombstone bool, vc storage.VectorClock) error {
+	addr, ok := n.cluster.nodeAddrMap[nodeID]
+	if !ok {
+		addr = nodeID
+	}
+
+	vcMap := map[string]uint64(vc)
+	body, err := json.Marshal(map[string]any{
+		"key":          key,
+		"value":        value,
+		"tombstone":    tombstone,
+		"vector_clock": vcMap,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal replicate request: %w", err)

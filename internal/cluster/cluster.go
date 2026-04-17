@@ -45,6 +45,7 @@ type Cluster struct {
 	rpcTimeout        time.Duration
 	logger            *slog.Logger
 	peers             []string
+	members           *MemberList // for sloppy quorum - check node liveness
 }
 
 type ClusterConfig struct {
@@ -58,6 +59,7 @@ type ClusterConfig struct {
 	RPCTimeout        time.Duration
 	Logger            *slog.Logger
 	Peers             []string
+	Members           *MemberList // for sloppy quorum - check node liveness
 }
 
 func New(cfg ClusterConfig) *Cluster {
@@ -110,6 +112,7 @@ func New(cfg ClusterConfig) *Cluster {
 		peers:             cfg.Peers,
 		clients:           make(map[string]*rpc.Client),
 		nodeAddrMap:       make(map[string]string),
+		members:           cfg.Members,
 	}
 
 	// Register this node's address
@@ -436,7 +439,49 @@ func (c *Cluster) getReplicasForKey(key string) []string {
 	if c.ring == nil {
 		return []string{c.nodeID}
 	}
-	return c.ring.GetNodes(key, c.replicationFactor)
+
+	preferred := c.ring.GetNodes(key, c.replicationFactor)
+
+	c.mu.RLock()
+	isAlive := func(nodeID string) bool {
+		if c.members != nil {
+			return c.members.IsAlive(nodeID)
+		}
+		return true
+	}
+	c.mu.RUnlock()
+
+	var healthy []string
+	for _, nodeID := range preferred {
+		if isAlive(nodeID) {
+			healthy = append(healthy, nodeID)
+		}
+	}
+
+	if len(healthy) >= c.quorumSize {
+		return healthy
+	}
+
+	allNodes := c.ring.GetAllNodesSorted()
+	seen := make(map[string]bool)
+	for _, n := range healthy {
+		seen[n] = true
+	}
+
+	for _, nodeID := range allNodes {
+		if seen[nodeID] {
+			continue
+		}
+		if isAlive(nodeID) {
+			healthy = append(healthy, nodeID)
+			seen[nodeID] = true
+			if len(healthy) >= c.replicationFactor {
+				break
+			}
+		}
+	}
+
+	return healthy
 }
 
 // getClient returns the RPC client for a node, creating one on demand.

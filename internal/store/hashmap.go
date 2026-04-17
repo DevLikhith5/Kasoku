@@ -62,10 +62,34 @@ func (h *HashMapEngine) Put(key string, value []byte) error {
 		return err
 	}
 	entry := Entry{
-		Key:       key,
-		Value:     value,
-		Version:   h.version.Add(1),
-		TimeStamp: time.Now(),
+		Key:         key,
+		Value:       value,
+		Version:     h.version.Add(1),
+		TimeStamp:   time.Now(),
+		VectorClock: NewVectorClock(),
+	}
+	if h.wal != nil {
+		if err := h.wal.Append(entry); err != nil {
+			return err
+		}
+	}
+
+	h.data[key] = entry
+	return nil
+}
+
+func (h *HashMapEngine) PutWithVectorClock(key string, value []byte, vc VectorClock) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.validate(key, value); err != nil {
+		return err
+	}
+	entry := Entry{
+		Key:         key,
+		Value:       value,
+		Version:     h.version.Add(1),
+		TimeStamp:   time.Now(),
+		VectorClock: vc,
 	}
 	if h.wal != nil {
 		if err := h.wal.Append(entry); err != nil {

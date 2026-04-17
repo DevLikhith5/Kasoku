@@ -57,13 +57,22 @@ func NewSSTableWriter(path string, expectedEntries int, bloomFPRate float64) (*S
 const binaryMagic = 0xBF
 
 // encodeEntryBinary encodes an entry to binary format for fast serialization
-// Format: [magic:1][keyLen:4][keyBytes][valLen:4][valueBytes][version:8][timestamp:8][tombstone:1]
+// Format: [magic:1][keyLen:4][keyBytes][valLen:4][valueBytes][version:8][timestamp:8][tombstone:1][vcLen:4][vcData]
 func encodeEntryBinary(entry storage.Entry) []byte {
 	keyLen := len(entry.Key)
 	valLen := len(entry.Value)
-	// Fixed overhead: 1 (magic) + 4 (keyLen) + 4 (valLen) + 8 (version) + 8 (timestamp) + 1 (tombstone) = 26
-	// Plus variable: keyLen + valLen
-	buf := make([]byte, 1+4+keyLen+4+valLen+8+8+1)
+
+	// Calculate VectorClock size
+	vcLen := 0
+	var vcData []byte
+	if entry.VectorClock != nil && len(entry.VectorClock) > 0 {
+		vcData = encodeVectorClock(entry.VectorClock)
+		vcLen = len(vcData)
+	}
+
+	// Fixed overhead: 1 (magic) + 4 (keyLen) + 4 (valLen) + 8 (version) + 8 (timestamp) + 1 (tombstone) + 4 (vcLen)
+	// Plus variable: keyLen + valLen + vcLen
+	buf := make([]byte, 1+4+keyLen+4+valLen+8+8+1+4+vcLen)
 	pos := 0
 
 	// Magic byte (1 byte)
@@ -106,8 +115,79 @@ func encodeEntryBinary(entry storage.Entry) []byte {
 	if entry.Tombstone {
 		buf[pos] = 1
 	}
+	pos++
+
+	// VectorClock length (4 bytes)
+	binary.LittleEndian.PutUint32(buf[pos:pos+4], uint32(vcLen))
+	pos += 4
+
+	// VectorClock data
+	if vcLen > 0 {
+		copy(buf[pos:pos+vcLen], vcData)
+	}
 
 	return buf
+}
+
+func encodeVectorClock(vc storage.VectorClock) []byte {
+	if vc == nil || len(vc) == 0 {
+		return nil
+	}
+
+	// Format: [numEntries:4][key1Len:2][key1][val1:8][key2Len:2][key2][val2:8]...
+	var buf []byte
+	buf = append(buf, make([]byte, 4)...)
+
+	count := 0
+	for k, v := range vc {
+		keyLen := uint16(len(k))
+		buf = append(buf, make([]byte, 2)...)
+		binary.LittleEndian.PutUint16(buf[len(buf)-2:], keyLen)
+		buf = append(buf, k...)
+
+		valBuf := make([]byte, 8)
+		binary.LittleEndian.PutUint64(valBuf, v)
+		buf = append(buf, valBuf...)
+		count++
+	}
+
+	binary.LittleEndian.PutUint32(buf[:4], uint32(count))
+	return buf
+}
+
+func decodeVectorClock(data []byte) storage.VectorClock {
+	if len(data) < 4 {
+		return nil
+	}
+
+	count := binary.LittleEndian.Uint32(data[:4])
+	if count == 0 {
+		return nil
+	}
+
+	vc := make(storage.VectorClock, count)
+	pos := 4
+
+	for i := uint32(0); i < count; i++ {
+		if pos+2 > len(data) {
+			break
+		}
+		keyLen := binary.LittleEndian.Uint16(data[pos : pos+2])
+		pos += 2
+
+		if pos+int(keyLen)+8 > len(data) {
+			break
+		}
+		key := string(data[pos : pos+int(keyLen)])
+		pos += int(keyLen)
+
+		val := binary.LittleEndian.Uint64(data[pos : pos+8])
+		pos += 8
+
+		vc[key] = val
+	}
+
+	return vc
 }
 
 // decodeEntryBinary decodes binary entry back to storage.Entry
@@ -176,6 +256,16 @@ func decodeEntryBinary(data []byte) (storage.Entry, error) {
 	// Read tombstone
 	if pos < len(data) {
 		entry.Tombstone = data[pos] == 1
+		pos++
+	}
+
+	// Read vector clock length
+	if pos+4 <= len(data) {
+		vcLen := binary.LittleEndian.Uint32(data[pos : pos+4])
+		pos += 4
+		if vcLen > 0 && pos+int(vcLen) <= len(data) {
+			entry.VectorClock = decodeVectorClock(data[pos : pos+int(vcLen)])
+		}
 	}
 
 	return entry, nil

@@ -56,6 +56,8 @@ type Node struct {
 	stopOnce       sync.Once     // prevents double-close of done
 	wg             sync.WaitGroup
 	mu             sync.RWMutex
+	vectorClocks   map[string]storage.VectorClock // per-key vector clocks
+	vcMu           sync.RWMutex
 }
 
 func NewNode(cfg NodeConfig) (*Node, error) {
@@ -73,7 +75,9 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 	}
 
 	// Open LSM storage engine
-	engine, err := lsmengine.NewLSMEngine(cfg.DataDir)
+	engine, err := lsmengine.NewLSMEngineWithConfig(cfg.DataDir, lsmengine.LSMConfig{
+		NodeID: cfg.NodeID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("open engine: %w", err)
 	}
@@ -103,6 +107,7 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 		QuorumSize:        cfg.W,
 		RPCTimeout:        5 * time.Second,
 		Logger:            n.logger,
+		Members:           n.members,
 	})
 
 	// Build the HTTP server and wire it to this node
@@ -208,6 +213,42 @@ func (n *Node) GetStatus() map[string]any {
 
 func (n *Node) GetRingNodes() []string {
 	return n.ring.GetAllNodes()
+}
+
+func (n *Node) getOrCreateVectorClock(key string) storage.VectorClock {
+	n.vcMu.Lock()
+	defer n.vcMu.Unlock()
+
+	if n.vectorClocks == nil {
+		n.vectorClocks = make(map[string]storage.VectorClock)
+	}
+
+	if vc, ok := n.vectorClocks[key]; ok {
+		return vc
+	}
+
+	return storage.NewVectorClock()
+}
+
+func (n *Node) updateVectorClock(key string, vc storage.VectorClock) {
+	n.vcMu.Lock()
+	defer n.vcMu.Unlock()
+
+	if n.vectorClocks == nil {
+		n.vectorClocks = make(map[string]storage.VectorClock)
+	}
+	n.vectorClocks[key] = vc
+}
+
+func (n *Node) getVectorClock(key string) (storage.VectorClock, bool) {
+	n.vcMu.RLock()
+	defer n.vcMu.RUnlock()
+
+	if n.vectorClocks == nil {
+		return nil, false
+	}
+	vc, ok := n.vectorClocks[key]
+	return vc, ok
 }
 
 func (n *Node) HandleReplicate(ctx context.Context, key string, value []byte) error {
