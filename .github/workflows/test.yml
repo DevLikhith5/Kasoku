@@ -22,11 +22,11 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Build
+        run: go build ./...
+
       - name: Run tests with race detection
         run: go test ./... -race -timeout 10m
 
       - name: Run go vet
         run: go vet ./...
-
-      - name: Build
-        run: go build ./...
