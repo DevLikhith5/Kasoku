@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"sort"
 	"strings"
@@ -382,68 +383,58 @@ type SSTableReader struct {
 }
 
 type BlockCache struct {
-	mu      sync.Mutex
-	cache   map[string][]byte
-	keys    []string
-	maxSize int
+	shards    [16]blockCacheShard
+	maxBlocks int
+}
+
+type blockCacheShard struct {
+	mu    sync.RWMutex
+	cache map[string][]byte
+	keys  []string
+	max   int
 }
 
 func NewBlockCache(maxBlocks int) *BlockCache {
-	return &BlockCache{
-		cache:   make(map[string][]byte),
-		keys:    make([]string, 0, maxBlocks),
-		maxSize: maxBlocks,
+	bc := &BlockCache{maxBlocks: maxBlocks}
+	perShard := maxBlocks/16 + 1
+	for i := range bc.shards {
+		bc.shards[i].cache = make(map[string][]byte, perShard)
+		bc.shards[i].keys = make([]string, 0, perShard)
+		bc.shards[i].max = perShard
 	}
+	return bc
+}
+
+func (bc *BlockCache) shardIndex(key string) int {
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	return int(h.Sum32() % 16)
 }
 
 func (bc *BlockCache) Get(key string) ([]byte, bool) {
-	bc.mu.Lock() // Write lock needed because we update LRU order
-	defer bc.mu.Unlock()
-
-	data, ok := bc.cache[key]
-	if !ok {
-		return nil, false
-	}
-
-	// Move to end (most recently used)
-	for i, k := range bc.keys {
-		if k == key {
-			bc.keys = append(bc.keys[:i], bc.keys[i+1:]...)
-			bc.keys = append(bc.keys, key)
-			break
-		}
-	}
-
-	return data, true
+	s := &bc.shards[bc.shardIndex(key)]
+	s.mu.RLock()
+	data, ok := s.cache[key]
+	s.mu.RUnlock()
+	return data, ok
 }
 
 func (bc *BlockCache) Put(key string, data []byte) {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
-
-	// If already exists, update and move to end
-	if _, ok := bc.cache[key]; ok {
-		bc.cache[key] = data
-		// Move to end (most recently used)
-		for i, k := range bc.keys {
-			if k == key {
-				bc.keys = append(bc.keys[:i], bc.keys[i+1:]...)
-				break
-			}
-		}
-		bc.keys = append(bc.keys, key)
+	s := &bc.shards[bc.shardIndex(key)]
+	s.mu.Lock()
+	if _, ok := s.cache[key]; ok {
+		s.cache[key] = data
+		s.mu.Unlock()
 		return
 	}
-
-	// Evict oldest if at capacity
-	if len(bc.keys) >= bc.maxSize {
-		oldest := bc.keys[0]
-		delete(bc.cache, oldest)
-		bc.keys = bc.keys[1:]
+	if len(s.keys) >= s.max {
+		oldest := s.keys[0]
+		delete(s.cache, oldest)
+		s.keys = s.keys[1:]
 	}
-
-	bc.cache[key] = data
-	bc.keys = append(bc.keys, key)
+	s.cache[key] = data
+	s.keys = append(s.keys, key)
+	s.mu.Unlock()
 }
 
 // NewBlockCache creates a global block cache (can be shared across SSTables)
@@ -541,9 +532,7 @@ func (r *SSTableReader) Get(key string) (storage.Entry, error) {
 	var data []byte
 	var cached bool
 
-	r.mu.RLock()
 	data, cached = r.blockCache.Get(cacheKey)
-	r.mu.RUnlock()
 
 	if !cached {
 		// Step 4: Read the data block from disk

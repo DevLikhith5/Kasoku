@@ -221,29 +221,7 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 		return storage.Entry{}, storage.ErrEngineClosed
 	}
 
-	e.mu.RLock()
-	entry, found := e.active.Get(key)
-	e.mu.RUnlock()
-
-	if found {
-		if entry.Tombstone {
-			e.cache.Put(key, storage.Entry{}, false)
-			return storage.Entry{}, storage.ErrKeyNotFound
-		}
-		e.cache.Put(key, entry, true)
-		return entry, nil
-	}
-
-	if item, ok := e.cache.Get(key); ok {
-		if item.found {
-			return item.entry, nil
-		}
-		return storage.Entry{}, storage.ErrKeyNotFound
-	}
-
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
+	// 1. Check active memtable (lock-free - memtable is concurrent-safe)
 	if entry, ok := e.active.Get(key); ok {
 		if entry.Tombstone {
 			e.cache.Put(key, storage.Entry{}, false)
@@ -253,6 +231,15 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 		return entry, nil
 	}
 
+	// 2. Check key cache
+	if item, ok := e.cache.Get(key); ok {
+		if item.found {
+			return item.entry, nil
+		}
+		return storage.Entry{}, storage.ErrKeyNotFound
+	}
+
+	// 3. Check immutable memtables (lock-free)
 	for _, mem := range e.immutable {
 		if entry, ok := mem.Get(key); ok {
 			if entry.Tombstone {
@@ -264,9 +251,17 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 		}
 	}
 
-	for _, level := range e.levels {
-		for _, sst := range level {
+	// 4. Take brief snapshot of levels for SSTable iteration
+	e.mu.RLock()
+	levelSnapshot := make([][]*SSTableReader, len(e.levels))
+	for i, level := range e.levels {
+		levelSnapshot[i] = level
+	}
+	e.mu.RUnlock()
 
+	// 5. Check SSTables (lock-free iteration)
+	for _, level := range levelSnapshot {
+		for _, sst := range level {
 			if !sst.filter.MightContain([]byte(key)) {
 				continue
 			}

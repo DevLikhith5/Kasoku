@@ -19,6 +19,10 @@ import (
 )
 
 func main() {
+	// Reduce GC frequency for high-throughput workloads
+	if os.Getenv("GOGC") == "" {
+		os.Setenv("GOGC", "200")
+	}
 	// Load configuration
 	cfgPath := os.Getenv("KASOKU_CONFIG")
 	if cfgPath == "" {
