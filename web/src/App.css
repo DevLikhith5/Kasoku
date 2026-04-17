@@ -3245,6 +3245,34 @@ code:hover {
   color: var(--text-secondary);
 }
 
+.docs-features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin: 24px 0;
+}
+
+.docs-feature {
+  background: var(--bg-subtle);
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.docs-feature h4 {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.docs-feature p {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+}
+
 @media (max-width: 1024px) {
   .docs-layout {
     grid-template-columns: 1fr;

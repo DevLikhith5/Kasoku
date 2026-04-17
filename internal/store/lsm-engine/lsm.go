@@ -28,6 +28,7 @@ type LSMEngine struct {
 	wg        sync.WaitGroup
 	config    LSMConfig
 	cache     *KeyCache
+	nodeID    string // node identifier for vector clock
 }
 
 type LSMConfig struct {
@@ -39,6 +40,7 @@ type LSMConfig struct {
 	BloomFPRate         float64
 	LevelRatio          float64 // size ratio between levels
 	KeyCacheSize        int     // number of entries in key cache
+	NodeID              string  // node identifier for vector clock
 }
 
 const (
@@ -104,6 +106,7 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 		flushDone: make(chan struct{}, 1),
 		config:    cfg,
 		cache:     newKeyCache(cfg.KeyCacheSize),
+		nodeID:    cfg.NodeID,
 	}
 
 	if err := e.loadSSTables(); err != nil {
@@ -150,10 +153,11 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	}
 
 	entry := storage.Entry{
-		Key:       key,
-		Value:     value,
-		Version:   e.version.Add(1),
-		TimeStamp: time.Now(),
+		Key:         key,
+		Value:       value,
+		Version:     e.version.Add(1),
+		TimeStamp:   time.Now(),
+		VectorClock: storage.NewVectorClock().Increment(e.nodeID),
 	}
 	//
 	if err := e.wal.Append(entry); err != nil {
@@ -199,6 +203,38 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 		overSystemCap = totalMem >= e.config.MaxMemtableBytes
 		e.mu.RUnlock()
 	}
+
+	return nil
+}
+
+func (e *LSMEngine) PutWithVectorClock(key string, value []byte, vc storage.VectorClock) error {
+	if e.closed.Load() {
+		return storage.ErrEngineClosed
+	}
+
+	if len(key) > storage.MaxKeyLen {
+		return storage.ErrKeyTooLong
+	}
+	if len(value) > storage.MaxValueLen {
+		return storage.ErrValueTooLarge
+	}
+
+	entry := storage.Entry{
+		Key:         key,
+		Value:       value,
+		Version:     e.version.Add(1),
+		TimeStamp:   time.Now(),
+		VectorClock: vc,
+	}
+
+	if err := e.wal.Append(entry); err != nil {
+		return err
+	}
+
+	e.mu.Lock()
+	e.active.Put(entry)
+	e.cache.Invalidate(key)
+	e.mu.Unlock()
 
 	return nil
 }
@@ -745,11 +781,12 @@ func (e *LSMEngine) Delete(key string) error {
 	}
 
 	entry := storage.Entry{
-		Key:       key,
-		Value:     nil,
-		Version:   e.version.Add(1),
-		TimeStamp: time.Now(),
-		Tombstone: true,
+		Key:         key,
+		Value:       nil,
+		Version:     e.version.Add(1),
+		TimeStamp:   time.Now(),
+		Tombstone:   true,
+		VectorClock: storage.NewVectorClock().Increment(e.nodeID),
 	}
 
 	if err := e.wal.Append(entry); err != nil {

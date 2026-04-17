@@ -5,12 +5,45 @@ import (
 	"time"
 )
 
+// VectorClock represents a vector clock for tracking causality across nodes
+// Map from nodeID -> counter (monotonically increasing)
+type VectorClock map[string]uint64
+
+func NewVectorClock() VectorClock {
+	return make(VectorClock)
+}
+
+// Increment increments the counter for the given node and returns a new clock
+func (vc VectorClock) Increment(nodeID string) VectorClock {
+	result := make(VectorClock, len(vc)+1)
+	for k, v := range vc {
+		result[k] = v
+	}
+	result[nodeID]++
+	return result
+}
+
+// Merge takes the element-wise maximum of two clocks
+func (vc VectorClock) Merge(other VectorClock) VectorClock {
+	result := make(VectorClock, len(vc))
+	for k, v := range vc {
+		result[k] = v
+	}
+	for nodeID, ts := range other {
+		if ts > result[nodeID] {
+			result[nodeID] = ts
+		}
+	}
+	return result
+}
+
 type Entry struct {
-	Key       string
-	Value     []byte
-	Version   uint64
-	TimeStamp time.Time
-	Tombstone bool
+	Key         string
+	Value       []byte
+	Version     uint64
+	TimeStamp   time.Time
+	Tombstone   bool
+	VectorClock VectorClock // per-key version vector for conflict detection
 }
 
 var (
@@ -36,6 +69,7 @@ type StorageEngine interface {
 	Get(key string) (Entry, error)
 	MultiGet(keys []string) (map[string]Entry, error)
 	Put(key string, value []byte) error
+	PutWithVectorClock(key string, value []byte, vc VectorClock) error
 	Delete(key string) error
 	// Keys returns all non-deleted keys
 	Keys() ([]string, error)

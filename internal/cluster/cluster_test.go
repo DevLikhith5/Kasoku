@@ -33,6 +33,10 @@ func (s *MockStore) Put(key string, value []byte) error {
 	return nil
 }
 
+func (s *MockStore) PutWithVectorClock(key string, value []byte, vc storage.VectorClock) error {
+	return s.Put(key, value)
+}
+
 func (s *MockStore) Get(key string) (storage.Entry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

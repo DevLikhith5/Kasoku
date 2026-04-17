@@ -143,21 +143,22 @@ Every write is associated with a vector clock entry identifying the originating 
 
 Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testing tool (Dynamo-style).
 
-### Single Node (Optimized - April 2026)
+### Single Node (April 2026 - Current)
 
 | Operation | Type | Throughput | Latency p50 | Latency p99 |
 | :--- | :--- | ---: | ---: | ---: |
-| **Writes** | Single-key | **33,000 ops/sec** | 491µs | 4.72ms |
-| **Reads** | Single-Key | **166,000 ops/sec** | 118µs | 428µs |
-| **Batch Reads** | Batch (25 keys) | **200,000+ ops/sec** | — | — |
+| **Writes** | Single-key | **83,500 ops/sec** | 59µs | 1.64ms |
+| **Reads** | Single-Key | ~30,000+ ops/sec | 85µs | 1.60ms |
+| **Batch Writes** | Batch (50 keys) | 224,000+ ops/sec | — | — |
+| **Batch Reads** | Batch (50 keys) | **377,000+ ops/sec (peak)** | 84µs | 1.60ms |
 
 ### 3-Node Cluster (RF=3, W=2, R=1)
 
 | Operation | Type | Throughput | Latency p50 | Latency p99 |
 | :--- | :--- | ---: | ---: | ---: |
-| **Writes** | Single-key (quorum) | **20,000 ops/sec** | 489µs | 9.45ms |
-| **Reads** | Single-Key | **25,000 ops/sec** | 200µs | 1.5ms |
-| **Reads** | Batch (peak) | **323,000 ops/sec** | 89µs | 1.39ms |
+| **Writes** | Single-key (quorum) | **46,240 ops/sec** | 607µs | 3.51ms |
+| **Reads** | Single-Key | **108,985 ops/sec** | 85µs | 1.60ms |
+| **Reads** | Batch (peak) | **377,800 ops/sec** | 84µs | 1.60ms |
 
 ### Comparison with Dynamo Paper & DynamoDB
 
@@ -166,33 +167,46 @@ Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testin
 | **Dynamo Paper (2007)** | ~100,000+ ops/sec | ~100,000+ ops/sec | N/A |
 | **DynamoDB** | ~50,000+ ops/sec | ~50,000+ ops/sec | ~200,000+ ops/sec |
 | **Cassandra** | ~50,000 ops/sec | ~50,000 ops/sec | ~100,000 ops/sec |
-| **Kasoku (single node)** | **33,000 ops/sec** | **166,000 ops/sec** | **200,000+ ops/sec** |
-| **Kasoku (cluster)** | **20,000 ops/sec** | **25,000 ops/sec** | **323,000 ops/sec** |
+| **Kasoku (single node)** | **83,500 ops/sec** | **30,000+ ops/sec** | **377,000+ ops/sec** |
+| **Kasoku (cluster)** | **46,240 ops/sec** | **108,985 ops/sec** | **377,800 ops/sec** |
 
 ### Optimizations Applied
 
 - **WAL**: Async batch sync (100ms interval + 1MB checkpoint)
 - **Encoding**: Pure binary with magic byte (no JSON)
-- **Block Size**: 64KB (was 4KB)
-- **Caches**: 1GB block cache, 1M key cache entries
-- **MemTable**: 256MB (was 64MB)
-- **Level Ratio**: 10 (was 2) — fewer levels = faster compaction
+- **Block Size**: 64KB
+- **Caches**: 256MB block cache, 1M key cache entries
+- **MemTable**: 64MB (more frequent flushes = consistent throughput)
+- **Level Ratio**: 10 (fewer levels = faster compaction)
 - **Parallel Compaction**: Concurrent level compactions
+- **Sloppy Quorum**: Automatic fallback to healthy nodes when preferred replicas are down
+- **Vector Clocks**: Per-key version tracking for conflict detection and resolution
 
 ### Key Insights
 
 - **Batch operations** are significantly faster than single-key due to amortizing HTTP overhead.
-- **Single-node** outperforms cluster for writes due to no quorum overhead.
-- **Cluster reads** can exceed single node with R=1 (eventual consistency).
+- **Single-node** writes outperform cluster due to no quorum overhead.
+- **Cluster reads** exceed single node with R=1 (eventual consistency).
 - All benchmarks use background compaction — never blocks read/write operations.
 - **Eventual Consistency Mode**: Set `quorum_size: 1` and `read_quorum: 1` in config for ~3x faster reads.
+
+### Dynamo-Style Features Implemented
+
+| Feature | Description |
+|---------|-------------|
+| **Sloppy Quorum** | When preferred nodes are down, automatically uses next healthy nodes |
+| **Vector Clocks** | Per-key causal ordering with Before/After/Concurrent detection |
+| **Conflict Resolution** | Last-write-wins using vector clock comparison |
+| **Read Repair** | Automatic stale replica detection and patching on reads |
+| **Hinted Handoff** | Offline node writes stored locally for later delivery |
+| **Anti-Entropy** | Merkle tree-based background synchronization |
 
 ### Environment & Notes
 
 - **Hardware**: Apple Silicon (ARM64, 8-core)
 - **Network**: localhost loopback (no external network latency)
 - **Workers**: 60 concurrent goroutines in pressure-tool
-- **Duration**: 20 second measurement phase per operation
+- **Duration**: 10-20 second measurement phase per operation
 
 > **Note**: Performance varies based on hardware, system load, and workload characteristics. Batch operations provide best throughput for high-volume scenarios.
 

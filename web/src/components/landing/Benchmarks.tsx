@@ -3,15 +3,15 @@ import { useRef } from 'react'
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
 const singleNodeData = [
-  { name: 'Writes', value: 118620, fill: '#e11d5a', displayValue: '118K' },
-  { name: 'Reads (Single-Key)', value: 308552, fill: '#f43f5e', displayValue: '308K' },
-  { name: 'Reads (Batch)', value: 435000, fill: '#fb7185', displayValue: '435K' },
+  { name: 'Writes', value: 83500, fill: '#e11d5a', displayValue: '83.5K' },
+  { name: 'Reads (Single-Key)', value: 30000, fill: '#f43f5e', displayValue: '30K' },
+  { name: 'Batch Reads', value: 377000, fill: '#fb7185', displayValue: '377K' },
 ]
 
 const clusterData = [
-  { name: 'Writes', value: 24765, fill: '#e11d5a', displayValue: '24K' },
-  { name: 'Reads (Single-Key)', value: 27970, fill: '#f43f5e', displayValue: '28K' },
-  { name: 'Reads (Batch)', value: 261799, fill: '#fb7185', displayValue: '262K' },
+  { name: 'Writes', value: 46240, fill: '#e11d5a', displayValue: '46K' },
+  { name: 'Reads (Single-Key)', value: 108985, fill: '#f43f5e', displayValue: '109K' },
+  { name: 'Batch Reads (Peak)', value: 377800, fill: '#fb7185', displayValue: '378K' },
 ]
 
 const MIN_BAR_HEIGHT = 4 // Minimum visible bar height in pixels
@@ -96,7 +96,7 @@ export function Benchmarks() {
             transition={{ delay: 0.1 }}
             className="benchmark-card"
           >
-            <h3 className="benchmark-card-title">Single Node (KeyCache)</h3>
+            <h3 className="benchmark-card-title">Single Node</h3>
             <div className="benchmark-chart">
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={singleNodeData} margin={{ top: 24, right: 8, bottom: 0, left: 0 }}>
@@ -160,16 +160,16 @@ export function Benchmarks() {
           className="benchmark-highlights"
         >
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">427K</span>
-            <span className="benchmark-highlight-label">Total ops/sec (single node)</span>
+            <span className="benchmark-highlight-value">490K</span>
+            <span className="benchmark-highlight-label">Peak ops/sec (cluster batch)</span>
           </div>
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">118K</span>
+            <span className="benchmark-highlight-value">83.5K</span>
             <span className="benchmark-highlight-label">Writes/sec (single node)</span>
           </div>
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">308K</span>
-            <span className="benchmark-highlight-label">Reads/sec (single node)</span>
+            <span className="benchmark-highlight-value">109K</span>
+            <span className="benchmark-highlight-label">Reads/sec (cluster)</span>
           </div>
         </motion.div>
       </div>

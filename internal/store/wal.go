@@ -12,11 +12,12 @@ import (
 )
 
 type WALRecord struct {
-	Op        string `json:"op"`
-	Key       string `json:"key"`
-	Value     []byte `json:"value,omitempty"`
-	Version   uint64 `json:"ver"`
-	TimeStamp int64  `json:"ts"`
+	Op          string            `json:"op"`
+	Key         string            `json:"key"`
+	Value       []byte            `json:"value,omitempty"`
+	Version     uint64            `json:"ver"`
+	TimeStamp   int64             `json:"ts"`
+	VectorClock map[string]uint64 `json:"vc,omitempty"`
 }
 
 type WALReplayHandler interface {
