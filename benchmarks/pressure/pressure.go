@@ -4,7 +4,7 @@
 //   Phase 1 — WRITE  (populate cluster, no reads)
 //   Phase 2 — READ   (reads-only from pre-seeded keys, no writes)
 //
-// Reads are distributed across ALL cluster nodes to avoid cross-node proxy hops.
+// Reads are routed to the correct node using consistent hashing (CRC32).
 // Reports live ops/sec per second + p50/p95/p99/p999 latency.
 //
 // Usage:
@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math/rand"
 	"net/http"
@@ -55,6 +56,61 @@ const (
 	red    = "\033[31m"
 	reset  = "\033[0m"
 )
+
+const defaultVNodes = 150
+
+// ────────────────────────────────────────────────────────────────────────────
+// Consistent Hash Ring (same algorithm as internal/ring)
+// ────────────────────────────────────────────────────────────────────────────
+
+type consistentHash struct {
+	vnodes     []uint32
+	nodeMap    map[uint32]string
+	nodes      []string
+	vnodeCount int
+}
+
+func newConsistentHash(nodes []string, vnodeCount int) *consistentHash {
+	if vnodeCount <= 0 {
+		vnodeCount = defaultVNodes
+	}
+	ch := &consistentHash{
+		nodeMap:    make(map[uint32]string),
+		nodes:      nodes,
+		vnodeCount: vnodeCount,
+	}
+
+	for _, node := range nodes {
+		for i := 0; i < vnodeCount; i++ {
+			vnodeKey := fmt.Sprintf("%s#vnode%d", node, i)
+			pos := crc32.ChecksumIEEE([]byte(vnodeKey))
+			ch.vnodes = append(ch.vnodes, pos)
+			ch.nodeMap[pos] = node
+		}
+	}
+	sort.Slice(ch.vnodes, func(i, j int) bool {
+		return ch.vnodes[i] < ch.vnodes[j]
+	})
+
+	return ch
+}
+
+func (ch *consistentHash) search(pos uint32) int {
+	n := len(ch.vnodes)
+	idx := sort.Search(n, func(i int) bool {
+		return ch.vnodes[i] >= pos
+	})
+	return idx % n
+}
+
+func (ch *consistentHash) GetNode(key string) string {
+	if len(ch.vnodes) == 0 {
+		return ""
+	}
+	pos := crc32.ChecksumIEEE([]byte(key))
+	idx := ch.search(pos)
+	return ch.nodeMap[ch.vnodes[idx]]
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Histogram (lock-free bucket array, 0–5 seconds in µs)
@@ -124,33 +180,52 @@ func (h *histogram) count() int64 {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Shared key pool
+// Shared key pool with node tracking
 // ────────────────────────────────────────────────────────────────────────────
 
-type keyPool struct {
-	mu   sync.RWMutex
-	keys []string
-	cap  int
+type keyWithNode struct {
+	key  string
+	node string
 }
 
-func newKeyPool(cap int) *keyPool { return &keyPool{cap: cap} }
+type keyPool struct {
+	mu       sync.RWMutex
+	keys     []keyWithNode
+	cap      int
+	nodeKeys map[string][]keyWithNode // keys grouped by node
+}
 
-func (p *keyPool) push(key string) {
+func newKeyPool(cap int) *keyPool {
+	return &keyPool{
+		cap:      cap,
+		nodeKeys: make(map[string][]keyWithNode),
+	}
+}
+
+func (p *keyPool) push(key string, node string) {
 	p.mu.Lock()
-	p.keys = append(p.keys, key)
+	kwn := keyWithNode{key: key, node: node}
+	p.keys = append(p.keys, kwn)
+	p.nodeKeys[node] = append(p.nodeKeys[node], kwn)
 	if len(p.keys) > p.cap {
 		p.keys = p.keys[len(p.keys)-p.cap:]
+		// Rebuild nodeKeys map
+		p.nodeKeys = make(map[string][]keyWithNode)
+		for _, k := range p.keys {
+			p.nodeKeys[k.node] = append(p.nodeKeys[k.node], k)
+		}
 	}
 	p.mu.Unlock()
 }
 
-func (p *keyPool) random() (string, bool) {
+func (p *keyPool) random() (string, string, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if len(p.keys) == 0 {
-		return "", false
+		return "", "", false
 	}
-	return p.keys[rand.Intn(len(p.keys))], true
+	k := p.keys[rand.Intn(len(p.keys))]
+	return k.key, k.node, true
 }
 
 func (p *keyPool) len() int {
@@ -159,13 +234,13 @@ func (p *keyPool) len() int {
 	return len(p.keys)
 }
 
-func (p *keyPool) randomBatch(n int) []string {
+func (p *keyPool) randomBatch(n int) []keyWithNode {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if len(p.keys) == 0 {
 		return nil
 	}
-	result := make([]string, n)
+	result := make([]keyWithNode, n)
 	for i := range result {
 		result[i] = p.keys[rand.Intn(len(p.keys))]
 	}
@@ -182,11 +257,11 @@ func makeClient() *http.Client {
 			MaxIdleConns:        1000,
 			MaxIdleConnsPerHost: 100,
 			IdleConnTimeout:     90 * time.Second,
-			DisableCompression:  false, // Enable compression to reduce data transfer
+			DisableCompression:  false,
 			WriteBufferSize:     32 * 1024,
 			ReadBufferSize:      32 * 1024,
 		},
-		Timeout: 30 * time.Second, // Increased timeout for stability
+		Timeout: 30 * time.Second,
 	}
 }
 
@@ -212,9 +287,9 @@ type batchGetResp struct {
 }
 
 // doBatchPut sends N keys to a node's /api/v1/batch. Returns per-key latency.
-func doBatchPut(client *http.Client, base string, n int, pool *keyPool) (latency time.Duration, keysWritten int, err error) {
+func doBatchPut(client *http.Client, base string, n int, pool *keyPool, ring *consistentHash) (latency time.Duration, keysWritten int, err error) {
 	entries := make([]batchEntry, n)
-	payload := strings.Repeat("X", 128) // 128-byte realistic payload
+	payload := strings.Repeat("X", 128)
 	for i := range entries {
 		entries[i].Key = fmt.Sprintf("k:%d:%d", time.Now().UnixNano(), i)
 		entries[i].Value = payload
@@ -237,25 +312,11 @@ func doBatchPut(client *http.Client, base string, n int, pool *keyPool) (latency
 		return latency, 0, fmt.Errorf("status %d", resp.StatusCode)
 	}
 
-	// Register keys into the pool so reads can use them
 	for _, e := range entries {
-		pool.push(e.Key)
+		pool.push(e.Key, base)
 	}
+	_ = ring // Ring is for read routing, not needed during writes
 	return latency, n, nil
-}
-
-// doGet reads a single key from the node that most likely owns it.
-// We round-robin nodes to minimise cross-node proxy hops.
-func doGet(client *http.Client, base, key string) (time.Duration, error) {
-	start := time.Now()
-	resp, err := client.Get(base + "/api/v1/get/" + key)
-	lat := time.Since(start)
-	if err != nil {
-		return lat, err
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-	return lat, nil
 }
 
 func doBatchGet(client *http.Client, base string, keys []string) (time.Duration, int, error) {
@@ -306,7 +367,6 @@ func runPhase(name string, numWorkers int, dur time.Duration, op phaseOp) phaseR
 	var opsPerSec []float64
 	var psMu sync.Mutex
 
-	// Ticker
 	ticker := time.NewTicker(time.Second)
 	var lastOps uint64
 	sec := 0
@@ -448,6 +508,7 @@ func main() {
 		}
 	}
 
+	ring := newConsistentHash(nodes, defaultVNodes)
 	pool := newKeyPool(500_000)
 	clients := make([]*http.Client, *workers)
 	for i := range clients {
@@ -466,7 +527,6 @@ func main() {
 	// ── PHASE 1: WRITE-ONLY ─────────────────────────────────────────────────
 	fmt.Printf("%s%s▸ Phase 1 — Write-Only  (warming %s...)%s\n", bold, cyan, *warmDuration, reset)
 
-	// Warm: seed keys first so LSM compaction starts before measurement
 	warmStop := make(chan struct{})
 	var warmWg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -479,7 +539,7 @@ func main() {
 				case <-warmStop:
 					return
 				default:
-					doBatchPut(c, nodes[idx%len(nodes)], *batchSize, pool) //nolint
+					doBatchPut(c, nodes[idx%len(nodes)], *batchSize, pool, ring)
 				}
 			}
 		}(i)
@@ -495,7 +555,7 @@ func main() {
 	writeResult := runPhase("WRITE", *workers, *writeDuration, func(workerIdx int) (int, error) {
 		node := nodes[workerIdx%len(nodes)]
 		c := clients[workerIdx]
-		_, n, err := doBatchPut(c, node, *batchSize, pool)
+		_, n, err := doBatchPut(c, node, *batchSize, pool, ring)
 		return n, err
 	})
 
@@ -503,7 +563,7 @@ func main() {
 
 	// ── PHASE 2: READ-ONLY ──────────────────────────────────────────────────
 	fmt.Printf("\n%s%s▸ Phase 2 — Read-Only  (pool: %d keys, batch-get: %d keys/request)%s\n", bold, cyan, pool.len(), *batchGetSize, reset)
-	fmt.Printf("  Reads distributed across all %d nodes to eliminate proxy hops.\n\n", len(nodes))
+	fmt.Printf("  Reads routed to correct nodes via consistent hashing.\n\n")
 	fmt.Printf("  %sSEC   OPS/SEC          LATENCY%s\n", bold, reset)
 	fmt.Println("  " + strings.Repeat("─", 55))
 
@@ -512,13 +572,23 @@ func main() {
 		if len(keys) == 0 {
 			return 0, fmt.Errorf("no keys")
 		}
-		node := nodes[workerIdx%len(nodes)]
-		c := clients[workerIdx]
-		_, found, err := doBatchGet(c, node, keys)
-		if err != nil {
-			return 0, err
+
+		// Group keys by node
+		nodeKeys := make(map[string][]string)
+		for _, k := range keys {
+			nodeKeys[k.node] = append(nodeKeys[k.node], k.key)
 		}
-		return found, nil
+
+		// Send batch-get to each node and sum results
+		totalFound := 0
+		for node, nodeKeysList := range nodeKeys {
+			_, found, err := doBatchGet(clients[workerIdx], node, nodeKeysList)
+			if err != nil {
+				return 0, err
+			}
+			totalFound += found
+		}
+		return totalFound, nil
 	})
 
 	printPhaseReport("📖  READ", readResult)
