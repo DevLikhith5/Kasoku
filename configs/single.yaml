@@ -3,7 +3,7 @@
 data_dir: ./data/single
 port: 9000
 http_port: 9000
-log_level: error
+log_level: info
 
 lsm:
     levels: 5

@@ -248,12 +248,12 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 	wg.Wait()
 	replicationEnd := time.Now()
 
-	c.logger.Debug("replicated put completed",
+	c.logger.Debug("REPLICATED_PUT_COMPLETED",
 		"key", key,
 		"acks", successCount,
-		"timing.local_ms", localEnd.Sub(localStart).Milliseconds(),
-		"timing.replication_ms", replicationEnd.Sub(replicationStart).Milliseconds(),
-		"timing.total_ms", time.Since(totalStart).Milliseconds())
+		"local_ms", localEnd.Sub(localStart).Milliseconds(),
+		"replication_ms", replicationEnd.Sub(replicationStart).Milliseconds(),
+		"total_ms", time.Since(totalStart).Milliseconds())
 
 	if successCount < c.quorumSize {
 		return fmt.Errorf("%w: got %d acks, need %d", ErrQuorumNotReached, successCount, c.quorumSize)
