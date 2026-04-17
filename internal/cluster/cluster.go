@@ -231,7 +231,7 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 			}
 
 			replicaStart := time.Now()
-			if err := client.ReplicatedPut(timeoutCtx, key, value); err != nil {
+			if err := client.ReplicatedPutBinary(timeoutCtx, key, value); err != nil {
 				c.logger.Debug("replication to replica failed",
 					"replica", replicaAddr,
 					"error", err,

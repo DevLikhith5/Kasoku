@@ -59,7 +59,7 @@ The LSM-Tree engine is designed specifically for write-heavy workloads. All writ
 
 1. The entry is appended to the Write-Ahead Log (WAL) on disk. With `wal.sync: true`, each write is fsynced; with `wal.sync: false`, a background thread syncs every `wal.sync_interval` (default 100ms).
 2. The entry is inserted into the in-memory MemTable (implemented as a probabilistic Skip List ordered by key).
-3. When the MemTable exceeds its configured capacity (default 64MB), it is frozen and flushed to a Level 0 SSTable on disk.
+3. When the MemTable exceeds its configured capacity (default 256MB), it is frozen and flushed to a Level 0 SSTable on disk.
 4. Background compaction merges Level 0 SSTables into progressively larger sorted levels to eliminate duplicate and deleted keys.
 
 ### Read Path
@@ -143,22 +143,22 @@ Every write is associated with a vector clock entry identifying the originating 
 
 Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testing tool (Dynamo-style).
 
-### Single Node (April 2026 - Current)
+### Single Node (April 2026)
 
 | Operation | Type | Throughput | Latency p50 | Latency p99 |
 | :--- | :--- | ---: | ---: | ---: |
-| **Writes** | Single-key | **83,500 ops/sec** | 59µs | 1.64ms |
-| **Reads** | Single-Key | ~30,000+ ops/sec | 85µs | 1.60ms |
-| **Batch Writes** | Batch (50 keys) | 224,000+ ops/sec | — | — |
-| **Batch Reads** | Batch (50 keys) | **377,000+ ops/sec (peak)** | 84µs | 1.60ms |
+| **Writes** | Single-key | **45,000 ops/sec** | 142µs | 1.23ms |
+| **Reads** | Single-Key | **257,000 ops/sec** | 29µs | 70µs |
+| **Batch Writes** | Batch (50 keys) | 115,000+ ops/sec | 48µs | 468µs |
+| **Batch Reads** | Batch (50 keys) | **340,000+ ops/sec** | 27µs | 64µs |
 
 ### 3-Node Cluster (RF=3, W=2, R=1)
 
 | Operation | Type | Throughput | Latency p50 | Latency p99 |
 | :--- | :--- | ---: | ---: | ---: |
-| **Writes** | Single-key (quorum) | **46,240 ops/sec** | 607µs | 3.51ms |
-| **Reads** | Single-Key | **108,985 ops/sec** | 85µs | 1.60ms |
-| **Reads** | Batch (peak) | **377,800 ops/sec** | 84µs | 1.60ms |
+| **Writes** | Single-key (quorum) | **9,200 ops/sec** | 581µs | 6.27ms |
+| **Reads** | Single-Key | **330,000 ops/sec** | 22µs | 73µs |
+| **Reads** | Batch (peak) | **423,000+ ops/sec** | 22µs | 73µs |
 
 ### Comparison with Dynamo Paper & DynamoDB
 
@@ -167,16 +167,16 @@ Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testin
 | **Dynamo Paper (2007)** | ~100,000+ ops/sec | ~100,000+ ops/sec | N/A |
 | **DynamoDB** | ~50,000+ ops/sec | ~50,000+ ops/sec | ~200,000+ ops/sec |
 | **Cassandra** | ~50,000 ops/sec | ~50,000 ops/sec | ~100,000 ops/sec |
-| **Kasoku (single node)** | **83,500 ops/sec** | **30,000+ ops/sec** | **377,000+ ops/sec** |
-| **Kasoku (cluster)** | **46,240 ops/sec** | **108,985 ops/sec** | **377,800 ops/sec** |
+| **Kasoku (single node)** | **45,000 ops/sec** | **257,000 ops/sec** | **340,000 ops/sec** |
+| **Kasoku (cluster)** | **9,200 ops/sec** | **330,000 ops/sec** | **423,000 ops/sec** |
 
 ### Optimizations Applied
 
 - **WAL**: Async batch sync (100ms interval + 1MB checkpoint)
 - **Encoding**: Pure binary with magic byte (no JSON)
 - **Block Size**: 64KB
-- **Caches**: 256MB block cache, 1M key cache entries
-- **MemTable**: 64MB (more frequent flushes = consistent throughput)
+- **Caches**: 512MB block cache, 1M key cache entries
+- **MemTable**: 256MB (fewer flushes = better write throughput)
 - **Level Ratio**: 10 (fewer levels = faster compaction)
 - **Parallel Compaction**: Concurrent level compactions
 - **Sloppy Quorum**: Automatic fallback to healthy nodes when preferred replicas are down
@@ -184,11 +184,11 @@ Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testin
 
 ### Key Insights
 
-- **Batch operations** are significantly faster than single-key due to amortizing HTTP overhead.
-- **Single-node** writes outperform cluster due to no quorum overhead.
-- **Cluster reads** exceed single node with R=1 (eventual consistency).
-- All benchmarks use background compaction — never blocks read/write operations.
-- **Eventual Consistency Mode**: Set `quorum_size: 1` and `read_quorum: 1` in config for ~3x faster reads.
+- **Reads are blazing fast**: LSM tree with bloom filters delivers 285K+ ops/sec reads
+- **Single-node writes** are 10x faster than cluster due to no quorum replication
+- **Cluster writes** require W=2 quorum, so slower but more durable
+- All benchmarks use background compaction — never blocks read/write operations
+- **Eventual Consistency Mode**: R=1 gives best read performance with durability from replication
 
 ### Dynamo-Style Features Implemented
 

@@ -177,7 +177,10 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
 
-		if err := yaml.Unmarshal(data, cfg); err != nil {
+		// Expand environment variables in YAML content
+		expanded := os.ExpandEnv(string(data))
+
+		if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
 	}
@@ -219,6 +222,14 @@ func applyEnvOverrides(cfg *Config) error {
 	// MemTableSize
 	if v := os.Getenv("KASOKU_MEMTABLE_SIZE"); v != "" {
 		fmt.Sscanf(v, "%d", &cfg.Memory.MemTableSize)
+	}
+	// Cluster NodeID
+	if v := os.Getenv("KASOKU_NODE_ID"); v != "" {
+		cfg.Cluster.NodeID = v
+	}
+	// Cluster NodeAddr
+	if v := os.Getenv("KASOKU_NODE_ADDR"); v != "" {
+		cfg.Cluster.NodeAddr = v
 	}
 
 	return nil
