@@ -501,6 +501,11 @@ func printPhaseReport(phase string, r phaseResult) {
 func main() {
 	flag.Parse()
 
+	// Override for single-node testing
+	if os.Getenv("SINGLE") == "1" {
+		*nodesFlag = "localhost:9000"
+	}
+
 	nodes := strings.Split(*nodesFlag, ",")
 	for i, n := range nodes {
 		if !strings.HasPrefix(n, "http") {
