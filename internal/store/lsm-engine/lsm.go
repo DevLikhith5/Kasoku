@@ -685,7 +685,6 @@ func (e *LSMEngine) Flush() error {
 }
 
 func (e *LSMEngine) flushMemTable() error {
-
 	// Rotation now happens in Put path for zero-stall writes.
 	// This loop just drains the immutable queue to disk.
 	for {
