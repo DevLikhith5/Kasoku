@@ -1,0 +1,164 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kasoku-config
+  namespace: kasoku
+data:
+  config.yaml: |
+    data_dir: /data
+    port: 9000
+    http_port: 9000
+    log_level: info
+
+    lsm:
+      levels: 5
+      level_ratio: 10
+      l0_base_size: 67108864
+      key_cache_size: 1000000
+
+    compaction:
+      threshold: 1000
+      max_concurrent: 2
+      l0_size_threshold: 10737418240
+
+    memory:
+      memtable_size: 268435456
+      max_memtable_bytes: 1073741824
+      bloom_fp_rate: 0.01
+      block_cache_size: 536870912
+
+    wal:
+      sync: false
+      sync_interval: 100ms
+      checkpoint_bytes: 67108864
+      max_file_size: 67108864
+
+    cluster:
+      enabled: true
+      replication_factor: 3
+      quorum_size: 1
+      read_quorum: 1
+      vnodes: 150
+      rpc_timeout_ms: 500
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kasoku-secret
+  namespace: kasoku
+type: Opaque
+stringData:
+  # Add any secrets here if needed
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kasoku
+  namespace: kasoku
+spec:
+  serviceName: kasoku
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kasoku
+  template:
+    metadata:
+      labels:
+        app: kasoku
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: kasoku
+        image: kasoku:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9000
+          name: http
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_ID
+          value: "$(POD_NAME)"
+        - name: DATA_DIR
+          value: "/data"
+        - name: CLUSTER_ENABLED
+          value: "true"
+        - name: QUORUM_SIZE
+          value: "1"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 9000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 2
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/app/kasoku-server", "--shutdown"]
+      volumes:
+      - name: config
+        configMap:
+          name: kasoku-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kasoku
+  namespace: kasoku
+spec:
+  clusterIP: None
+  selector:
+    app: kasoku
+  ports:
+  - name: http
+    port: 9000
+    targetPort: 9000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kasoku-http
+  namespace: kasoku
+spec:
+  type: LoadBalancer
+  selector:
+    app: kasoku
+  ports:
+  - name: http
+    port: 80
+    targetPort: 9000

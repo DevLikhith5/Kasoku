@@ -200,16 +200,22 @@ func (n *Node) GetNodeID() string {
 }
 
 func (n *Node) GetStatus() map[string]any {
+	n.mu.RLock()
+	alive := n.members.AliveCount()
+	n.mu.RUnlock()
+
 	return map[string]any{
-		"node_id":       n.cfg.NodeID,
-		"http_addr":     n.cfg.HTTPAddr,
-		"ring_nodes":    n.ring.NodeCount(),
-		"total_members": n.members.MemberCount(),
-		"alive_members": n.members.AliveCount(),
-		"replication":   n.cfg.N,
-		"write_quorum":  n.cfg.W,
-		"read_quorum":   n.cfg.R,
-		"pending_hints": n.hints.PendingCount(),
+		"node_id":        n.cfg.NodeID,
+		"engine_status":  "ok",
+		"http_addr":      n.cfg.HTTPAddr,
+		"ring_nodes":     n.ring.NodeCount(),
+		"total_members":  n.members.MemberCount(),
+		"alive_members":  alive,
+		"peers_healthy":  alive,
+		"hints_pending":  n.hints.PendingCount(),
+		"replication":    n.cfg.N,
+		"write_quorum":   n.cfg.W,
+		"read_quorum":    n.cfg.R,
 	}
 }
 
