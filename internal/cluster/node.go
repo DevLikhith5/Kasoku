@@ -58,6 +58,7 @@ type Node struct {
 	mu             sync.RWMutex
 	vectorClocks   map[string]storage.VectorClock // per-key vector clocks
 	vcMu           sync.RWMutex
+	repSemaphore  *Semaphore // Limits concurrent outgoing replications
 }
 
 func NewNode(cfg NodeConfig) (*Node, error) {
@@ -95,6 +96,7 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 		timeoutTracker: NewAdaptiveTimeout(),
 		logger:         slog.Default(),
 		done:           make(chan struct{}),
+		repSemaphore:  NewSemaphore(1000), // Max 1000 concurrent outgoing replications
 	}
 
 	// Build the cluster layer (replication logic)
@@ -216,18 +218,26 @@ func (n *Node) GetRingNodes() []string {
 }
 
 func (n *Node) getOrCreateVectorClock(key string) storage.VectorClock {
-	n.vcMu.Lock()
-	defer n.vcMu.Unlock()
+	// Fast path: read without lock
+	n.vcMu.RLock()
+	if n.vectorClocks != nil {
+		if vc, ok := n.vectorClocks[key]; ok {
+			n.vcMu.RUnlock()
+			return vc
+		}
+	}
+	n.vcMu.RUnlock()
 
+	// Slow path: create and store (rare - only first write to a key)
+	vc := storage.NewVectorClock()
+	n.vcMu.Lock()
 	if n.vectorClocks == nil {
 		n.vectorClocks = make(map[string]storage.VectorClock)
 	}
+	n.vectorClocks[key] = vc
+	n.vcMu.Unlock()
 
-	if vc, ok := n.vectorClocks[key]; ok {
-		return vc
-	}
-
-	return storage.NewVectorClock()
+	return vc
 }
 
 func (n *Node) updateVectorClock(key string, vc storage.VectorClock) {

@@ -3,15 +3,15 @@ import { useRef } from 'react'
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
 const singleNodeData = [
-  { name: 'Writes', value: 83500, fill: '#e11d5a', displayValue: '83.5K' },
-  { name: 'Reads (Single-Key)', value: 30000, fill: '#f43f5e', displayValue: '30K' },
-  { name: 'Batch Reads', value: 377000, fill: '#fb7185', displayValue: '377K' },
+  { name: 'Writes', value: 43000, fill: '#e11d5a', displayValue: '43K' },
+  { name: 'Reads (Single-Key)', value: 301000, fill: '#f43f5e', displayValue: '301K' },
+  { name: 'Batch Reads', value: 340000, fill: '#fb7185', displayValue: '340K' },
 ]
 
 const clusterData = [
-  { name: 'Writes', value: 46240, fill: '#e11d5a', displayValue: '46K' },
-  { name: 'Reads (Single-Key)', value: 108985, fill: '#f43f5e', displayValue: '109K' },
-  { name: 'Batch Reads (Peak)', value: 377800, fill: '#fb7185', displayValue: '378K' },
+  { name: 'Writes', value: 9200, fill: '#e11d5a', displayValue: '9.2K' },
+  { name: 'Reads (Single-Key)', value: 330000, fill: '#f43f5e', displayValue: '330K' },
+  { name: 'Batch Reads (Peak)', value: 423000, fill: '#fb7185', displayValue: '423K' },
 ]
 
 const MIN_BAR_HEIGHT = 4 // Minimum visible bar height in pixels

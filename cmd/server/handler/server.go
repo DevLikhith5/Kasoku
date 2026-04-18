@@ -88,6 +88,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		// Internal replication endpoints (used by rpc.Client)
 		mux.HandleFunc("/internal/replicate", s.handleInternalReplicate)
 		mux.HandleFunc("/internal/replicate/batch", s.handleInternalBatchReplicate)
+		mux.HandleFunc("/internal/replicate/batch/get", s.handleInternalBatchGet)
 	}
 
 	// Hash ring visualization endpoint

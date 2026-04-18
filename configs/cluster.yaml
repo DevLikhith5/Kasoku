@@ -1,10 +1,7 @@
-# Kasoku Cluster Configuration - OPTIMIZED FOR HIGH THROUGHPUT
-# Use with env vars for node-specific values:
-#   KASOKU_NODE_ID=node-1 KASOKU_HTTP_PORT=9000 KASOKU_DATA_DIR=./data/node1 ./kasoku-server
-
-data_dir: ${KASOKU_DATA_DIR:./data/node1}
-port: ${KASOKU_PORT:9000}
-http_port: ${KASOKU_HTTP_PORT:9000}
+# 3-Node Cluster Configuration for Benchmarking
+data_dir: ${KASOKU_DATA_DIR:-./data/node1}
+port: ${KASOKU_PORT:-9000}
+http_port: ${KASOKU_HTTP_PORT:-9000}
 log_level: error
 
 lsm:
@@ -16,24 +13,24 @@ lsm:
 compaction:
     threshold: 8
     max_concurrent: 4
-    l0_size_threshold: 67108864
+    l0_size_threshold: 268435456
 
 memory:
-    memtable_size: 67108864
-    max_memtable_bytes: 268435456
+    memtable_size: 268435456
+    max_memtable_bytes: 536870912
     bloom_fp_rate: 0.01
-    block_cache_size: 268435456
+    block_cache_size: 536870912
 
 wal:
     sync: false
     sync_interval: 100ms
-    checkpoint_bytes: 1048576
+    checkpoint_bytes: 67108864
     max_file_size: 67108864
 
 cluster:
     enabled: true
-    node_id: ${KASOKU_NODE_ID:node-1}
-    node_addr: ${KASOKU_NODE_ADDR:http://localhost:9000}
+    node_id: ${KASOKU_NODE_ID:-node-1}
+    node_addr: ${KASOKU_NODE_ADDR:-http://localhost:9000}
     peers:
         - http://localhost:9000
         - http://localhost:9001
@@ -42,4 +39,4 @@ cluster:
     quorum_size: 2
     read_quorum: 1
     vnodes: 150
-    rpc_timeout_ms: 500
+    rpc_timeout_ms: 2000

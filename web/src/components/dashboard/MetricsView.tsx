@@ -18,6 +18,9 @@ interface MetricPoint {
   time: string
   getRate: number
   putRate: number
+  getLatency: number
+  putLatency: number
+  storeLatency: number
   memBytes: number
   diskBytes: number
   keys: number
@@ -163,10 +166,30 @@ Run manually:
           const getRate = getDelta >= 0 ? getDelta / 5 : getReqs / 5
           const putRate = putDelta >= 0 ? putDelta / 5 : putReqs / 5
 
+          // Parse latency histograms (values are in seconds, convert to ms)
+          // kasoku_http_handler_latency_seconds has buckets like le=0.001 means "less than 1ms"
+          const getLatency = parsed['kasoku_request_duration_seconds_bucket{operation="get",le="0.5"}'] ? 
+            (parsed['kasoku_request_duration_seconds_sum{operation="get"}'] / 
+             (parsed['kasoku_request_duration_seconds_count{operation="get"}'] || 1)) * 1000 : 0
+          const putLatency = parsed['kasoku_request_duration_seconds_bucket{operation="put",le="0.5"}'] ?
+            (parsed['kasoku_request_duration_seconds_sum{operation="put"}'] /
+             (parsed['kasoku_request_duration_seconds_count{operation="put"}'] || 1)) * 1000 : 0
+          
+          // Store latency from http handler metrics
+          const storeLatencyGet = parsed['kasoku_http_handler_latency_seconds_bucket{operation="get",stage="store",le="0.001"}'] ?
+            (parsed['kasoku_http_handler_latency_seconds_sum{operation="get",stage="store"}'] /
+             (parsed['kasoku_http_handler_latency_seconds_count{operation="get",stage="store"}'] || 1)) * 1000 : 0
+          const storeLatencyPut = parsed['kasoku_http_handler_latency_seconds_bucket{operation="put",stage="store",le="0.001"}'] ?
+            (parsed['kasoku_http_handler_latency_seconds_sum{operation="put",stage="store"}'] /
+             (parsed['kasoku_http_handler_latency_seconds_count{operation="put",stage="store"}'] || 1)) * 1000 : 0
+          const storeLatency = storeLatencyGet > 0 ? storeLatencyGet : storeLatencyPut
+
           const cards: MetricCardData[] = [
             { label: 'Keys', value: keyCount.toLocaleString() },
             { label: 'Disk Used', value: diskBytes > 1024 * 1024 ? `${(diskBytes / (1024 * 1024)).toFixed(1)} MB` : `${(diskBytes / 1024).toFixed(0)} KB` },
             { label: 'MemTable', value: memBytes > 1024 * 1024 ? `${(memBytes / (1024 * 1024)).toFixed(1)} MB` : `${memBytes} B` },
+            { label: 'GET Latency', value: getLatency > 0 ? `${getLatency.toFixed(2)} ms` : 'N/A' },
+            { label: 'PUT Latency', value: putLatency > 0 ? `${putLatency.toFixed(2)} ms` : 'N/A' },
             { label: 'Cluster Nodes', value: String(activeNodes) },
             { label: 'Goroutines', value: goroutines.toFixed(0) },
             { label: 'Heap Alloc', value: heapAlloc > 1024 * 1024 ? `${(heapAlloc / (1024 * 1024)).toFixed(1)} MB` : `${(heapAlloc / 1024).toFixed(0)} KB` },
@@ -178,6 +201,9 @@ Run manually:
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
             getRate,
             putRate,
+            getLatency,
+            putLatency,
+            storeLatency,
             memBytes,
             diskBytes,
             keys: keyCount,
@@ -309,6 +335,18 @@ Run manually:
                     <Tooltip contentStyle={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '12px', fontFamily: 'var(--font-sans)', boxShadow: 'var(--shadow-lg)' }} />
                     <Line type="monotone" dataKey="getRate" stroke="#10b981" strokeWidth={1.5} dot={false} name="GET Rate" isAnimationActive={false} />
                     <Line type="monotone" dataKey="putRate" stroke="#e11d5a" strokeWidth={1.5} dot={false} name="PUT Rate" isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </motion.div>
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }} className="metrics-chart">
+                <h3>Request Latency (ms)</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={chartData}>
+                    <XAxis dataKey="time" tick={{ fontSize: 10, fill: 'var(--text-muted)', fontFamily: 'var(--font-sans)' }} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '12px', fontFamily: 'var(--font-sans)', boxShadow: 'var(--shadow-lg)' }} />
+                    <Line type="monotone" dataKey="getLatency" stroke="#10b981" strokeWidth={1.5} dot={false} name="GET Latency" isAnimationActive={false} />
+                    <Line type="monotone" dataKey="putLatency" stroke="#e11d5a" strokeWidth={1.5} dot={false} name="PUT Latency" isAnimationActive={false} />
+                    <Line type="monotone" dataKey="storeLatency" stroke="#f59e0b" strokeWidth={1.5} dot={false} name="Store Latency" isAnimationActive={false} />
                   </LineChart>
                 </ResponsiveContainer>
               </motion.div>

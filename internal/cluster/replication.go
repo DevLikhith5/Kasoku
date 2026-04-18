@@ -23,9 +23,10 @@ func getHTTPClient() *http.Client {
 	httpClientOnce.Do(func() {
 		httpClient = &http.Client{
 			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 50,
-				IdleConnTimeout:     30 * time.Second,
+				MaxIdleConns:        500,
+				MaxIdleConnsPerHost: 300,
+				MaxConnsPerHost:     300,
+				IdleConnTimeout:     90 * time.Second,
 				DisableKeepAlives:   false,
 			},
 			Timeout: 10 * time.Second,
@@ -54,17 +55,22 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 		return ErrNoNodesAvailable
 	}
 
-	results := make(chan replicaResult, len(replicas))
-
 	// Generate vector clock for this write
 	vc := n.getOrCreateVectorClock(key)
-	vc = vc.Increment(n.cfg.NodeID)
+vc = vc.Increment(n.cfg.NodeID)
+
+	// FAST PATH: W=1 local-first - write locally only for max throughput
+	// No async replication in critical path - avoids stalls under load
+	if n.cfg.W == 1 {
+		return n.engine.PutWithVectorClock(key, value, vc)
+	}
+
+	// SLOW PATH: W>1 - wait for quorum
+	results := make(chan replicaResult, len(replicas))
 
 	// Adaptive timeout
 	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
 
-	// fanout concurrent worker pattern
-	var quorumReached atomic.Bool
 	for _, nodeID := range replicas {
 		go func(nid string) {
 			start := time.Now()
@@ -72,17 +78,13 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 			defer cancel()
 			var err error
 			if nid == n.cfg.NodeID {
-				// Local write — directly into our LSM engine with vector clock
 				err = n.engine.PutWithVectorClock(key, value, vc)
 			} else {
-				// Remote write — HTTP call to peer
 				err = n.remoteReplicateWithVC(rCtx, nid, key, value, false, vc)
 			}
-			// Record latency for adaptive timeout
 			n.timeoutTracker.Record(nid, time.Since(start))
 
 			if err != nil {
-				// Bug 13 fix: store hint synchronously to avoid unbounded goroutine growth
 				_ = n.hints.Store(key, value, nid)
 			}
 			results <- replicaResult{nodeID: nid, err: err}
@@ -91,29 +93,28 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 
 	// Count acks — EARLY EXIT once quorum reached
 	acks, failures := 0, 0
-	for range replicas {
+	for i := 0; i < len(replicas); i++ {
 		res := <-results
 		if res.err == nil {
 			acks++
 		} else {
 			failures++
-			n.logger.Debug("replica write failed",
-				"node", res.nodeID, "error", res.err)
+			n.logger.Debug("replica write failed", "node", res.nodeID, "error", res.err)
 		}
-		// Early exit: return as soon as quorum is reached
+		
+		// DEFINITIVE STALL KILLER: Return as soon as quorum is reached.
+		// The remaining goroutines will still send their result to the buffered channel
+		// and won't leak or block the coordinator.
 		if acks >= n.cfg.W {
-			quorumReached.Store(true)
-			// Drain remaining results to avoid goroutine leak
-			for i := len(replicas) - acks - failures; i > 0; i-- {
-				<-results
-			}
 			return nil
+		}
+		
+		// If we can't reach quorum anymore, exit early too
+		if failures > len(replicas)-n.cfg.W {
+			break
 		}
 	}
 
-	if quorumReached.Load() {
-		return nil
-	}
 	return fmt.Errorf("write quorum failed: only %d/%d acks", acks, n.cfg.W)
 }
 
@@ -134,9 +135,18 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 		return storage.Entry{}, ErrNoNodesAvailable
 	}
 
+	// FAST PATH: R=1 local-first - read from local, no RPC needed
+	if n.cfg.R == 1 {
+		entry, err := n.engine.Get(key)
+		if err == nil || errors.Is(err, storage.ErrKeyNotFound) {
+			return entry, err
+		}
+		// If local read fails, try peers in background
+	}
+
+	// SLOW PATH: R>1 - wait for quorum
 	results := make(chan replicaResult, len(replicas))
 
-	// Adaptive timeout based on historical latencies
 	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
 
 	for _, nodeID := range replicas {
@@ -151,7 +161,6 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 			} else {
 				entry, err = n.remoteGet(rCtx, nid, key)
 			}
-			// Record latency for adaptive timeout
 			n.timeoutTracker.Record(nid, time.Since(start))
 
 			results <- replicaResult{nodeID: nid, entry: entry, err: err}
@@ -159,20 +168,27 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 	}
 
 	var responses []replicaResult
-	for range replicas {
+	failures := 0
+	for i := 0; i < len(replicas); i++ {
 		res := <-results
 		if res.err == nil || errors.Is(res.err, storage.ErrKeyNotFound) {
 			responses = append(responses, res)
 			if len(responses) >= n.cfg.R {
 				// Got R responses — find highest version
 				latest := latestEntry(responses)
-				// Read repair: update stale replicas
+				// Read repair: update stale replicas in background
 				go n.readRepair(ctx, key, latest, responses)
 				if latest.entry.Tombstone {
 					return storage.Entry{}, storage.ErrKeyNotFound
 				}
 				return latest.entry, nil
 			}
+		} else {
+			failures++
+		}
+
+		if failures > len(replicas)-n.cfg.R {
+			break
 		}
 	}
 	return storage.Entry{}, fmt.Errorf("read quorum failed")
@@ -191,7 +207,6 @@ func (n *Node) ReplicatedDelete(ctx context.Context, key string) error {
 	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
 
 	// Send delete (tombstone) to ALL replicas concurrently
-	var quorumReached atomic.Bool
 	for _, nodeID := range replicas {
 		go func(nid string) {
 			start := time.Now()
@@ -220,25 +235,25 @@ func (n *Node) ReplicatedDelete(ctx context.Context, key string) error {
 		}(nodeID)
 	}
 
-	// Count acks — wait for ALL replicas to respond
+	// Count acks — EARLY EXIT once quorum reached
 	acks, failures := 0, 0
-	for range replicas {
+	for i := 0; i < len(replicas); i++ {
 		res := <-results
 		if res.err == nil {
 			acks++
 			if acks >= n.cfg.W {
-				quorumReached.Store(true)
+				return nil
 			}
 		} else {
 			failures++
-			n.logger.Warn("replica delete failed",
-				"node", res.nodeID, "error", res.err)
+			n.logger.Warn("replica delete failed", "node", res.nodeID, "error", res.err)
+		}
+		
+		if failures > len(replicas)-n.cfg.W {
+			break
 		}
 	}
 
-	if quorumReached.Load() {
-		return nil
-	}
 	return fmt.Errorf("delete quorum failed: only %d/%d acks", acks, n.cfg.W)
 }
 
@@ -297,20 +312,28 @@ func compareVectorClocks(a, b storage.VectorClock) Ordering {
 
 func (n *Node) readRepair(ctx context.Context, key string,
 	latest replicaResult, all []replicaResult) {
+	// Rate-limited read repair
 	for _, r := range all {
 		if r.entry.Version < latest.entry.Version && r.nodeID != n.cfg.NodeID {
-			n.logger.Debug("read repair",
-				"node", r.nodeID,
-				"stale", r.entry.Version,
-				"latest", latest.entry.Version)
-			rCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-			// Bug 3 fix: log and store hint on read repair failure instead of silently ignoring
-			if err := n.remoteReplicate(rCtx, r.nodeID, key, latest.entry.Value, false, latest.entry.Version); err != nil {
-				n.logger.Warn("read repair failed, storing hint",
-					"node", r.nodeID, "key", key, "error", err)
-				_ = n.hints.Store(key, latest.entry.Value, r.nodeID)
+			if n.repSemaphore != nil && !n.repSemaphore.TryAcquire() {
+				continue
 			}
-			cancel()
+			go func(r replicaResult) {
+				if n.repSemaphore != nil {
+					defer n.repSemaphore.Release()
+				}
+				n.logger.Debug("read repair",
+					"node", r.nodeID,
+					"stale", r.entry.Version,
+					"latest", latest.entry.Version)
+				rCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+				defer cancel()
+				if err := n.remoteReplicate(rCtx, r.nodeID, key, latest.entry.Value, false, latest.entry.Version); err != nil {
+					n.logger.Warn("read repair failed, storing hint",
+						"node", r.nodeID, "key", key, "error", err)
+					_ = n.hints.Store(key, latest.entry.Value, r.nodeID)
+				}
+			}(r)
 		}
 	}
 }

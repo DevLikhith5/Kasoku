@@ -37,6 +37,18 @@ func (s *MockStore) PutWithVectorClock(key string, value []byte, vc storage.Vect
 	return s.Put(key, value)
 }
 
+func (s *MockStore) BatchPut(pairs []storage.Entry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("store closed")
+	}
+	for _, p := range pairs {
+		s.data[p.Key] = p.Value
+	}
+	return nil
+}
+
 func (s *MockStore) Get(key string) (storage.Entry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

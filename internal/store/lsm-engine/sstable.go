@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"sort"
 	"strings"
@@ -382,68 +383,68 @@ type SSTableReader struct {
 }
 
 type BlockCache struct {
-	mu      sync.Mutex
-	cache   map[string][]byte
-	keys    []string
-	maxSize int
+	shards    [16]blockCacheShard
+	maxBlocks int
+}
+
+type blockCacheShard struct {
+	mu    sync.RWMutex
+	cache map[string][]byte
+	keys  []string
+	max   int
 }
 
 func NewBlockCache(maxBlocks int) *BlockCache {
-	return &BlockCache{
-		cache:   make(map[string][]byte),
-		keys:    make([]string, 0, maxBlocks),
-		maxSize: maxBlocks,
+	bc := &BlockCache{maxBlocks: maxBlocks}
+	perShard := maxBlocks/16 + 1
+	for i := range bc.shards {
+		bc.shards[i].cache = make(map[string][]byte, perShard)
+		bc.shards[i].keys = make([]string, 0, perShard)
+		bc.shards[i].max = perShard
 	}
+	return bc
+}
+
+func (bc *BlockCache) Len() int {
+	total := 0
+	for i := range bc.shards {
+		bc.shards[i].mu.RLock()
+		total += len(bc.shards[i].keys)
+		bc.shards[i].mu.RUnlock()
+	}
+	return total
+}
+
+func (bc *BlockCache) shardIndex(key string) int {
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	return int(h.Sum32() % 16)
 }
 
 func (bc *BlockCache) Get(key string) ([]byte, bool) {
-	bc.mu.Lock() // Write lock needed because we update LRU order
-	defer bc.mu.Unlock()
-
-	data, ok := bc.cache[key]
-	if !ok {
-		return nil, false
-	}
-
-	// Move to end (most recently used)
-	for i, k := range bc.keys {
-		if k == key {
-			bc.keys = append(bc.keys[:i], bc.keys[i+1:]...)
-			bc.keys = append(bc.keys, key)
-			break
-		}
-	}
-
-	return data, true
+	s := &bc.shards[bc.shardIndex(key)]
+	s.mu.RLock()
+	data, ok := s.cache[key]
+	s.mu.RUnlock()
+	return data, ok
 }
 
 func (bc *BlockCache) Put(key string, data []byte) {
-	bc.mu.Lock()
-	defer bc.mu.Unlock()
-
-	// If already exists, update and move to end
-	if _, ok := bc.cache[key]; ok {
-		bc.cache[key] = data
-		// Move to end (most recently used)
-		for i, k := range bc.keys {
-			if k == key {
-				bc.keys = append(bc.keys[:i], bc.keys[i+1:]...)
-				break
-			}
-		}
-		bc.keys = append(bc.keys, key)
+	s := &bc.shards[bc.shardIndex(key)]
+	s.mu.Lock()
+	if _, ok := s.cache[key]; ok {
+		s.cache[key] = data
+		s.mu.Unlock()
 		return
 	}
-
-	// Evict oldest if at capacity
-	if len(bc.keys) >= bc.maxSize {
-		oldest := bc.keys[0]
-		delete(bc.cache, oldest)
-		bc.keys = bc.keys[1:]
+	if len(s.keys) >= s.max {
+		oldest := s.keys[0]
+		delete(s.cache, oldest)
+		s.keys = s.keys[1:]
 	}
-
-	bc.cache[key] = data
-	bc.keys = append(bc.keys, key)
+	s.cache[key] = data
+	s.keys = append(s.keys, key)
+	s.mu.Unlock()
 }
 
 // NewBlockCache creates a global block cache (can be shared across SSTables)
@@ -534,19 +535,22 @@ func (r *SSTableReader) Get(key string) (storage.Entry, error) {
 		return storage.Entry{}, storage.ErrKeyNotFound // bloom false positive
 	}
 
-	// Step 3: Check block cache first
+	return r.getAtIndex(idx)
+}
+
+// getAtIndex loads an entry from the SSTable file using its index position.
+// Assumes index is valid.
+func (r *SSTableReader) getAtIndex(idx int) (storage.Entry, error) {
 	entry := r.index[idx]
 	cacheKey := fmt.Sprintf("%s:%d", r.path, entry.Offset)
 
 	var data []byte
 	var cached bool
 
-	r.mu.RLock()
 	data, cached = r.blockCache.Get(cacheKey)
-	r.mu.RUnlock()
 
 	if !cached {
-		// Step 4: Read the data block from disk
+		// Read the data block from disk
 		buf := make([]byte, entry.Size)
 		if _, err := r.file.ReadAt(buf, entry.Offset); err != nil {
 			return storage.Entry{}, err
@@ -557,16 +561,14 @@ func (r *SSTableReader) Get(key string) (storage.Entry, error) {
 		r.blockCache.Put(cacheKey, data)
 	}
 
-	// Step 5: Decompress if needed
+	// Decompress if needed
 	if entry.Compressed {
 		decompressed, err := snappy.Decode(nil, data[4:])
 		if err != nil {
 			return storage.Entry{}, err
 		}
 		data = decompressed
-		// After decompression, data starts directly with magic byte (no length prefix)
 	} else {
-		// Not compressed - skip length prefix to get to the actual data
 		data = data[4:]
 	}
 
@@ -575,8 +577,48 @@ func (r *SSTableReader) Get(key string) (storage.Entry, error) {
 		return decodeEntryBinary(data)
 	}
 
-	// No other formats supported
 	return storage.Entry{}, fmt.Errorf("invalid data format: no magic byte found")
+}
+
+// MultiGet retrieves multiple keys from this SSTable in a single pass.
+// Returns found entries and a list of keys that were NOT found.
+func (r *SSTableReader) MultiGet(keys []string) (map[string]storage.Entry, []string) {
+	results := make(map[string]storage.Entry)
+	var missing []string
+
+	// Step 1: Filter with Bloom Filter (bulk)
+	sstPending := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if r.filter.MightContain([]byte(k)) {
+			sstPending = append(sstPending, k)
+		} else {
+			missing = append(missing, k)
+		}
+	}
+
+	if len(sstPending) == 0 {
+		return results, keys
+	}
+
+	// Step 2: Binary search index for each candidate
+	// Since keys in SSTable are sorted, we could potentially optimize this,
+	// but for now, individual binary searches are fast enough if indices are in memory.
+	for _, k := range sstPending {
+		idx := sort.Search(len(r.index), func(i int) bool {
+			return r.index[i].Key >= k
+		})
+
+		if idx < len(r.index) && r.index[idx].Key == k {
+			entry, err := r.getAtIndex(idx)
+			if err == nil {
+				results[k] = entry
+				continue
+			}
+		}
+		missing = append(missing, k)
+	}
+
+	return results, missing
 }
 
 func (r *SSTableReader) Scan(prefix string) ([]storage.Entry, error) {

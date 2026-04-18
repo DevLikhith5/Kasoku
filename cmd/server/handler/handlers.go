@@ -258,13 +258,18 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNodeInfo(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	stats := s.store.Stats()
+
 	s.writeJSON(w, http.StatusOK, APIResponse{
 		Success: true,
 		Data: map[string]interface{}{
 			"node_id": s.nodeID,
 			"addr":    s.addr,
 			"stats":   stats,
+			"timing_ms": map[string]int64{
+				"stats_collection": time.Since(start).Milliseconds(),
+			},
 		},
 	})
 }

@@ -36,7 +36,7 @@ func (kc *KeyCache) Get(key string) (*keyCacheItem, bool) {
 }
 
 // Put stores a lookup result. found=true means key exists, false means absent.
-// Uses simple eviction: when full, delete oldest 10% to make room.
+// Uses simple full-cache eviction: when full, clear everything at once (O(1) instead of O(n)).
 func (kc *KeyCache) Put(key string, entry storage.Entry, found bool) {
 	kc.mu.Lock()
 	defer kc.mu.Unlock()
@@ -47,19 +47,10 @@ func (kc *KeyCache) Put(key string, entry storage.Entry, found bool) {
 		return
 	}
 
-	// Evict 10% of oldest when at capacity
+	// When full, clear entire cache at once - O(1) vs O(n) iteration
+	// Trade-off: lose all cached data, but avoids O(n) stall
 	if len(kc.items) >= kc.maxSize {
-		evictCount := kc.maxSize / 10
-		if evictCount < 1 {
-			evictCount = 1
-		}
-		for k := range kc.items {
-			delete(kc.items, k)
-			evictCount--
-			if evictCount <= 0 {
-				break
-			}
-		}
+		clear(kc.items)
 	}
 
 	kc.items[key] = &keyCacheItem{entry: entry, found: found}

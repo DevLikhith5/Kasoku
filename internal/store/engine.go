@@ -70,6 +70,9 @@ type StorageEngine interface {
 	MultiGet(keys []string) (map[string]Entry, error)
 	Put(key string, value []byte) error
 	PutWithVectorClock(key string, value []byte, vc VectorClock) error
+	// BatchPut writes multiple entries in a single WAL + memtable lock cycle.
+	// Much faster than Put in a loop for batch workloads.
+	BatchPut(pairs []Entry) error
 	Delete(key string) error
 	// Keys returns all non-deleted keys
 	Keys() ([]string, error)

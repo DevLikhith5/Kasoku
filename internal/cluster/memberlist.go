@@ -218,3 +218,18 @@ func (ml *MemberList) IsAlive(nodeID string) bool {
 	}
 	return m.State == MemberStateAlive
 }
+
+// AliveSet returns a snapshot map of all currently-alive node IDs.
+// Use this instead of calling IsAlive in a loop to avoid per-call lock overhead.
+func (ml *MemberList) AliveSet() map[string]bool {
+	ml.mu.RLock()
+	defer ml.mu.RUnlock()
+
+	alive := make(map[string]bool, len(ml.members))
+	for id, m := range ml.members {
+		if m.State == MemberStateAlive {
+			alive[id] = true
+		}
+	}
+	return alive
+}

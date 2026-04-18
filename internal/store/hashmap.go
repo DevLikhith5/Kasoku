@@ -101,6 +101,34 @@ func (h *HashMapEngine) PutWithVectorClock(key string, value []byte, vc VectorCl
 	return nil
 }
 
+func (h *HashMapEngine) BatchPut(pairs []Entry) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	for i := range pairs {
+		if err := h.validate(pairs[i].Key, pairs[i].Value); err != nil {
+			return err
+		}
+		if pairs[i].Version == 0 {
+			pairs[i].Version = h.version.Add(1)
+		}
+		if pairs[i].TimeStamp.IsZero() {
+			pairs[i].TimeStamp = time.Now()
+		}
+	}
+
+	if h.wal != nil {
+		if err := h.wal.BatchAppend(pairs); err != nil {
+			return err
+		}
+	}
+
+	for _, e := range pairs {
+		h.data[e.Key] = e
+	}
+	return nil
+}
+
 func (h *HashMapEngine) Get(key string) (Entry, error) {
 	if h.closed.Load() {
 		return Entry{}, ErrEngineClosed

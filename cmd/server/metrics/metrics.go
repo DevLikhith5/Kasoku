@@ -145,6 +145,16 @@ var (
 		},
 	)
 
+	// HTTP handler stage timing - NO logging, just metrics
+	httpHandlerLatency = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kasoku_http_handler_latency_seconds",
+			Help:    "HTTP handler stage timing without logging overhead.",
+			Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25},
+		},
+		[]string{"operation", "stage"}, // put/http_parse, put/store, get/store, batch/store
+	)
+
 	// Anti-entropy metrics
 	antiEntropySyncCount = promauto.NewCounter(
 		prometheus.CounterOpts{
@@ -290,6 +300,11 @@ func New() *Metrics {
 
 func (m *Metrics) TimingTracker() *TimingTracker {
 	return m.timingTracker
+}
+
+// RecordHandlerStage records timing for HTTP handler stages without logging
+func (m *Metrics) RecordHandlerStage(operation, stage string, duration time.Duration) {
+	httpHandlerLatency.WithLabelValues(operation, stage).Observe(duration.Seconds())
 }
 
 func (m *Metrics) RecordGetStart() time.Time {

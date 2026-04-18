@@ -51,7 +51,7 @@ func NewSkipList(maxLevel int, p float64) *SkipList {
 
 	sl.updatePool.New = func() interface{} {
 		s := make([]*node, maxLevel)
-		return &s
+		return s // Return slice directly, not pointer to stack variable
 	}
 
 	return sl
@@ -95,8 +95,8 @@ func (s *SkipList) Get(key string) (storage.Entry, bool) {
 }
 
 func (s *SkipList) Put(entry storage.Entry) int64 {
-	updatePtr := s.updatePool.Get().(*[]*node)
-	update := *updatePtr
+	updatePtr := s.updatePool.Get().([]*node)
+	update := updatePtr
 	defer s.updatePool.Put(updatePtr)
 
 	curr := s.head

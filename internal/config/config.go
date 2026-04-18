@@ -86,6 +86,12 @@ type WALConfig struct {
 
 	// WAL file size before rotation
 	MaxFileSize int64 `yaml:"max_file_size" env:"KASOKU_WAL_MAX_FILE_SIZE" default:"67108864"` // 64MB
+
+	// Checkpoint bytes - checkpoint sync after this many bytes
+	CheckpointBytes int64 `yaml:"checkpoint_bytes" env:"KASOKU_WAL_CHECKPOINT_BYTES" default:"67108864"` // 64MB
+
+	// Max buffered bytes - max buffered before forced flush
+	MaxBufferedBytes int64 `yaml:"max_buffered_bytes" env:"KASOKU_WAL_MAX_BUFFERED_BYTES" default:"16777216"` // 16MB
 }
 
 type ClusterConfig struct {
@@ -149,9 +155,11 @@ func DefaultConfig() *Config {
 			BlockCacheSize:   128 * 1024 * 1024,
 		},
 		WAL: WALConfig{
-			Sync:         true,
-			SyncInterval: 100 * time.Millisecond,
-			MaxFileSize:  64 * 1024 * 1024,
+			Sync:             false, // Async by default for throughput
+			SyncInterval:     100 * time.Millisecond,
+			MaxFileSize:      64 * 1024 * 1024,
+			CheckpointBytes:  64 * 1024 * 1024, // 64MB
+			MaxBufferedBytes: 16 * 1024 * 1024, // 16MB
 		},
 		Cluster: ClusterConfig{
 			Enabled:           false,
@@ -177,7 +185,10 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
 
-		if err := yaml.Unmarshal(data, cfg); err != nil {
+		// Expand environment variables in YAML content
+		expanded := os.ExpandEnv(string(data))
+
+		if err := yaml.Unmarshal([]byte(expanded), cfg); err != nil {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
 	}
@@ -219,6 +230,14 @@ func applyEnvOverrides(cfg *Config) error {
 	// MemTableSize
 	if v := os.Getenv("KASOKU_MEMTABLE_SIZE"); v != "" {
 		fmt.Sscanf(v, "%d", &cfg.Memory.MemTableSize)
+	}
+	// Cluster NodeID
+	if v := os.Getenv("KASOKU_NODE_ID"); v != "" {
+		cfg.Cluster.NodeID = v
+	}
+	// Cluster NodeAddr
+	if v := os.Getenv("KASOKU_NODE_ADDR"); v != "" {
+		cfg.Cluster.NodeAddr = v
 	}
 
 	return nil

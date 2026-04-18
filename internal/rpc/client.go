@@ -21,6 +21,12 @@ func NewClient(nodeAddr string) *Client {
 	return &Client{
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: 500,
+				MaxConnsPerHost:     500,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+			},
 		},
 		baseURL: nodeAddr,
 	}
@@ -66,6 +72,16 @@ func (c *Client) ReplicatedPut(ctx context.Context, key string, value []byte) er
 
 	url := fmt.Sprintf("%s/internal/replicate", c.baseURL)
 	return c.doRequest(ctx, http.MethodPut, url, reqBody, nil)
+}
+
+func (c *Client) ReplicatedPutBinary(ctx context.Context, key string, value []byte) error {
+	reqBody := ReplicatedWriteRequest{
+		Key:   key,
+		Value: value,
+	}
+
+	url := fmt.Sprintf("%s/internal/replicate", c.baseURL)
+	return c.doInternalRequest(ctx, http.MethodPut, url, reqBody, nil)
 }
 
 func (c *Client) ReplicatedGet(ctx context.Context, key string) ([]byte, bool, error) {
