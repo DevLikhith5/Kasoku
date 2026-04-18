@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  kasoku-single:
+    build: .
+    container_name: kasoku-single
+    ports:
+      - "9000:9000"
+    environment:
+      - KASOKU_NODE_ID=single-node
+      - KASOKU_HTTP_PORT=9000
+      - KASOKU_CLUSTER_ENABLED=false
+      - KASOKU_DATA_DIR=/data
+      - GOMAXPROCS=4
+      - GOMEMLIMIT=2GiB
+    volumes:
+      - kasoku-data:/data
+    networks:
+      - kasoku-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+volumes:
+  kasoku-data:
+
+networks:
+  kasoku-net:
+    driver: bridge

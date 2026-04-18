@@ -9,21 +9,19 @@ import (
 type Hint struct {
 	Key        string
 	Value      []byte
-	TargetNode string // the node that should ultimately receive this write
+	TargetNode string
 	CreatedAt  time.Time
 	Attempts   atomic.Int32
 }
 
-// HintStore stores writes that couldn't be delivered to their target node
-// (hinted handoff for temporary unavailability)
 type HintStore struct {
-	mu          sync.RWMutex
-	hints       []*Hint
-	maxHints    int           // Max hints to store (prevent memory leak)
-	dropOldest  bool         // Drop oldest when full
+	mu         sync.RWMutex
+	hints      []*Hint
+	maxHints   int
+	dropOldest bool
 }
 
-const DefaultMaxHints = 100000 // 100K hints max (~100MB max)
+const DefaultMaxHints = 100000
 
 func NewHintStore() *HintStore {
 	return NewHintStoreWithMax(DefaultMaxHints)
@@ -44,10 +42,8 @@ func (hs *HintStore) Store(key string, value []byte, targetNode string) error {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
 
-	// Drop oldest hints if at capacity
 	if hs.maxHints > 0 && len(hs.hints) >= hs.maxHints {
 		if hs.dropOldest {
-			// Remove oldest 10%
 			removeCount := hs.maxHints / 10
 			if removeCount < 1 {
 				removeCount = 1
@@ -56,18 +52,17 @@ func (hs *HintStore) Store(key string, value []byte, targetNode string) error {
 				hs.hints = hs.hints[removeCount:]
 			}
 		} else {
-			// Drop new hint if full
 			return nil
 		}
 	}
 
 	hs.hints = append(hs.hints, &Hint{
 		Key:        key,
-		Value:     value,
+		Value:      value,
 		TargetNode: targetNode,
-		CreatedAt: time.Now(),
+		CreatedAt:  time.Now(),
 	})
-return nil
+	return nil
 }
 
 func (hs *HintStore) GetHintsForNode(nodeID string) []*Hint {
@@ -83,6 +78,12 @@ func (hs *HintStore) GetHintsForNode(nodeID string) []*Hint {
 	return result
 }
 
+func (hs *HintStore) PendingCount() int {
+	hs.mu.RLock()
+	defer hs.mu.RUnlock()
+	return len(hs.hints)
+}
+
 func (hs *HintStore) RemoveHint(key string, targetNode string) {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
@@ -90,16 +91,13 @@ func (hs *HintStore) RemoveHint(key string, targetNode string) {
 	newHints := make([]*Hint, 0, len(hs.hints))
 	for _, h := range hs.hints {
 		if h.Key == key && h.TargetNode == targetNode {
-			continue // skip this one — it was delivered
+			continue
 		}
 		newHints = append(newHints, h)
 	}
 	hs.hints = newHints
 }
 
-// RetryFailed attempts to redeliver all hints using the provided delivery function.
-// Bug 9 fix: tracks delivered hints by pointer identity so that duplicate hints
-// (same key+target) are only removed one at a time when delivered, not all at once.
 func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, value []byte) error) {
 	hs.mu.Lock()
 	hints := make([]*Hint, len(hs.hints))
@@ -110,19 +108,17 @@ func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, val
 
 	for _, h := range hints {
 		if h.Attempts.Load() >= 10 {
-			// Give up after 10 attempts — in production you'd persist these
 			continue
 		}
 
 		err := deliver(h.TargetNode, h.Key, h.Value)
 		if err == nil {
-			delivered[h] = true // mark by pointer, not composite key
+			delivered[h] = true
 		} else {
 			h.Attempts.Add(1)
 		}
 	}
 
-	// Remove successfully delivered hints by pointer identity
 	if len(delivered) > 0 {
 		hs.mu.Lock()
 		newHints := make([]*Hint, 0, len(hs.hints))
@@ -134,10 +130,4 @@ func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, val
 		hs.hints = newHints
 		hs.mu.Unlock()
 	}
-}
-
-func (hs *HintStore) PendingCount() int {
-	hs.mu.RLock()
-	defer hs.mu.RUnlock()
-	return len(hs.hints)
 }
