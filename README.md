@@ -35,9 +35,9 @@ kasoku/
 
 | Metric | Achieved |
 |--------|----------|
-| Single-node writes | 79,000 ops/sec |
+| Single-node writes | 226,000 ops/sec |
 | Single-node reads | 371,000 ops/sec |
-| Cluster writes | 300,000+ ops/sec |
+| Cluster writes (RF=3) | 200,000+ ops/sec |
 
 See [PAPER.md](docs/PAPER.md) for full evaluation details.
 

@@ -9,17 +9,19 @@ lsm:
     level_ratio: 10
     l0_base_size: 67108864
     key_cache_size: 1000000
+    max_flush_workers: 4
 
 compaction:
     threshold: 1000
-    max_concurrent: 1
+    max_concurrent: 4
     l0_size_threshold: 10737418240
 
 memory:
-    memtable_size: 268435456
-    max_memtable_bytes: 536870912
-    bloom_fp_rate: 0.01
-    block_cache_size: 536870912
+    memtable_size: 67108864 # 64MB
+    max_memtable_bytes: 5368709120
+    max_immutable: 20
+    bloom_fp_rate: 0.005
+    block_cache_size: 1073741824
 
 wal:
     sync: false

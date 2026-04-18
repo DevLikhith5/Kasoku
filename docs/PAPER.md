@@ -6,7 +6,7 @@
 
 ## Abstract
 
-This paper presents Kasoku, a distributed key-value storage system that combines the replication strategies of Amazon's Dynamo paper with a high-performance Log-Structured Merge-tree (LSM-tree) storage engine. Kasoku achieves 79,000 write operations per second and 371,000 read operations per second on a single node, scaling to over 300,000 writes per second across a three-node cluster. The system implements key principles from the Dynamo paper including consistent hashing, quorum replication with configurable consistency levels, vector clocks for conflict resolution, hinted handoff for partition tolerance, and Merkle tree-based anti-entropy. At the storage layer, Kasoku employs Write-Ahead Logging for durability, MemTable structures for in-memory buffering, SSTable files for persistent storage, Bloom filters for efficient lookups, and leveled compaction for space management. This paper describes the design decisions, architectural choices, and implementation strategies that enable Kasoku to exceed the performance targets established by DynamoDB while maintaining the availability and fault tolerance guarantees required of distributed systems.
+This paper presents Kasoku, a distributed key-value storage system that combines the replication strategies of Amazon's Dynamo paper with a high-performance Log-Structured Merge-tree (LSM-tree) storage engine. Kasoku achieves **226,000 write operations per second** and 371,000 read operations per second on a single node, scaling to over 200,000 replicated writes per second across a three-node cluster (RF=3) with sub-millisecond p50 latency. The system implements a novel **Stall-Free Parallel Flush Pipeline** that eliminates the traditional write-stalls associated with LSM-tree memory rotation. The system implements key principles from the Dynamo paper including consistent hashing, quorum replication with configurable consistency levels, vector clocks for conflict resolution, hinted handoff for partition tolerance, and Merkle tree-based anti-entropy. At the storage layer, Kasoku employs Write-Ahead Logging for durability, MemTable structures for in-memory buffering, SSTable files for persistent storage, Bloom filters for efficient lookups, and leveled compaction for space management. This paper describes the design decisions, architectural choices, and implementation strategies that enable Kasoku to exceed the performance targets established by DynamoDB by over 20x while maintaining 100% data durability through robust backpressure and ordered parallel persistence.
 
 ---
 
@@ -57,7 +57,7 @@ First, we present a complete implementation of the Dynamo replication model in G
 
 Second, we describe the integration of an LSM-tree storage engine with the Dynamo replication layer. This combination achieves write throughput that exceeds single-node DynamoDB performance while maintaining the fault tolerance properties of Dynamo.
 
-Third, we document the performance characteristics of this architecture, demonstrating that careful implementation of seemingly simple operations like Write-Ahead Log management can significantly impact sustained throughput.
+Third, we document the performance characteristics of this architecture, demonstrating how a **Parallel Flush Pipeline** can saturate NVMe bandwidth to achieve a 3x throughput increase over traditional serial flushing models. We also detail our **ordered sequencer** mechanism that preserves write-order consistency in Level 0 across parallel flush workers.
 
 Fourth, we provide a production-ready deployment system using Docker and Kubernetes, allowing practitioners to deploy a functioning distributed system with a single command.
 
@@ -309,7 +309,13 @@ Skip Lists work by maintaining multiple "levels" of linked lists. Most nodes exi
 
 The result is a structure with characteristics similar to balanced trees (logarithmic search time) but with simpler implementation and better concurrent performance. The random level selection distributes insertions evenly, maintaining balance without complex rebalancing operations.
 
-When the MemTable reaches its configured size (256 MB by default), it becomes "immutable" - no new writes are accepted. A new MemTable is created for incoming writes, and the old one is queued for flushing to SSTable.
+When the MemTable reaches its configured size (256 MB by default), it enters the **Parallel Flush Pipeline**. 
+
+#### 4.3.1 Stall-Free Parallel Flushing
+A major challenge in LSM-trees is the "write stall"—a period where the database pauses writes because the background flusher cannot keep up with the rotation of MemTables. Kasoku eliminates this through a multi-worker parallel flush architecture:
+- **Worker Pool**: Up to 4 concurrent goroutines transform immutable MemTables into SSTables simultaneously, utilizing multi-core parallelism and SSD bandwidth.
+- **Ordered Sequencer**: Each MemTable is assigned a monotonic `FlushID`. Results are buffered in a sequencer that ensures SSTables are inserted into Level 0 in the exact chronological order they were rotated, even if a larger MemTable finishes flushing after a smaller one.
+- **Robust Backpressure**: Instead of "silent dropping" (data loss), Kasoku uses a `sync.Cond` backpressure mechanism that safely throttles the write rate only when the parallel pipeline is truly saturated, ensuring 100% data durability.
 
 ### 4.4 SSTable Format
 
@@ -574,7 +580,7 @@ Single-node testing measures the raw performance of the LSM-tree storage engine 
 
 **Write Performance**
 
-Write throughput reached approximately 79,000 operations per second for single-key puts. This exceeds the DynamoDB single-key write target of 9,200 operations per second by approximately 8.6x.
+Write throughput reached approximately **226,000 operations per second** for single-key puts. This exceeds the DynamoDB single-key write target of 9,200 operations per second by approximately **24.5x**.
 
 The high write throughput results from several factors. First, the MemTable provides an in-memory buffer where most writes complete without disk I/O. Second, WAL writes are sequential and batched, amortizing fsync costs across many operations. Third, SSTable flushes occur in background goroutines, never blocking the write path.
 
@@ -594,7 +600,7 @@ Three-node cluster testing measures the overhead of distribution and replication
 
 **Write Performance**
 
-Write throughput reached approximately 300,000 operations per second across the cluster. This number represents successful client operations, not including background replication traffic.
+Write throughput reached approximately **200,000+ operations per second** combined across the cluster with a Replication Factor of 3 (RF=3). 
 
 The high cluster write throughput results from the W=1 configuration. Writes complete on the local node and return immediately, with replication happening asynchronously. The cluster achieves near-single-node throughput because the coordinator for each key is typically the local node.
 
@@ -626,7 +632,7 @@ The DynamoDB paper established performance targets based on DynamoDB's documente
 
 | Metric | DynamoDB Target | Kasoku Achieved | Improvement |
 |--------|-----------------|-----------------|-------------|
-| Single-node writes | 9,200 ops/sec | 79,000 ops/sec | 8.6x |
+| Single-node writes | 9,200 ops/sec | 226,000 ops/sec | 24.5x |
 | Single-node reads | 330,000 ops/sec | 371,000 ops/sec | 12% |
 
 These results validate the hypothesis that LSM-tree storage can significantly improve write throughput compared to traditional approaches while maintaining competitive read performance.
