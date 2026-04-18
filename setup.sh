@@ -3,6 +3,9 @@ set -e
 
 # Kasoku Production Setup Script
 # Usage: ./setup.sh [single|cluster|kubernetes]
+# Note: Docker files are in deploy/ directory
+
+DEPLOY_DIR="$(dirname "$0")/deploy"
 
 MODE=${1:-single}
 
@@ -11,7 +14,7 @@ echo "🚀 Setting up Kasoku - $MODE mode"
 case $MODE in
     single)
         echo "📦 Starting single-node Kasoku..."
-        docker-compose -f docker-compose.single.yml up -d
+        docker-compose -f "$DEPLOY_DIR/docker-compose.single.yml" up -d
         echo "✅ Kasoku running at http://localhost:9000"
         echo "   Health check: http://localhost:9000/health"
         echo "   Put key: curl -X PUT http://localhost:9000/kv/mykey -d 'value'"
@@ -20,7 +23,7 @@ case $MODE in
 
     cluster)
         echo "📦 Starting 3-node Kasoku cluster..."
-        docker-compose -f docker-compose.yml up -d
+        docker-compose -f "$DEPLOY_DIR/docker-compose.yml" up -d
         echo "✅ Cluster running:"
         echo "   Node 1: http://localhost:9001"
         echo "   Node 2: http://localhost:9002"
@@ -32,7 +35,7 @@ case $MODE in
 
     cluster-with-monitoring)
         echo "📦 Starting Kasoku cluster with monitoring..."
-        docker-compose -f docker-compose.yml --profile monitoring up -d
+        docker-compose -f "$DEPLOY_DIR/docker-compose.yml" --profile monitoring up -d
         echo "✅ Cluster running with monitoring:"
         echo "   Node 1: http://localhost:9001"
         echo "   Node 2: http://localhost:9002"
@@ -43,7 +46,7 @@ case $MODE in
 
     kubernetes)
         echo "☸️  Deploying to Kubernetes..."
-        kubectl apply -f deploy/kubernetes/
+        kubectl apply -f "$DEPLOY_DIR/kubernetes/"
         echo "✅ Kasoku deployed to Kubernetes"
         echo "   Check status: kubectl get pods -n kasoku"
         echo "   Access: kubectl port-forward svc/kasoku-http 9000:80"
@@ -51,15 +54,15 @@ case $MODE in
 
     stop)
         echo "🛑 Stopping Kasoku..."
-        docker-compose -f docker-compose.single.yml down 2>/dev/null || true
-        docker-compose -f docker-compose.yml down 2>/dev/null || true
+        docker-compose -f "$DEPLOY_DIR/docker-compose.single.yml" down 2>/dev/null || true
+        docker-compose -f "$DEPLOY_DIR/docker-compose.yml" down 2>/dev/null || true
         echo "✅ Stopped"
         ;;
 
     clean)
         echo "🧹 Cleaning up..."
-        docker-compose -f docker-compose.single.yml down -v 2>/dev/null || true
-        docker-compose -f docker-compose.yml down -v 2>/dev/null || true
+        docker-compose -f "$DEPLOY_DIR/docker-compose.single.yml" down -v 2>/dev/null || true
+        docker-compose -f "$DEPLOY_DIR/docker-compose.yml" down -v 2>/dev/null || true
         echo "✅ Cleaned up"
         ;;
 
