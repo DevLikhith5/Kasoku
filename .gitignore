@@ -11,6 +11,7 @@ kvctl
 server
 kvctl-new
 kasoku-server-new
+bin/
 
 # Benchmarks (compiled)
 bench
