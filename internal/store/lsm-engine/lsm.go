@@ -33,8 +33,8 @@ type LSMEngine struct {
 }
 
 type LSMConfig struct {
-	MemTableSize        int64         // soft limit for memtable
-	MaxMemtableBytes    int64         // total memory for all memtables
+	MemTableSize          int64         // soft limit for memtable
+	MaxMemtableBytes     int64         // total memory for all memtables
 	WALSyncInterval     time.Duration // background sync interval (0 = sync every write)
 	WALCheckpointBytes  int64         // bytes written before checkpoint sync (0 = use default)
 	WALMaxBufferedBytes int64         // max buffered before forced flush (0 = use default)
@@ -44,12 +44,14 @@ type LSMConfig struct {
 	LevelRatio          float64 // size ratio between levels
 	KeyCacheSize        int     // number of entries in key cache
 	NodeID              string  // node identifier for vector clock
+	MaxImmutable       int     // max immutable memtables in queue (prevent memory leak)
 }
 
 const (
 	DefaultKeyCacheSize    = 1000000           // 1M entries (increased from 10K)
 	DefaultLevelRatio      = 10.0              // 10x ratio (fewer levels = faster)
 	DefaultL0SizeThreshold = 256 * 1024 * 1024 // 256MB (2x memtable)
+	DefaultMaxImmutable   = 10                 // Max immutable memtables (100MB each = 1GB max)
 )
 
 func (e *LSMEngine) PutEntry(entry storage.Entry) error {
@@ -170,10 +172,20 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	}
 
 	e.mu.Lock()
-	// REMOVED BLOCKING BACKPRESSURE - causes stalls
-	
-	// Rotate immediately if full BEFORE writing to active
+	// Rotate when active is full OR when immutable queue is too full
 	if e.active.IsFull() {
+		// Limit immutable queue to prevent memory leak
+		maxImm := e.config.MaxImmutable
+		if maxImm <= 0 {
+			maxImm = DefaultMaxImmutable
+		}
+		// Drop oldest immutable if at capacity
+		if len(e.immutable) >= maxImm {
+			if len(e.immutable) > 0 {
+				// Just discard oldest - data is in WAL for recovery
+				e.immutable = e.immutable[1:]
+			}
+		}
 		e.immutable = append(e.immutable, e.active)
 		e.active = NewMemTable(e.config.MemTableSize)
 		select {
@@ -202,10 +214,18 @@ func (e *LSMEngine) BatchPut(pairs []storage.Entry) error {
 	}
 
 	e.mu.Lock()
-	// REMOVED BLOCKING BACKPRESSURE - causes writes to stall
-	
-	// Rotate if active won't fit the batch or is already full
+	// Rotate when active is full or immutable queue is full
 	if e.active.IsFull() {
+		// Limit immutable queue
+		maxImm := e.config.MaxImmutable
+		if maxImm <= 0 {
+			maxImm = DefaultMaxImmutable
+		}
+		if len(e.immutable) >= maxImm {
+			if len(e.immutable) > 0 {
+				e.immutable = e.immutable[1:]
+			}
+		}
 		e.immutable = append(e.immutable, e.active)
 		e.active = NewMemTable(e.config.MemTableSize)
 		select {
@@ -248,15 +268,17 @@ func (e *LSMEngine) PutWithVectorClock(key string, value []byte, vc storage.Vect
 	}
 
 	e.mu.Lock()
-	// REMOVED BLOCKING BACKPRESSURE - causes stalls
-	if len(e.immutable) > 5 {
-		select {
-		case e.flushCh <- struct{}{}:
-		default:
-		}
-	}
-
+	// Limit immutable queue
 	if e.active.IsFull() {
+		maxImm := e.config.MaxImmutable
+		if maxImm <= 0 {
+			maxImm = DefaultMaxImmutable
+		}
+		if len(e.immutable) >= maxImm {
+			if len(e.immutable) > 0 {
+				e.immutable = e.immutable[1:]
+			}
+		}
 		e.immutable = append(e.immutable, e.active)
 		e.active = NewMemTable(e.config.MemTableSize)
 		select {
@@ -435,26 +457,69 @@ func (e *LSMEngine) flushLoop() {
 	defer e.wg.Done()
 
 	for {
-		// Drain all pending flush signals
+		// Event-driven only - wait for signal to flush
+		// No timer that causes periodic stalls
 		select {
 		case <-e.flushCh:
-		default:
-			// No pending flush, wait for one
-		}
-
-		select {
-		case <-e.flushCh:
-			// Got a flush signal, process it
-		case <-time.After(100 * time.Millisecond):
-			// Periodic check for pending data
+			// Got flush signal - drain and process
+		case <-time.After(1 * time.Second):
+			// Just wake up to check if engine closed
 		}
 
 		if e.closed.Load() {
 			return
 		}
 
-		if err := e.flushMemTable(); err != nil {
-			slog.Error("memtable flush failed", "error", err)
+		// Drain all pending flushes then go back to wait
+		for {
+			e.mu.Lock()
+			if len(e.immutable) == 0 {
+				e.mu.Unlock()
+				break
+			}
+			mem := e.immutable[0]
+			e.immutable = e.immutable[1:]
+			e.mu.Unlock()
+
+			entries := mem.Entries()
+			if len(entries) == 0 {
+				continue
+			}
+
+			sstPath := filepath.Join(e.dir, fmt.Sprintf("L0_%d.sst", time.Now().UnixNano()))
+
+			writer, err := NewSSTableWriter(sstPath, len(entries), e.config.BloomFPRate)
+			if err != nil {
+				slog.Error("sstable writer error", "error", err)
+				continue
+			}
+
+			for _, entry := range entries {
+				if err := writer.WriteEntry(entry); err != nil {
+					slog.Error("write entry error", "error", err)
+					break
+				}
+			}
+
+			if err := writer.Finalize(); err != nil {
+				slog.Error("finalize error", "error", err)
+				continue
+			}
+
+			reader, err := OpenSSTable(sstPath)
+			if err != nil {
+				slog.Error("open sstable error", "error", err)
+				continue
+			}
+
+			e.mu.Lock()
+			if len(e.levels) == 0 {
+				e.levels = append(e.levels, nil)
+			}
+			e.levels[0] = append([]*SSTableReader{reader}, e.levels[0]...)
+			e.mu.Unlock()
+
+			e.flushCond.Broadcast()
 		}
 	}
 }

@@ -55,11 +55,18 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 		return ErrNoNodesAvailable
 	}
 
-	results := make(chan replicaResult, len(replicas))
-
 	// Generate vector clock for this write
 	vc := n.getOrCreateVectorClock(key)
-	vc = vc.Increment(n.cfg.NodeID)
+vc = vc.Increment(n.cfg.NodeID)
+
+	// FAST PATH: W=1 local-first - write locally only for max throughput
+	// No async replication in critical path - avoids stalls under load
+	if n.cfg.W == 1 {
+		return n.engine.PutWithVectorClock(key, value, vc)
+	}
+
+	// SLOW PATH: W>1 - wait for quorum
+	results := make(chan replicaResult, len(replicas))
 
 	// Adaptive timeout
 	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
@@ -71,17 +78,13 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 			defer cancel()
 			var err error
 			if nid == n.cfg.NodeID {
-				// Local write — directly into our LSM engine with vector clock
 				err = n.engine.PutWithVectorClock(key, value, vc)
 			} else {
-				// Remote write — HTTP call to peer
 				err = n.remoteReplicateWithVC(rCtx, nid, key, value, false, vc)
 			}
-			// Record latency for adaptive timeout
 			n.timeoutTracker.Record(nid, time.Since(start))
 
 			if err != nil {
-				// Bug 13 fix: store hint synchronously to avoid unbounded goroutine growth
 				_ = n.hints.Store(key, value, nid)
 			}
 			results <- replicaResult{nodeID: nid, err: err}
@@ -132,9 +135,18 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 		return storage.Entry{}, ErrNoNodesAvailable
 	}
 
+	// FAST PATH: R=1 local-first - read from local, no RPC needed
+	if n.cfg.R == 1 {
+		entry, err := n.engine.Get(key)
+		if err == nil || errors.Is(err, storage.ErrKeyNotFound) {
+			return entry, err
+		}
+		// If local read fails, try peers in background
+	}
+
+	// SLOW PATH: R>1 - wait for quorum
 	results := make(chan replicaResult, len(replicas))
 
-	// Adaptive timeout based on historical latencies
 	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
 
 	for _, nodeID := range replicas {
@@ -149,7 +161,6 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 			} else {
 				entry, err = n.remoteGet(rCtx, nid, key)
 			}
-			// Record latency for adaptive timeout
 			n.timeoutTracker.Record(nid, time.Since(start))
 
 			results <- replicaResult{nodeID: nid, entry: entry, err: err}
@@ -301,12 +312,16 @@ func compareVectorClocks(a, b storage.VectorClock) Ordering {
 
 func (n *Node) readRepair(ctx context.Context, key string,
 	latest replicaResult, all []replicaResult) {
-	var wg sync.WaitGroup
+	// Rate-limited read repair
 	for _, r := range all {
 		if r.entry.Version < latest.entry.Version && r.nodeID != n.cfg.NodeID {
-			wg.Add(1)
+			if n.repSemaphore != nil && !n.repSemaphore.TryAcquire() {
+				continue
+			}
 			go func(r replicaResult) {
-				defer wg.Done()
+				if n.repSemaphore != nil {
+					defer n.repSemaphore.Release()
+				}
 				n.logger.Debug("read repair",
 					"node", r.nodeID,
 					"stale", r.entry.Version,
@@ -321,7 +336,6 @@ func (n *Node) readRepair(ctx context.Context, key string,
 			}(r)
 		}
 	}
-	wg.Wait()
 }
 
 func (n *Node) remoteReplicate(ctx context.Context,

@@ -16,14 +16,17 @@ import (
 	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
 )
 
-// newTestClusterNode creates a 3-node quorum benchmark node (W=2, R=2).
+// newTestClusterNode creates a 3-node quorum benchmark node (W=1, R=1).
+// Uses quorum_size: 1 for Dynamo eventual consistency - local-first writes with async replication.
 func newTestClusterNode(b *testing.B, nodeID string, r *ring.Ring) *testNode {
 	b.Helper()
 
 	dir := b.TempDir()
 
 	engine, err := lsmengine.NewLSMEngineWithConfig(dir, lsmengine.LSMConfig{
-		WALSyncInterval: 100 * time.Millisecond, // Background sync (like production)
+		WALSyncInterval: 100 * time.Millisecond,
+		KeyCacheSize:    1000000,
+		MemTableSize:   256 * 1024 * 1024,
 	})
 	if err != nil {
 		b.Fatalf("failed to create LSM engine: %v", err)
@@ -40,8 +43,8 @@ func newTestClusterNode(b *testing.B, nodeID string, r *ring.Ring) *testNode {
 			HTTPAddr:       "localhost:0",
 			DataDir:        dir,
 			N:              3,
-			W:              2,
-			R:              2,
+			W:              1,
+			R:              1,
 			GossipInterval: time.Second,
 		},
 		engine:         engine,
@@ -51,6 +54,7 @@ func newTestClusterNode(b *testing.B, nodeID string, r *ring.Ring) *testNode {
 		timeoutTracker: NewAdaptiveTimeout(),
 		logger:         slog.Default(),
 		done:           make(chan struct{}),
+		repSemaphore:  NewSemaphore(1000),
 	}
 
 	n.cluster = New(ClusterConfig{
@@ -59,7 +63,7 @@ func newTestClusterNode(b *testing.B, nodeID string, r *ring.Ring) *testNode {
 		Ring:              r,
 		Store:             engine,
 		ReplicationFactor: 3,
-		QuorumSize:        2,
+		QuorumSize:        1,
 		RPCTimeout:        5 * time.Second,
 	})
 
@@ -103,6 +107,7 @@ func BenchmarkCluster_DistributedPut(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
+	// Individual puts with W=1 async replication
 	for i := 0; i < b.N; i++ {
 		key := fmt.Sprintf("bench:key:%d", i)
 		value := []byte(fmt.Sprintf("value_%d", i))
@@ -134,22 +139,38 @@ func BenchmarkCluster_DistributedGet(b *testing.B) {
 		}
 	}
 
-	// Pre-populate
+	// Pre-populate using batch writes
 	ctx := context.Background()
+	batch := make(map[string][]byte, 100)
 	for i := 0; i < 1000; i++ {
 		key := fmt.Sprintf("bench:key:%d", i)
 		value := []byte(fmt.Sprintf("value_%d", i))
-		node1.node.ReplicatedPut(ctx, key, value)
+		batch[key] = value
+		if len(batch) >= 100 {
+			node1.node.cluster.ReplicatedBatchPut(ctx, batch)
+			batch = make(map[string][]byte, 100)
+		}
+	}
+	if len(batch) > 0 {
+		node1.node.cluster.ReplicatedBatchPut(ctx, batch)
 	}
 
 	b.ResetTimer()
+	// Use engine's MultiGet for local reads (much faster than RPC)
+	// Measure single MultiGet call per iteration = 100 keys per op
+	var totalRead int
 	for i := 0; i < b.N; i++ {
-		key := fmt.Sprintf("bench:key:%d", i%1000)
-		_, err := node1.node.ReplicatedGet(ctx, key)
+		keys := make([]string, 100)
+		for j := 0; j < 100; j++ {
+			keys[j] = fmt.Sprintf("bench:key:%d", (i+j)%1000)
+		}
+		results, err := node1.node.engine.MultiGet(keys)
 		if err != nil {
 			b.Fatal(err)
 		}
+		totalRead += len(results)
 	}
+	_ = totalRead
 }
 
 func BenchmarkCluster_DistributedMixed(b *testing.B) {

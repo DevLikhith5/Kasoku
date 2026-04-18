@@ -17,13 +17,26 @@ type Hint struct {
 // HintStore stores writes that couldn't be delivered to their target node
 // (hinted handoff for temporary unavailability)
 type HintStore struct {
-	mu    sync.RWMutex
-	hints []*Hint
+	mu          sync.RWMutex
+	hints       []*Hint
+	maxHints    int           // Max hints to store (prevent memory leak)
+	dropOldest  bool         // Drop oldest when full
 }
 
+const DefaultMaxHints = 100000 // 100K hints max (~100MB max)
+
 func NewHintStore() *HintStore {
+	return NewHintStoreWithMax(DefaultMaxHints)
+}
+
+func NewHintStoreWithMax(maxHints int) *HintStore {
+	if maxHints <= 0 {
+		maxHints = DefaultMaxHints
+	}
 	return &HintStore{
-		hints: make([]*Hint, 0),
+		hints:      make([]*Hint, 0, maxHints),
+		maxHints:   maxHints,
+		dropOldest: true,
 	}
 }
 
@@ -31,13 +44,30 @@ func (hs *HintStore) Store(key string, value []byte, targetNode string) error {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
 
+	// Drop oldest hints if at capacity
+	if hs.maxHints > 0 && len(hs.hints) >= hs.maxHints {
+		if hs.dropOldest {
+			// Remove oldest 10%
+			removeCount := hs.maxHints / 10
+			if removeCount < 1 {
+				removeCount = 1
+			}
+			if removeCount < len(hs.hints) {
+				hs.hints = hs.hints[removeCount:]
+			}
+		} else {
+			// Drop new hint if full
+			return nil
+		}
+	}
+
 	hs.hints = append(hs.hints, &Hint{
 		Key:        key,
-		Value:      value,
+		Value:     value,
 		TargetNode: targetNode,
-		CreatedAt:  time.Now(),
+		CreatedAt: time.Now(),
 	})
-	return nil
+return nil
 }
 
 func (hs *HintStore) GetHintsForNode(nodeID string) []*Hint {
