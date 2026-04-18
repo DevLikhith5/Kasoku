@@ -170,11 +170,8 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	}
 
 	e.mu.Lock()
-	// Backpressure: if we have too many immutable memtables, wait for one to flush
-	for len(e.immutable) > 5 {
-		e.flushCond.Wait()
-	}
-
+	// REMOVED BLOCKING BACKPRESSURE - causes stalls
+	
 	// Rotate immediately if full BEFORE writing to active
 	if e.active.IsFull() {
 		e.immutable = append(e.immutable, e.active)
@@ -205,11 +202,8 @@ func (e *LSMEngine) BatchPut(pairs []storage.Entry) error {
 	}
 
 	e.mu.Lock()
-	// Backpressure: wait if too many immutables
-	for len(e.immutable) > 5 {
-		e.flushCond.Wait()
-	}
-
+	// REMOVED BLOCKING BACKPRESSURE - causes writes to stall
+	
 	// Rotate if active won't fit the batch or is already full
 	if e.active.IsFull() {
 		e.immutable = append(e.immutable, e.active)
