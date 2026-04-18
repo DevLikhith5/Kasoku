@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -14,21 +15,22 @@ import (
 )
 
 type LSMEngine struct {
-	mu        sync.RWMutex
-	active    *MemTable
-	immutable []*MemTable // queue of memtables waiting to flush
-	wal       *storage.WAL
-	levels    [][]*SSTableReader
-	version   atomic.Uint64
-	dir       string
-	closed    atomic.Bool
-	flushCh   chan struct{}
-	compCh    chan struct{}
-	flushDone chan struct{} // signaled when a flush completes, used for backpressure
-	wg        sync.WaitGroup
-	config    LSMConfig
-	cache     *KeyCache
-	nodeID    string // node identifier for vector clock
+	mu           sync.RWMutex
+	active       *MemTable
+	immutable    []*MemTable // queue of memtables waiting to flush
+	wal          *storage.WAL
+	levels       [][]*SSTableReader
+	version      atomic.Uint64
+	dir          string
+	closed       atomic.Bool
+	flushCh      chan struct{}
+	compCh       chan struct{}
+	flushDone    chan struct{} // signaled when a flush completes, used for backpressure
+	wg           sync.WaitGroup
+	config       LSMConfig
+	cache        *KeyCache
+	nodeID       string // node identifier for vector clock
+	writeCounter uint32 // atomic counter to reduce IsFull check frequency
 }
 
 type LSMConfig struct {
@@ -171,13 +173,16 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	e.mu.Lock()
 	e.active.Put(entry)
 	e.cache.Invalidate(key)
-	full := e.active.IsFull()
 	e.mu.Unlock()
 
-	if full {
-		select {
-		case e.flushCh <- struct{}{}:
-		default:
+	// Only check IsFull every 128 writes to reduce lock contention
+	// This trades some memory for throughput - max waste is 128 * entry_size
+	if atomic.AddUint32(&e.writeCounter, 1)%128 == 0 {
+		if e.active.IsFull() {
+			select {
+			case e.flushCh <- struct{}{}:
+			default:
+			}
 		}
 	}
 
@@ -442,43 +447,18 @@ func (e *LSMEngine) compactLoop() {
 			continue
 		}
 
-		// Compact levels in parallel where possible:
-		// - Separate even and odd levels for parallelism
-		// - But prioritize L0 first for write performance
-		if levelsToCompact[0] == 0 {
-			e.compactLevel(0)
-			levelsToCompact = levelsToCompact[1:]
-		}
-
-		// Compact remaining levels in parallel (max 2 concurrent)
+		// Compact ALL levels in parallel (max 4 concurrent for parallelism)
 		var wg sync.WaitGroup
-		pending := make([]int, 0)
 		for _, level := range levelsToCompact {
-			pending = append(pending, level)
-			if len(pending) >= 2 {
-				// Compact 2 levels in parallel
-				for _, lvl := range pending {
-					wg.Add(1)
-					go func(l int) {
-						defer wg.Done()
-						e.compactLevel(l)
-					}(lvl)
-				}
-				wg.Wait()
-				pending = pending[:0]
-			}
-		}
-		// Compact any remaining levels
-		for _, lvl := range pending {
 			wg.Add(1)
 			go func(l int) {
 				defer wg.Done()
 				e.compactLevel(l)
-			}(lvl)
+				// Yield after each level to prevent complete stall
+				runtime.Gosched()
+			}(level)
 		}
-		if len(pending) > 0 {
-			wg.Wait()
-		}
+		wg.Wait()
 	}
 }
 
@@ -771,13 +751,14 @@ func (e *LSMEngine) Delete(key string) error {
 
 	e.mu.Lock()
 	e.active.Put(entry)
-	full := e.active.IsFull()
 	e.mu.Unlock()
 
-	if full {
-		select {
-		case e.flushCh <- struct{}{}:
-		default:
+	if atomic.AddUint32(&e.writeCounter, 1)%128 == 0 {
+		if e.active.IsFull() {
+			select {
+			case e.flushCh <- struct{}{}:
+			default:
+			}
 		}
 	}
 
