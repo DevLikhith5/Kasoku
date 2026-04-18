@@ -12,9 +12,9 @@ lsm:
     key_cache_size: 1000000
 
 compaction:
-    threshold: 16
-    max_concurrent: 4
-    l0_size_threshold: 2147483648
+    threshold: 1000
+    max_concurrent: 1
+    l0_size_threshold: 10737418240
 
 memory:
     memtable_size: 268435456

@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -25,7 +24,7 @@ type LSMEngine struct {
 	closed       atomic.Bool
 	flushCh      chan struct{}
 	compCh       chan struct{}
-	flushDone    chan struct{} // signaled when a flush completes, used for backpressure
+	flushCond    *sync.Cond // signaled when a flush completes, used for backpressure
 	wg           sync.WaitGroup
 	config       LSMConfig
 	cache        *KeyCache
@@ -104,16 +103,16 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 	}
 
 	e := &LSMEngine{
-		active:    NewMemTable(cfg.MemTableSize),
-		wal:       wal,
-		dir:       dir,
-		flushCh:   make(chan struct{}, 1),
-		compCh:    make(chan struct{}, 1),
-		flushDone: make(chan struct{}, 1),
-		config:    cfg,
-		cache:     newKeyCache(cfg.KeyCacheSize),
-		nodeID:    cfg.NodeID,
+		active:  NewMemTable(cfg.MemTableSize),
+		wal:     wal,
+		dir:     dir,
+		flushCh: make(chan struct{}, 1),
+		compCh:  make(chan struct{}, 1),
+		config:  cfg,
+		cache:   newKeyCache(cfg.KeyCacheSize),
+		nodeID:  cfg.NodeID,
 	}
+	e.flushCond = sync.NewCond(&e.mu)
 
 	if err := e.loadSSTables(); err != nil {
 		return nil, err
@@ -171,8 +170,10 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	}
 
 	e.mu.Lock()
-	// REMOVED BLOCKING BACKPRESSURE - causes stalls
-	// Trigger flush asynchronously instead
+	// Backpressure: if we have too many immutable memtables, wait for one to flush
+	for len(e.immutable) > 5 {
+		e.flushCond.Wait()
+	}
 
 	// Rotate immediately if full BEFORE writing to active
 	if e.active.IsFull() {
@@ -204,8 +205,10 @@ func (e *LSMEngine) BatchPut(pairs []storage.Entry) error {
 	}
 
 	e.mu.Lock()
-	// REMOVED BLOCKING BACKPRESSURE - causes stalls
-	// Trigger flush asynchronously instead
+	// Backpressure: wait if too many immutables
+	for len(e.immutable) > 5 {
+		e.flushCond.Wait()
+	}
 
 	// Rotate if active won't fit the batch or is already full
 	if e.active.IsFull() {
@@ -448,9 +451,6 @@ func (e *LSMEngine) flushLoop() {
 		select {
 		case <-e.flushCh:
 			// Got a flush signal, process it
-		case <-e.flushDone:
-			// Someone else is flushing, keep waiting
-			continue
 		case <-time.After(100 * time.Millisecond):
 			// Periodic check for pending data
 		}
@@ -507,8 +507,6 @@ func (e *LSMEngine) compactLoop() {
 			go func(l int) {
 				defer wg.Done()
 				e.compactLevel(l)
-				// Yield after each level to prevent complete stall
-				runtime.Gosched()
 			}(level)
 		}
 		wg.Wait()
@@ -679,10 +677,7 @@ func (e *LSMEngine) flushMemTable() error {
 		e.mu.Unlock()
 
 		// Signal that a memtable was successfully flushed
-		select {
-		case e.flushDone <- struct{}{}:
-		default:
-		}
+		e.flushCond.Broadcast()
 	}
 
 	// WAL is only safe to reset after ALL pending memtables are flushed
