@@ -184,11 +184,11 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body, result
 	var reqBody io.Reader
 
 	if body != nil {
-		jsonData, err := json.Marshal(body)
+		data, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("failed to marshal request: %w", err)
 		}
-		reqBody = bytes.NewReader(jsonData)
+		reqBody = bytes.NewReader(data)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)

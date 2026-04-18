@@ -13,13 +13,37 @@ import (
 
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 	"github.com/golang/snappy"
+	"github.com/klauspost/compress/zstd"
 )
 
 const (
 	DefaultBlockSize   = 64 * 1024  // 64KB blocks (optimized for SSD sequential I/O)
 	MaxBlockSize       = 256 * 1024 // 256KB max block size
 	BinaryEncodingMode = true       // BINARY ONLY - for maximum performance
+	UseZstdCompression = true       // Use zstd instead of snappy (faster decompression)
 )
+
+var (
+	zstdEncoder *zstd.Encoder
+	zstdDecoder *zstd.Decoder
+)
+
+func init() {
+	if UseZstdCompression {
+		enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		if err == nil {
+			zstdEncoder = enc
+		}
+		dec, err := zstd.NewReader(nil)
+		if err == nil {
+			zstdDecoder = dec
+		}
+	}
+}
+
+func decodeZstd(data []byte) ([]byte, error) {
+	return zstdDecoder.DecodeAll(data, nil)
+}
 
 type indexEntry struct {
 	Key        string `json:"k"`
@@ -292,7 +316,12 @@ func (w *SSTableWriter) WriteEntry(entry storage.Entry) error {
 
 	// Compress data block
 	if w.compress {
-		compressedData := snappy.Encode(nil, data)
+		var compressedData []byte
+		if UseZstdCompression && zstdEncoder != nil {
+			compressedData = zstdEncoder.EncodeAll(data, nil)
+		} else {
+			compressedData = snappy.Encode(nil, data)
+		}
 		// Only use compression if it actually saves space
 		if len(compressedData) < len(data) {
 			finalData = compressedData
@@ -563,11 +592,19 @@ func (r *SSTableReader) getAtIndex(idx int) (storage.Entry, error) {
 
 	// Decompress if needed
 	if entry.Compressed {
-		decompressed, err := snappy.Decode(nil, data[4:])
-		if err != nil {
-			return storage.Entry{}, err
+		if UseZstdCompression && zstdDecoder != nil {
+			decompressed, decErr := decodeZstd(data[4:])
+			if decErr != nil {
+				return storage.Entry{}, decErr
+			}
+			data = decompressed
+		} else {
+			decompressed, decErr := snappy.Decode(nil, data[4:])
+			if decErr != nil {
+				return storage.Entry{}, decErr
+			}
+			data = decompressed
 		}
-		data = decompressed
 	} else {
 		data = data[4:]
 	}
@@ -659,11 +696,19 @@ func (r *SSTableReader) Scan(prefix string) ([]storage.Entry, error) {
 		var s storage.Entry
 		blockData := data[4:] // skip length prefix
 		if entry.Compressed {
-			decompressed, err := snappy.Decode(nil, blockData)
-			if err != nil {
-				continue
+			if UseZstdCompression && zstdDecoder != nil {
+				decompressed, decErr := decodeZstd(blockData)
+				if decErr != nil {
+					continue
+				}
+				blockData = decompressed
+			} else {
+				decompressed, decErr := snappy.Decode(nil, blockData)
+				if decErr != nil {
+					continue
+				}
+				blockData = decompressed
 			}
-			blockData = decompressed
 			// After decompression, data starts directly with magic byte
 		}
 
