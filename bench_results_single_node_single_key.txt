@@ -10,88 +10,88 @@
   Read phase : 20s
 
 [1m[36m▸ Phase 1 — Write-Only  (warming 5s...)[0m
-  Seeded 38906 keys. Starting write measurement...
+  Seeded 47018 keys. Starting write measurement...
 
   [1mSEC   OPS/SEC          LATENCY[0m
   ───────────────────────────────────────────────────────
-  [36m1   [0m  [1m6257          [0m  p50 791µs       p99 14.01ms   
-  [36m2   [0m  [1m7119          [0m  p50 836µs       p99 11.21ms   
-  [36m3   [0m  [1m5106          [0m  p50 887µs       p99 12.31ms   
-  [36m4   [0m  [1m7755          [0m  p50 855µs       p99 11.29ms   
-  [36m5   [0m  [1m5838          [0m  p50 867µs       p99 11.32ms   
-  [36m6   [0m  [1m5458          [0m  p50 880µs       p99 11.36ms   
-  [36m7   [0m  [1m7242          [0m  p50 879µs       p99 11.16ms   
-  [36m8   [0m  [1m5588          [0m  p50 899µs       p99 11.41ms   
-  [36m9   [0m  [1m5117          [0m  p50 911µs       p99 11.60ms   
-  [36m10  [0m  [1m6302          [0m  p50 911µs       p99 11.75ms   
-  [36m11  [0m  [1m7594          [0m  p50 895µs       p99 11.51ms   
-  [36m12  [0m  [1m5799          [0m  p50 898µs       p99 11.46ms   
-  [36m13  [0m  [1m0             [0m  p50 898µs       p99 11.46ms   
-  [36m14  [0m  [1m5810          [0m  p50 849µs       p99 11.13ms   
-  [36m15  [0m  [1m30902         [0m  p50 631µs       p99 9.51ms    
-  [36m16  [0m  [1m41534         [0m  p50 420µs       p99 8.27ms    
-  [36m17  [0m  [1m33343         [0m  p50 348µs       p99 7.53ms    
-  [36m18  [0m  [1m32743         [0m  p50 311µs       p99 6.94ms    
-  [36m19  [0m  [1m28280         [0m  p50 289µs       p99 6.47ms    
-  [36m20  [0m  [1m37786         [0m  p50 266µs       p99 5.88ms    
+  [36m1   [0m  [1m10625         [0m  p50 382µs       p99 10.13ms   
+  [36m2   [0m  [1m9649          [0m  p50 382µs       p99 10.96ms   
+  [36m3   [0m  [1m9222          [0m  p50 383µs       p99 10.96ms   
+  [36m4   [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m5   [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m6   [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m7   [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m8   [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m9   [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m10  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m11  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m12  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m13  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m14  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m15  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m16  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m17  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m18  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  [36m19  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
 
 [1m[33m  ✍  WRITE Results [0m
   ────────────────────────────────────────────────────────────
-  Total ops        : [1m285583[0m
-  Errors           : 40526
-  Avg throughput   : [32m[1m14279 ops/sec[0m
-  p50 throughput   : 7119 ops/sec
-  p99 throughput   : 41534 ops/sec
-  Latency p50      : 266µs
-  Latency p95      : 1.94ms
-  Latency p99      : 5.88ms
-  Latency p999     : 20.74ms
+  Total ops        : [1m29496[0m
+  Errors           : 358312
+  Avg throughput   : [32m[1m1475 ops/sec[0m
+  p50 throughput   : 0 ops/sec
+  p99 throughput   : 10625 ops/sec
+  [36m20  [0m  [1m0             [0m  p50 383µs       p99 10.96ms   
+  Latency p50      : 383µs
+  Latency p95      : 2.87ms
+  Latency p99      : 10.96ms
+  Latency p999     : 41.38ms
   ────────────────────────────────────────────────────────────
 
-[1m[36m▸ Phase 2 — Read-Only  (pool: 324489 keys, batch-get: 50 keys/request)[0m
+[1m[36m▸ Phase 2 — Read-Only  (pool: 76514 keys, batch-get: 50 keys/request)[0m
   Reads routed to correct nodes via consistent hashing.
 
   [1mSEC   OPS/SEC          LATENCY[0m
   ───────────────────────────────────────────────────────
-  [36m1   [0m  [1m414447        [0m  p50 18µs        p99 106µs     
-  [36m2   [0m  [1m117823        [0m  p50 19µs        p99 231µs     
-  [36m3   [0m  [1m150092        [0m  p50 20µs        p99 273µs     
-  [36m4   [0m  [1m117859        [0m  p50 20µs        p99 332µs     
-  [36m5   [0m  [1m12861         [0m  p50 21µs        p99 444µs     
-  [36m6   [0m  [1m42275         [0m  p50 21µs        p99 694µs     
-  [36m7   [0m  [1m82124         [0m  p50 22µs        p99 763µs     
-  [36m8   [0m  [1m71841         [0m  p50 23µs        p99 861µs     
-  [36m9   [0m  [1m32393         [0m  p50 23µs        p99 972µs     
-  [36m10  [0m  [1m318           [0m  p50 23µs        p99 991µs     
-  [36m11  [0m  [1m64318         [0m  p50 23µs        p99 1.17ms    
-  [36m12  [0m  [1m136388        [0m  p50 24µs        p99 1.12ms    
-  [36m13  [0m  [1m88433         [0m  p50 25µs        p99 1.14ms    
-  [36m14  [0m  [1m59369         [0m  p50 25µs        p99 1.15ms    
-  [36m15  [0m  [1m314           [0m  p50 25µs        p99 1.17ms    
-  [36m16  [0m  [1m3892          [0m  p50 25µs        p99 1.33ms    
-  [36m17  [0m  [1m23425         [0m  p50 26µs        p99 1.45ms    
-  [36m18  [0m  [1m48403         [0m  p50 26µs        p99 1.50ms    
-  [36m19  [0m  [1m10457         [0m  p50 27µs        p99 1.59ms    
+  [36m1   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m2   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m3   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m4   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m5   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m6   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m7   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m8   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m9   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m10  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m11  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m12  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m13  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m14  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m15  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m16  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m17  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m18  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m19  [0m  [1m0             [0m  p50 -           p99 -         
 
 [1m[33m  📖  READ Results [0m
   ────────────────────────────────────────────────────────────
-  Total ops        : [1m1481423[0m
-  Errors           : 0
-  Avg throughput   : [32m[1m74055 ops/sec[0m
-  p50 throughput   : 59369 ops/sec
-  p99 throughput   : 414447 ops/sec
-  [36m20  [0m  [1m4073          [0m  p50 27µs        p99 1.61ms    
-  Latency p50      : 27µs
-  Latency p95      : 347µs
-  Latency p99      : 1.61ms
-  Latency p999     : 17.68ms
+  Total ops        : [1m0[0m
+  Errors           : 391657
+  Avg throughput   : [32m[1m0 ops/sec[0m
+  p50 throughput   : 0 ops/sec
+  p99 throughput   : 0 ops/sec
+  [36m20  [0m  [1m0             [0m  p50 -           p99 -         
+  Latency p50      : -
+  Latency p95      : -
+  Latency p99      : -
+  Latency p999     : -
   ────────────────────────────────────────────────────────────
 
 [1m[33m╔══════════════════════════════════════════════════════╗[0m
 [1m[33m║                  PEAK PERFORMANCE                   ║[0m
 [1m[33m╚══════════════════════════════════════════════════════╝[0m
-  [32m[1m✍  Writes[0m  avg 14279    ops/sec   p50 266µs     p99 5.88ms
-  [32m[1m📖 Reads[0m   avg 74055    ops/sec   p50 27µs      p99 1.61ms
-  [32m[1m⚡ Total[0m   88334 ops/sec combined (3-node cluster, RF=3)
+  [32m[1m✍  Writes[0m  avg 1475     ops/sec   p50 383µs     p99 10.96ms
+  [32m[1m📖 Reads[0m   avg 0        ops/sec   p50 -         p99 -
+  [32m[1m⚡ Total[0m   1475 ops/sec combined (3-node cluster, RF=3)
 
 [31m⚠ Error rate >5%, results may be unreliable[0m

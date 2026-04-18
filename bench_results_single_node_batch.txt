@@ -10,17 +10,87 @@
   Read phase : 20s
 
 [1m[36m▸ Phase 1 — Write-Only  (warming 5s...)[0m
-  Seeded 364850 keys. Starting write measurement...
+  Seeded 0 keys. Starting write measurement...
 
   [1mSEC   OPS/SEC          LATENCY[0m
   ───────────────────────────────────────────────────────
   [36m1   [0m  [1m0             [0m  p50 -           p99 -         
-  [36m2   [0m  [1m98750         [0m  p50 22µs        p99 303µs     
-  [36m3   [0m  [1m306350        [0m  p50 24µs        p99 283µs     
-  [36m4   [0m  [1m219400        [0m  p50 25µs        p99 295µs     
-  [36m5   [0m  [1m24350         [0m  p50 25µs        p99 297µs     
-  [36m6   [0m  [1m0             [0m  p50 25µs        p99 297µs     
-  [36m7   [0m  [1m0             [0m  p50 25µs        p99 297µs     
-  [36m8   [0m  [1m87150         [0m  p50 25µs        p99 298µs     
-  [36m9   [0m  [1m152150        [0m  p50 26µs        p99 337µs     
-  [36m10  [0m  [1m14150         [0m  p50 26µs        p99 341µs     
+  [36m2   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m3   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m4   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m5   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m6   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m7   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m8   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m9   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m10  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m11  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m12  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m13  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m14  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m15  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m16  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m17  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m18  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m19  [0m  [1m0             [0m  p50 -           p99 -         
+
+[1m[33m  ✍  WRITE Results [0m
+  ────────────────────────────────────────────────────────────
+  Total ops        : [1m0[0m
+  Errors           : 359602
+  Avg throughput   : [32m[1m0 ops/sec[0m
+  p50 throughput   : 0 ops/sec
+  p99 throughput   : 0 ops/sec
+  Latency p50      : -
+  Latency p95      : -
+  Latency p99      : -
+  Latency p999     : -
+  ────────────────────────────────────────────────────────────
+
+[1m[36m▸ Phase 2 — Read-Only  (pool: 0 keys, batch-get: 50 keys/request)[0m
+  Reads routed to correct nodes via consistent hashing.
+
+  [1mSEC   OPS/SEC          LATENCY[0m
+  ───────────────────────────────────────────────────────
+  [36m1   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m2   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m3   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m4   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m5   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m6   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m7   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m8   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m9   [0m  [1m0             [0m  p50 -           p99 -         
+  [36m10  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m11  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m12  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m13  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m14  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m15  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m16  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m17  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m18  [0m  [1m0             [0m  p50 -           p99 -         
+  [36m19  [0m  [1m0             [0m  p50 -           p99 -         
+
+[1m[33m  📖  READ Results [0m
+  ────────────────────────────────────────────────────────────
+  Total ops        : [1m0[0m
+  Errors           : 204800212
+  Avg throughput   : [32m[1m0 ops/sec[0m
+  p50 throughput   : 0 ops/sec
+  p99 throughput   : 0 ops/sec
+  [36m20  [0m  [1m0             [0m  p50 -           p99 -         
+  Latency p50      : -
+  Latency p95      : -
+  Latency p99      : -
+  Latency p999     : -
+  ────────────────────────────────────────────────────────────
+
+[1m[33m╔══════════════════════════════════════════════════════╗[0m
+[1m[33m║                  PEAK PERFORMANCE                   ║[0m
+[1m[33m╚══════════════════════════════════════════════════════╝[0m
+  [32m[1m✍  Writes[0m  avg 0        ops/sec   p50 -         p99 -
+  [32m[1m📖 Reads[0m   avg 0        ops/sec   p50 -         p99 -
+  [32m[1m⚡ Total[0m   0 ops/sec combined (3-node cluster, RF=3)
+
+[31m⚠ Error rate >5%, results may be unreliable[0m

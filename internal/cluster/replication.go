@@ -64,8 +64,6 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 	// Adaptive timeout
 	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
 
-	// fanout concurrent worker pattern
-	var quorumReached atomic.Bool
 	for _, nodeID := range replicas {
 		go func(nid string) {
 			start := time.Now()
@@ -92,29 +90,28 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 
 	// Count acks — EARLY EXIT once quorum reached
 	acks, failures := 0, 0
-	for range replicas {
+	for i := 0; i < len(replicas); i++ {
 		res := <-results
 		if res.err == nil {
 			acks++
 		} else {
 			failures++
-			n.logger.Debug("replica write failed",
-				"node", res.nodeID, "error", res.err)
+			n.logger.Debug("replica write failed", "node", res.nodeID, "error", res.err)
 		}
-		// Early exit: return as soon as quorum is reached
+		
+		// DEFINITIVE STALL KILLER: Return as soon as quorum is reached.
+		// The remaining goroutines will still send their result to the buffered channel
+		// and won't leak or block the coordinator.
 		if acks >= n.cfg.W {
-			quorumReached.Store(true)
-			// Drain remaining results to avoid goroutine leak
-			for i := len(replicas) - acks - failures; i > 0; i-- {
-				<-results
-			}
 			return nil
+		}
+		
+		// If we can't reach quorum anymore, exit early too
+		if failures > len(replicas)-n.cfg.W {
+			break
 		}
 	}
 
-	if quorumReached.Load() {
-		return nil
-	}
 	return fmt.Errorf("write quorum failed: only %d/%d acks", acks, n.cfg.W)
 }
 
@@ -160,20 +157,27 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 	}
 
 	var responses []replicaResult
-	for range replicas {
+	failures := 0
+	for i := 0; i < len(replicas); i++ {
 		res := <-results
 		if res.err == nil || errors.Is(res.err, storage.ErrKeyNotFound) {
 			responses = append(responses, res)
 			if len(responses) >= n.cfg.R {
 				// Got R responses — find highest version
 				latest := latestEntry(responses)
-				// Read repair: update stale replicas
+				// Read repair: update stale replicas in background
 				go n.readRepair(ctx, key, latest, responses)
 				if latest.entry.Tombstone {
 					return storage.Entry{}, storage.ErrKeyNotFound
 				}
 				return latest.entry, nil
 			}
+		} else {
+			failures++
+		}
+
+		if failures > len(replicas)-n.cfg.R {
+			break
 		}
 	}
 	return storage.Entry{}, fmt.Errorf("read quorum failed")
@@ -192,7 +196,6 @@ func (n *Node) ReplicatedDelete(ctx context.Context, key string) error {
 	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
 
 	// Send delete (tombstone) to ALL replicas concurrently
-	var quorumReached atomic.Bool
 	for _, nodeID := range replicas {
 		go func(nid string) {
 			start := time.Now()
@@ -221,25 +224,25 @@ func (n *Node) ReplicatedDelete(ctx context.Context, key string) error {
 		}(nodeID)
 	}
 
-	// Count acks — wait for ALL replicas to respond
+	// Count acks — EARLY EXIT once quorum reached
 	acks, failures := 0, 0
-	for range replicas {
+	for i := 0; i < len(replicas); i++ {
 		res := <-results
 		if res.err == nil {
 			acks++
 			if acks >= n.cfg.W {
-				quorumReached.Store(true)
+				return nil
 			}
 		} else {
 			failures++
-			n.logger.Warn("replica delete failed",
-				"node", res.nodeID, "error", res.err)
+			n.logger.Warn("replica delete failed", "node", res.nodeID, "error", res.err)
+		}
+		
+		if failures > len(replicas)-n.cfg.W {
+			break
 		}
 	}
 
-	if quorumReached.Load() {
-		return nil
-	}
 	return fmt.Errorf("delete quorum failed: only %d/%d acks", acks, n.cfg.W)
 }
 

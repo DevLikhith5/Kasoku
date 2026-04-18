@@ -270,7 +270,7 @@ func (e *LSMEngine) PutWithVectorClock(key string, value []byte, vc storage.Vect
 		e.mu.Unlock()
 		select {
 		case <-e.flushDone:
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(50 * time.Millisecond):
 		}
 		e.mu.Lock()
 	}
@@ -693,6 +693,12 @@ func (e *LSMEngine) flushMemTable() error {
 		}
 		e.levels[0] = append([]*SSTableReader{reader}, e.levels[0]...)
 		e.mu.Unlock()
+
+		// Signal that a memtable was successfully flushed
+		select {
+		case e.flushDone <- struct{}{}:
+		default:
+		}
 	}
 
 	// WAL is only safe to reset after ALL pending memtables are flushed
