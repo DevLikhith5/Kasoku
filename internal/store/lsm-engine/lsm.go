@@ -171,15 +171,8 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	}
 
 	e.mu.Lock()
-	// Backpressure: if we have too many immutable memtables, wait for one to flush
-	for len(e.immutable) > 5 {
-		e.mu.Unlock()
-		select {
-		case <-e.flushDone:
-		case <-time.After(100 * time.Millisecond):
-		}
-		e.mu.Lock()
-	}
+	// REMOVED BLOCKING BACKPRESSURE - causes stalls
+	// Trigger flush asynchronously instead
 
 	// Rotate immediately if full BEFORE writing to active
 	if e.active.IsFull() {
@@ -211,15 +204,8 @@ func (e *LSMEngine) BatchPut(pairs []storage.Entry) error {
 	}
 
 	e.mu.Lock()
-	// Backpressure: if we have too many immutable memtables, wait for one to flush
-	for len(e.immutable) > 5 {
-		e.mu.Unlock()
-		select {
-		case <-e.flushDone:
-		case <-time.After(100 * time.Millisecond):
-		}
-		e.mu.Lock()
-	}
+	// REMOVED BLOCKING BACKPRESSURE - causes stalls
+	// Trigger flush asynchronously instead
 
 	// Rotate if active won't fit the batch or is already full
 	if e.active.IsFull() {
@@ -265,14 +251,12 @@ func (e *LSMEngine) PutWithVectorClock(key string, value []byte, vc storage.Vect
 	}
 
 	e.mu.Lock()
-	// Backpressure
-	for len(e.immutable) > 5 {
-		e.mu.Unlock()
+	// REMOVED BLOCKING BACKPRESSURE - causes stalls
+	if len(e.immutable) > 5 {
 		select {
-		case <-e.flushDone:
-		case <-time.After(50 * time.Millisecond):
+		case e.flushCh <- struct{}{}:
+		default:
 		}
-		e.mu.Lock()
 	}
 
 	if e.active.IsFull() {
