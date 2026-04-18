@@ -3,9 +3,8 @@ set -e
 
 # Kasoku Production Setup Script
 # Usage: ./setup.sh [single|cluster|kubernetes]
-# Note: Docker files are in deploy/ directory
 
-DEPLOY_DIR="$(dirname "$0")/deploy"
+DEPLOY_DIR="$(dirname "$0")/../deploy"
 
 MODE=${1:-single}
 
