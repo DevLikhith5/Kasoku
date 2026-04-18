@@ -411,17 +411,25 @@ func (w *WAL) BatchAppend(entries []Entry) error {
 }
 
 func (w *WAL) Reset() error {
+	// Get file reference under lock, then do slow disk I/O outside lock
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	// Flush any buffered data before truncating
 	w.wbuf.Flush()
-	if err := w.file.Truncate(0); err != nil {
+	file := w.file
+	w.mu.Unlock()
+
+	// Disk I/O without holding lock - doesn't block Append()
+	if err := file.Truncate(0); err != nil {
 		return err
 	}
-	if _, err := w.file.Seek(0, 0); err != nil {
+	if _, err := file.Seek(0, 0); err != nil {
 		return err
 	}
-	w.wbuf.Reset(w.file)
+
+	// Re-acquire lock only to reset buffer
+	w.mu.Lock()
+	w.wbuf.Reset(file)
+	w.mu.Unlock()
+
 	return nil
 }
 
