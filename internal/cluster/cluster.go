@@ -346,19 +346,18 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 	successCh := make(chan struct{}, len(nodeBatches))
 
 	for addr, batch := range nodeBatches {
-		if addr == c.nodeAddr {
-			// Local batch write — use BatchPut to write all entries in a single WAL+memtable cycle
-			go func(b []rpc.BatchWriteEntry) {
-				entries := make([]storage.Entry, len(b))
-				for i, e := range b {
-					entries[i] = storage.Entry{Key: e.Key, Value: e.Value}
-				}
-				if err := c.store.BatchPut(entries); err != nil {
-					errCh <- fmt.Errorf("local batch write failed: %w", err)
-				} else {
-					successCh <- struct{}{}
-				}
-			}(batch)
+		isLocal := addr == c.nodeAddr || addr == c.nodeID
+		if isLocal {
+			// Local batch write - direct store access, no RPC
+			entries := make([]storage.Entry, len(batch))
+			for i, e := range batch {
+				entries[i] = storage.Entry{Key: e.Key, Value: e.Value}
+			}
+			if err := c.store.BatchPut(entries); err != nil {
+				errCh <- fmt.Errorf("local batch write failed: %w", err)
+			} else {
+				successCh <- struct{}{}
+			}
 			continue
 		}
 
@@ -480,8 +479,9 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 	defer cancel()
 
 	for nodeAddr, batchKeys := range nodeBatches {
-		if nodeAddr == c.nodeID {
-			// Local optimized path
+		isLocal := nodeAddr == c.nodeID || nodeAddr == c.nodeAddr
+		if isLocal {
+			// Local optimized path - direct store access, no RPC
 			localResults, err := c.store.MultiGet(batchKeys)
 			res := batchResult{}
 			if err != nil {
@@ -519,9 +519,11 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 	}
 
 	successCount := 0
+	nodeCount := len(nodeBatches)
 	for {
 		select {
 		case res := <-resChan:
+			nodeCount--
 			if res.err == nil {
 				successCount++
 				for _, e := range res.entries {
@@ -536,15 +538,15 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 			if successCount >= minSuccesses {
 				return results, nil
 			}
+			// All nodes exhausted - return what we have
+			if nodeCount <= 0 {
+				if len(results) == 0 {
+					return nil, fmt.Errorf("no successful reads from any replica")
+				}
+				return results, nil
+			}
 		}
-		// No more nodes to wait for AND no successes - return what we have (may be partial)
-		if len(results) == 0 {
-			return nil, fmt.Errorf("no successful reads from any replica")
-		}
-		return results, nil
 	}
-
-	return results, nil
 }
 
 func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
