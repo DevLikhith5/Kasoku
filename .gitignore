@@ -91,6 +91,9 @@ temp/
 Thumbs.db
 desktop.ini
 
+# IDE/Qwen settings
+.qwen/
+
 # Debug files
 *.pdb
 *.idb

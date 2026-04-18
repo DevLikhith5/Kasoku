@@ -29,35 +29,37 @@ curl http://localhost:9000/health
 
 ## Docker Deployment
 
+All Docker files are in `deploy/` directory.
+
 ### Single Node
 
 ```bash
 # Build and run
-docker build -t kasoku .
+docker build -t kasoku ./deploy
 docker run -p 9000:9000 kasoku
 
 # Or use docker-compose
-docker-compose -f docker-compose.single.yml up -d
+docker-compose -f deploy/docker-compose.single.yml up -d
 ```
 
 ### 3-Node Cluster
 
 ```bash
 # Build and start cluster
-docker-compose -f docker-compose.yml up -d
+docker-compose -f deploy/docker-compose.yml up -d
 
 # Check status
-docker-compose ps
+docker-compose -f deploy/docker-compose.yml ps
 
 # View logs
-docker-compose logs -f kasoku-node1
+docker-compose -f deploy/docker-compose.yml logs -f kasoku-node1
 ```
 
 ### With Monitoring
 
 ```bash
 # Start with Prometheus + Grafana
-docker-compose -f docker-compose.yml --profile monitoring up -d
+docker-compose -f deploy/docker-compose.yml --profile monitoring up -d
 
 # Access services:
 # - Kasoku: http://localhost:9001, :9002, :9003
