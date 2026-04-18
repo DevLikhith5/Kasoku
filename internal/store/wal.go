@@ -138,18 +138,22 @@ func (w *WAL) backgroundSync() {
 		select {
 		case <-ticker.C:
 			w.mu.Lock()
-			if w.dirty {
-				w.wbuf.Flush()
-				if err := w.file.Sync(); err != nil {
-					if w.config.OnSyncError != nil {
-						w.config.OnSyncError(err)
-					} else {
-						fmt.Fprintf(os.Stderr, "WAL fsync error: %v\n", err)
-					}
-				}
-				w.dirty = false
+			if !w.dirty {
+				w.mu.Unlock()
+				continue
 			}
+			w.wbuf.Flush()
+			w.dirty = false
+			f := w.file
 			w.mu.Unlock()
+
+			if err := f.Sync(); err != nil {
+				if w.config.OnSyncError != nil {
+					w.config.OnSyncError(err)
+				} else {
+					fmt.Fprintf(os.Stderr, "WAL fsync error: %v\n", err)
+				}
+			}
 		case <-w.stopCh:
 			return
 		}
@@ -341,6 +345,69 @@ func (w *WAL) Close() error {
 		return fmt.Errorf("WAL sync on close: %w", err)
 	}
 	return w.file.Close()
+}
+
+// BatchAppend writes multiple entries in a single lock acquisition.
+// This is significantly faster than calling Append in a loop because it
+// eliminates per-entry mutex lock/unlock overhead for batch workloads.
+func (w *WAL) BatchAppend(entries []Entry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return fmt.Errorf("WAL is closed")
+	}
+
+	for i := range entries {
+		entry := &entries[i]
+		keyLen := len(entry.Key)
+		valLen := len(entry.Value)
+		recordSize := 4 + keyLen + 4 + valLen + 8 + 8 + 1
+
+		if w.wbuf.Available() < recordSize {
+			if err := w.wbuf.Flush(); err != nil {
+				return fmt.Errorf("WAL flush: %w", err)
+			}
+		}
+
+		var hdr [4]byte
+		binary.LittleEndian.PutUint32(hdr[:], uint32(keyLen))
+		w.wbuf.Write(hdr[:])
+		w.wbuf.WriteString(entry.Key)
+		binary.LittleEndian.PutUint32(hdr[:], uint32(valLen))
+		w.wbuf.Write(hdr[:])
+		if valLen > 0 {
+			w.wbuf.Write(entry.Value)
+		}
+		var verBuf [8]byte
+		binary.LittleEndian.PutUint64(verBuf[:], entry.Version)
+		w.wbuf.Write(verBuf[:])
+		var tsBuf [8]byte
+		binary.LittleEndian.PutUint64(tsBuf[:], uint64(entry.TimeStamp.UnixNano()))
+		w.wbuf.Write(tsBuf[:])
+		op := walOpPut
+		if entry.Tombstone {
+			op = walOpDel
+		}
+		w.wbuf.WriteByte(op)
+
+		w.bytesWritten += int64(recordSize)
+		w.dirty = true
+	}
+
+	// Flush buffered data to kernel once per batch (cheap, no fsync)
+	// Background sync goroutine handles periodic fsync every SyncInterval.
+	if err := w.wbuf.Flush(); err != nil {
+		return fmt.Errorf("WAL flush: %w", err)
+	}
+	// Reset checkpoint counter — actual fsync is handled by backgroundSync
+	if w.bytesWritten >= w.config.CheckpointBytes {
+		w.bytesWritten = 0
+	}
+
+	return nil
 }
 
 func (w *WAL) Reset() error {

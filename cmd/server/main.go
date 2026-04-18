@@ -16,6 +16,7 @@ import (
 	"github.com/DevLikhith5/kasoku/internal/config"
 	"github.com/DevLikhith5/kasoku/internal/ring"
 	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
+	"flag"
 )
 
 func main() {
@@ -23,10 +24,20 @@ func main() {
 	if os.Getenv("GOGC") == "" {
 		os.Setenv("GOGC", "200")
 	}
+
+	// Parse command line flags
+	cfgPathFlag := flag.String("config", "", "Path to config file")
+	nodeIDFlag := flag.String("node-id", "", "Node ID (overrides config)")
+	portFlag := flag.Int("port", 0, "HTTP port (overrides config)")
+	flag.Parse()
+
 	// Load configuration
-	cfgPath := os.Getenv("KASOKU_CONFIG")
+	cfgPath := *cfgPathFlag
 	if cfgPath == "" {
-		cfgPath = "kasoku.yaml"
+		cfgPath = os.Getenv("KASOKU_CONFIG")
+		if cfgPath == "" {
+			cfgPath = "kasoku.yaml"
+		}
 	}
 
 	cfg, err := config.Load(cfgPath)
@@ -35,10 +46,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Apply flag overrides
+	if *nodeIDFlag != "" {
+		cfg.Cluster.NodeID = *nodeIDFlag
+	}
+	if *portFlag != 0 {
+		cfg.HTTPPort = *portFlag
+		cfg.Cluster.NodeAddr = fmt.Sprintf("http://localhost:%d", *portFlag)
+	}
+
 	// Default config
 	nodeAddr := cfg.Cluster.NodeAddr
 	if nodeAddr == "" {
-		nodeAddr = fmt.Sprintf("http://localhost:%d", cfg.Port)
+		nodeAddr = fmt.Sprintf("http://localhost:%d", cfg.HTTPPort)
 	}
 
 	// Initialize logger
@@ -148,7 +168,8 @@ func main() {
 		}
 	}()
 
-	addr := fmt.Sprintf(":%d", cfg.Port)
+	listenPort := cfg.HTTPPort
+	addr := fmt.Sprintf(":%d", listenPort)
 	logger.Info("starting HTTP server", "addr", addr, "node_id", cfg.Cluster.NodeID)
 
 	httpServer := &http.Server{

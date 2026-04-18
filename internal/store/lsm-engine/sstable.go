@@ -405,6 +405,16 @@ func NewBlockCache(maxBlocks int) *BlockCache {
 	return bc
 }
 
+func (bc *BlockCache) Len() int {
+	total := 0
+	for i := range bc.shards {
+		bc.shards[i].mu.RLock()
+		total += len(bc.shards[i].keys)
+		bc.shards[i].mu.RUnlock()
+	}
+	return total
+}
+
 func (bc *BlockCache) shardIndex(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
@@ -525,7 +535,12 @@ func (r *SSTableReader) Get(key string) (storage.Entry, error) {
 		return storage.Entry{}, storage.ErrKeyNotFound // bloom false positive
 	}
 
-	// Step 3: Check block cache first
+	return r.getAtIndex(idx)
+}
+
+// getAtIndex loads an entry from the SSTable file using its index position.
+// Assumes index is valid.
+func (r *SSTableReader) getAtIndex(idx int) (storage.Entry, error) {
 	entry := r.index[idx]
 	cacheKey := fmt.Sprintf("%s:%d", r.path, entry.Offset)
 
@@ -535,7 +550,7 @@ func (r *SSTableReader) Get(key string) (storage.Entry, error) {
 	data, cached = r.blockCache.Get(cacheKey)
 
 	if !cached {
-		// Step 4: Read the data block from disk
+		// Read the data block from disk
 		buf := make([]byte, entry.Size)
 		if _, err := r.file.ReadAt(buf, entry.Offset); err != nil {
 			return storage.Entry{}, err
@@ -546,16 +561,14 @@ func (r *SSTableReader) Get(key string) (storage.Entry, error) {
 		r.blockCache.Put(cacheKey, data)
 	}
 
-	// Step 5: Decompress if needed
+	// Decompress if needed
 	if entry.Compressed {
 		decompressed, err := snappy.Decode(nil, data[4:])
 		if err != nil {
 			return storage.Entry{}, err
 		}
 		data = decompressed
-		// After decompression, data starts directly with magic byte (no length prefix)
 	} else {
-		// Not compressed - skip length prefix to get to the actual data
 		data = data[4:]
 	}
 
@@ -564,8 +577,48 @@ func (r *SSTableReader) Get(key string) (storage.Entry, error) {
 		return decodeEntryBinary(data)
 	}
 
-	// No other formats supported
 	return storage.Entry{}, fmt.Errorf("invalid data format: no magic byte found")
+}
+
+// MultiGet retrieves multiple keys from this SSTable in a single pass.
+// Returns found entries and a list of keys that were NOT found.
+func (r *SSTableReader) MultiGet(keys []string) (map[string]storage.Entry, []string) {
+	results := make(map[string]storage.Entry)
+	var missing []string
+
+	// Step 1: Filter with Bloom Filter (bulk)
+	sstPending := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if r.filter.MightContain([]byte(k)) {
+			sstPending = append(sstPending, k)
+		} else {
+			missing = append(missing, k)
+		}
+	}
+
+	if len(sstPending) == 0 {
+		return results, keys
+	}
+
+	// Step 2: Binary search index for each candidate
+	// Since keys in SSTable are sorted, we could potentially optimize this,
+	// but for now, individual binary searches are fast enough if indices are in memory.
+	for _, k := range sstPending {
+		idx := sort.Search(len(r.index), func(i int) bool {
+			return r.index[i].Key >= k
+		})
+
+		if idx < len(r.index) && r.index[idx].Key == k {
+			entry, err := r.getAtIndex(idx)
+			if err == nil {
+				results[k] = entry
+				continue
+			}
+		}
+		missing = append(missing, k)
+	}
+
+	return results, missing
 }
 
 func (r *SSTableReader) Scan(prefix string) ([]storage.Entry, error) {

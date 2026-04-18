@@ -42,6 +42,7 @@ var (
 	workers       = flag.Int("workers", 60, "Concurrent goroutines per phase")
 	batchSize     = flag.Int("batch", 50, "Keys per batch PUT request (smaller = lower tail latency)")
 	batchGetSize  = flag.Int("batch-get", 50, "Keys per batch GET request")
+	singleNode    = flag.Bool("single-node", false, "Route all traffic to the first node only")
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -161,23 +162,7 @@ func (h *histogram) percentile(p float64) time.Duration {
 	return 0
 }
 
-func (h *histogram) reset() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for i := range h.buckets {
-		h.buckets[i] = 0
-	}
-}
 
-func (h *histogram) count() int64 {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	var n int64
-	for _, v := range h.buckets {
-		n += v
-	}
-	return n
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Shared key pool with node tracking
@@ -189,44 +174,32 @@ type keyWithNode struct {
 }
 
 type keyPool struct {
-	mu       sync.RWMutex
-	keys     []keyWithNode
-	cap      int
-	nodeKeys map[string][]keyWithNode // keys grouped by node
+	mu   sync.RWMutex
+	keys []keyWithNode
+	cap  int
 }
 
 func newKeyPool(cap int) *keyPool {
 	return &keyPool{
-		cap:      cap,
-		nodeKeys: make(map[string][]keyWithNode),
+		cap:  cap,
+		keys: make([]keyWithNode, 0, cap),
 	}
 }
 
 func (p *keyPool) push(key string, node string) {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	kwn := keyWithNode{key: key, node: node}
-	p.keys = append(p.keys, kwn)
-	p.nodeKeys[node] = append(p.nodeKeys[node], kwn)
-	if len(p.keys) > p.cap {
-		p.keys = p.keys[len(p.keys)-p.cap:]
-		// Rebuild nodeKeys map
-		p.nodeKeys = make(map[string][]keyWithNode)
-		for _, k := range p.keys {
-			p.nodeKeys[k.node] = append(p.nodeKeys[k.node], k)
-		}
+	if len(p.keys) < p.cap {
+		p.keys = append(p.keys, kwn)
+	} else {
+		// Use a random slot to replace instead of expensive slice shift
+		// This maintains a representative sample of the keyspace
+		idx := rand.Intn(p.cap)
+		p.keys[idx] = kwn
 	}
-	p.mu.Unlock()
 }
 
-func (p *keyPool) random() (string, string, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if len(p.keys) == 0 {
-		return "", "", false
-	}
-	k := p.keys[rand.Intn(len(p.keys))]
-	return k.key, k.node, true
-}
 
 func (p *keyPool) len() int {
 	p.mu.RLock()
@@ -359,7 +332,7 @@ type phaseResult struct {
 
 type phaseOp func(workerIdx int) (ops int, err error)
 
-func runPhase(name string, numWorkers int, dur time.Duration, op phaseOp) phaseResult {
+func runPhase(numWorkers int, dur time.Duration, op phaseOp) phaseResult {
 	var totalOps, totalErrs uint64
 	hist := newHistogram()
 
@@ -557,8 +530,11 @@ func main() {
 	fmt.Printf("  %sSEC   OPS/SEC          LATENCY%s\n", bold, reset)
 	fmt.Println("  " + strings.Repeat("─", 55))
 
-	writeResult := runPhase("WRITE", *workers, *writeDuration, func(workerIdx int) (int, error) {
+	writeResult := runPhase(*workers, *writeDuration, func(workerIdx int) (int, error) {
 		node := nodes[workerIdx%len(nodes)]
+		if *singleNode {
+			node = nodes[0]
+		}
 		c := clients[workerIdx]
 		_, n, err := doBatchPut(c, node, *batchSize, pool, ring)
 		return n, err
@@ -572,7 +548,7 @@ func main() {
 	fmt.Printf("  %sSEC   OPS/SEC          LATENCY%s\n", bold, reset)
 	fmt.Println("  " + strings.Repeat("─", 55))
 
-	readResult := runPhase("READ", *workers, *readDuration, func(workerIdx int) (int, error) {
+	readResult := runPhase(*workers, *readDuration, func(workerIdx int) (int, error) {
 		keys := pool.randomBatch(*batchGetSize)
 		if len(keys) == 0 {
 			return 0, fmt.Errorf("no keys")
@@ -581,7 +557,11 @@ func main() {
 		// Group keys by node
 		nodeKeys := make(map[string][]string)
 		for _, k := range keys {
-			nodeKeys[k.node] = append(nodeKeys[k.node], k.key)
+			addr := k.node
+			if *singleNode {
+				addr = nodes[0]
+			}
+			nodeKeys[addr] = append(nodeKeys[addr], k.key)
 		}
 
 		// Send batch-get to each node and sum results

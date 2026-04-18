@@ -109,7 +109,7 @@ func TestSSTable_BlockCache(t *testing.T) {
 
 		// All entries should be cached now
 		cache := reader.blockCache
-		assert.Greater(t, len(cache.keys), 0)
+		assert.Greater(t, cache.Len(), 0)
 	})
 }
 

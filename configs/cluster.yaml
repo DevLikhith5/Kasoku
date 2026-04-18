@@ -39,4 +39,4 @@ cluster:
     quorum_size: 2
     read_quorum: 1
     vnodes: 150
-    rpc_timeout_ms: 500
+    rpc_timeout_ms: 2000

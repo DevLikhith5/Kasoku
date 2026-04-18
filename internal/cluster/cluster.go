@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DevLikhith5/kasoku/internal/ring"
@@ -46,6 +47,9 @@ type Cluster struct {
 	logger            *slog.Logger
 	peers             []string
 	members           *MemberList // for sloppy quorum - check node liveness
+	ringCache         *RingCache
+	aliveSnapshot     atomic.Pointer[map[string]bool]
+	isDistributed     atomic.Bool
 }
 
 type ClusterConfig struct {
@@ -112,8 +116,18 @@ func New(cfg ClusterConfig) *Cluster {
 		peers:             cfg.Peers,
 		clients:           make(map[string]*rpc.Client),
 		nodeAddrMap:       make(map[string]string),
-		members:           cfg.Members,
 	}
+
+	if cfg.Members != nil {
+		c.members = cfg.Members
+	} else {
+		c.members = NewMemberList(cfg.NodeID)
+		// Add peers to memberlist initially
+		for _, peer := range cfg.Peers {
+			c.members.MarkAlive(peer)
+		}
+	}
+	c.ringCache = &RingCache{buckets: make([]ringCacheBucket, 1024)}
 
 	// Register this node's address
 	c.nodeAddrMap[cfg.NodeID] = cfg.NodeAddr
@@ -125,23 +139,50 @@ func New(cfg ClusterConfig) *Cluster {
 		peerNodeID := extractNodeID(peer)
 		c.nodeAddrMap[peerNodeID] = peer
 	}
+	// Initialize alive set snapshot
+	initialAlive := c.members.AliveSet()
+	c.aliveSnapshot.Store(&initialAlive)
+
+	// Set initial distributed status
+	c.updateDistributedStatus()
+
+	// Start background alive set refresher
+	go c.backgroundRefreshAliveSet()
 
 	return c
 }
 
+func (c *Cluster) backgroundRefreshAliveSet() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		snapshot := c.members.AliveSet()
+		c.aliveSnapshot.Store(&snapshot)
+	}
+}
+
+func (c *Cluster) IsDistributed() bool {
+	return c.isDistributed.Load()
+}
+
+func (c *Cluster) updateDistributedStatus() {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	c.isDistributed.Store(len(c.peers) > 0)
+}
+
 func (c *Cluster) AddPeer(nodeID, peerAddr string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.clients[peerAddr] = rpc.NewClient(peerAddr)
 	c.peers = append(c.peers, peerAddr)
 
 	if c.ring != nil {
 		c.ring.AddNode(nodeID)
-		// Register the mapping so ring lookups can resolve to this address
 		c.nodeAddrMap[nodeID] = peerAddr
 	}
+	c.mu.Unlock()
 
+	c.updateDistributedStatus()
 	c.logger.Info("peer added", "node_id", nodeID, "addr", peerAddr)
 }
 
@@ -168,13 +209,26 @@ func (c *Cluster) RemovePeer(nodeID, peerAddr string) {
 	c.logger.Info("peer removed", "node_id", nodeID, "addr", peerAddr)
 }
 
+// snapshotAliveSet returns a point-in-time view of alive nodes.
+// Optimization: uses an atomic lock-free cache to avoid mutex contention on the hot path.
+func (c *Cluster) snapshotAliveSet() map[string]bool {
+	if ptr := c.aliveSnapshot.Load(); ptr != nil {
+		return *ptr
+	}
+	if c.members == nil {
+		return nil
+	}
+	return c.members.AliveSet()
+}
+
 // ReplicatedPut writes a key-value pair to the cluster with replication
 // The coordinator pattern: this node coordinates the write to all replicas
 func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) error {
 	totalStart := time.Now()
 
+	aliveSet := c.snapshotAliveSet()
 	c.mu.RLock()
-	replicas := c.getReplicasForKey(key)
+	replicas := c.getReplicasForKey(key, aliveSet)
 	c.mu.RUnlock()
 
 	if len(replicas) == 0 {
@@ -269,12 +323,15 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 		return nil
 	}
 
+	// Snapshot alive set BEFORE acquiring c.mu to avoid nested-lock deadlock.
+	aliveSet := c.snapshotAliveSet()
+
 	// Group entries by the replicas that should receive them
 	nodeBatches := make(map[string][]rpc.BatchWriteEntry)
 
 	c.mu.RLock()
 	for key, value := range entries {
-		replicas := c.getReplicasForKey(key)
+		replicas := c.getReplicasForKey(key, aliveSet)
 		for _, replicaAddr := range replicas {
 			nodeBatches[replicaAddr] = append(nodeBatches[replicaAddr], rpc.BatchWriteEntry{
 				Key:   key,
@@ -285,29 +342,28 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 	c.mu.RUnlock()
 
 	// Fan out batch RPCs to all involved nodes
-	var wg sync.WaitGroup
 	errCh := make(chan error, len(nodeBatches))
+	successCh := make(chan struct{}, len(nodeBatches))
 
 	for addr, batch := range nodeBatches {
 		if addr == c.nodeAddr {
-			// Local batch write
-			wg.Add(1)
+			// Local batch write — use BatchPut to write all entries in a single WAL+memtable cycle
 			go func(b []rpc.BatchWriteEntry) {
-				defer wg.Done()
-				for _, e := range b {
-					if err := c.store.Put(e.Key, e.Value); err != nil {
-						errCh <- fmt.Errorf("local batch write failed: %w", err)
-						return
-					}
+				entries := make([]storage.Entry, len(b))
+				for i, e := range b {
+					entries[i] = storage.Entry{Key: e.Key, Value: e.Value}
+				}
+				if err := c.store.BatchPut(entries); err != nil {
+					errCh <- fmt.Errorf("local batch write failed: %w", err)
+				} else {
+					successCh <- struct{}{}
 				}
 			}(batch)
 			continue
 		}
 
 		// Remote batch write
-		wg.Add(1)
 		go func(nodeAddr string, b []rpc.BatchWriteEntry) {
-			defer wg.Done()
 			client, ok := c.getClient(nodeAddr)
 			if !ok {
 				errCh <- fmt.Errorf("no client for node: %s", nodeAddr)
@@ -316,17 +372,29 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 
 			if _, err := client.BatchReplicatedPut(ctx, b); err != nil {
 				errCh <- fmt.Errorf("remote batch write to %s failed: %w", nodeAddr, err)
+			} else {
+				successCh <- struct{}{}
 			}
 		}(addr, batch)
 	}
 
-	wg.Wait()
-	close(errCh)
+	// Wait for Quorum (W value)
+	acks := 0
+	possibleNodes := len(nodeBatches)
+	var lastErr error
 
-	// Return first error encountered
-	for err := range errCh {
-		if err != nil {
-			return err
+	for acks < c.quorumSize && acks < len(nodeBatches) {
+		select {
+		case <-successCh:
+			acks++
+		case err := <-errCh:
+			lastErr = err
+			possibleNodes--
+			if possibleNodes < c.quorumSize {
+				return fmt.Errorf("quorum write failed (not enough healthy nodes): %w", lastErr)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 
@@ -336,8 +404,9 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 // ReplicatedGet reads a key from the cluster
 // Reads from the primary node (coordinator pattern)
 func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error) {
+	aliveSet := c.snapshotAliveSet()
 	c.mu.RLock()
-	replicas := c.getReplicasForKey(key)
+	replicas := c.getReplicasForKey(key, aliveSet)
 	c.mu.RUnlock()
 
 	if len(replicas) == 0 {
@@ -378,9 +447,110 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 	return value, nil
 }
 
-func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
+// ReplicatedBatchGet coordinates high-throughput bulk reads from the cluster.
+// It groups keys by target replica and performs concurrent batch RPCs.
+func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[string]storage.Entry, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	aliveSet := c.snapshotAliveSet()
+	results := make(map[string]storage.Entry, len(keys))
+
+	// Group keys by target nodes
+	nodeBatches := make(map[string][]string)
 	c.mu.RLock()
-	replicas := c.getReplicasForKey(key)
+	for _, k := range keys {
+		replicas := c.getReplicasForKey(k, aliveSet)
+		if len(replicas) == 0 {
+			continue
+		}
+		// R=1 optimization: coordinate with primary replica
+		primary := replicas[0]
+		nodeBatches[primary] = append(nodeBatches[primary], k)
+	}
+	c.mu.RUnlock()
+
+	type batchResult struct {
+		entries []rpc.BatchReadEntry
+		err     error
+	}
+	resChan := make(chan batchResult, len(nodeBatches))
+	ctx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
+	defer cancel()
+
+	for nodeAddr, batchKeys := range nodeBatches {
+		if nodeAddr == c.nodeID {
+			// Local optimized path
+			localResults, err := c.store.MultiGet(batchKeys)
+			res := batchResult{}
+			if err != nil {
+				res.err = err
+			} else {
+				res.entries = make([]rpc.BatchReadEntry, 0, len(localResults))
+				for _, k := range batchKeys {
+					if entry, ok := localResults[k]; ok {
+						res.entries = append(res.entries, rpc.BatchReadEntry{
+							Key: k, Value: entry.Value, Found: true, Tombstone: entry.Tombstone,
+						})
+					}
+				}
+			}
+			resChan <- res
+			continue
+		}
+
+		go func(addr string, ks []string) {
+			client, ok := c.getClient(addr)
+			if !ok {
+				resChan <- batchResult{err: fmt.Errorf("no client for %s", addr)}
+				return
+			}
+			entries, err := client.BatchReplicatedGet(ctx, ks)
+			resChan <- batchResult{entries: entries, err: err}
+		}(nodeAddr, batchKeys)
+	}
+
+	// Dynamo eventual consistency: R=1 means only need 1 successful response
+	// Wait for minimum successes (readQuorum), not all nodes
+	minSuccesses := c.readQuorum
+	if minSuccesses <= 0 {
+		minSuccesses = 1
+	}
+
+	successCount := 0
+	for {
+		select {
+		case res := <-resChan:
+			if res.err == nil {
+				successCount++
+				for _, e := range res.entries {
+					if e.Found {
+						results[e.Key] = storage.Entry{
+							Key: e.Key, Value: e.Value, Tombstone: e.Tombstone,
+						}
+					}
+				}
+			}
+			// Got enough successes - return
+			if successCount >= minSuccesses {
+				return results, nil
+			}
+		}
+		// No more nodes to wait for AND no successes - return what we have (may be partial)
+		if len(results) == 0 {
+			return nil, fmt.Errorf("no successful reads from any replica")
+		}
+		return results, nil
+	}
+
+	return results, nil
+}
+
+func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
+	aliveSet := c.snapshotAliveSet()
+	c.mu.RLock()
+	replicas := c.getReplicasForKey(key, aliveSet)
 	c.mu.RUnlock()
 
 	if len(replicas) == 0 {
@@ -451,21 +621,39 @@ func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (c *Cluster) getReplicasForKey(key string) []string {
+// getReplicasForKey returns healthy replica addresses for a key.
+// MUST be called with c.mu.RLock held.
+// aliveSet is a pre-computed snapshot from snapshotAliveSet() — do NOT call
+// c.members.IsAlive() here because that acquires a second lock while c.mu is held,
+// causing a nested-lock deadlock under write contention.
+func (c *Cluster) getReplicasForKey(key string, aliveSet map[string]bool) []string {
 	if c.ring == nil {
 		return []string{c.nodeID}
 	}
 
+	if cached, ok := c.ringCache.Get(key); ok {
+		// Verify cached replicas are still alive
+		allAlive := true
+		for _, nodeID := range cached {
+			if !aliveSet[nodeID] {
+				allAlive = false
+				break
+			}
+		}
+		if allAlive && len(cached) >= c.replicationFactor {
+			return cached
+		}
+	}
+
 	preferred := c.ring.GetNodes(key, c.replicationFactor)
 
-	c.mu.RLock()
+	// Use pre-computed alive snapshot — no additional lock needed.
 	isAlive := func(nodeID string) bool {
-		if c.members != nil {
-			return c.members.IsAlive(nodeID)
+		if aliveSet == nil {
+			return true // no membership info: assume everyone is alive
 		}
-		return true
+		return aliveSet[nodeID]
 	}
-	c.mu.RUnlock()
 
 	var healthy []string
 	for _, nodeID := range preferred {
@@ -474,7 +662,8 @@ func (c *Cluster) getReplicasForKey(key string) []string {
 		}
 	}
 
-	if len(healthy) >= c.quorumSize {
+	if len(healthy) >= c.replicationFactor {
+		c.ringCache.Put(key, healthy)
 		return healthy
 	}
 
@@ -539,15 +728,17 @@ func (c *Cluster) GetNodeID() string {
 }
 
 func (c *Cluster) GetReplicas(key string) []string {
+	aliveSet := c.snapshotAliveSet()
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.getReplicasForKey(key)
+	return c.getReplicasForKey(key, aliveSet)
 }
 
 func (c *Cluster) IsPrimary(key string) bool {
+	aliveSet := c.snapshotAliveSet()
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	replicas := c.getReplicasForKey(key)
+	replicas := c.getReplicasForKey(key, aliveSet)
 	if len(replicas) == 0 {
 		return false
 	}

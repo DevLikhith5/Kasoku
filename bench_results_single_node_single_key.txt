@@ -1,0 +1,86 @@
+
+[1m[33m╔══════════════════════════════════════════════════════╗[0m
+[1m[33m║   KASOKU — DynamoDB-Style Pressure Benchmark         ║[0m
+[1m[33m╚══════════════════════════════════════════════════════╝[0m
+
+  Nodes      : http://localhost:9000  http://localhost:9001  http://localhost:9002
+  Workers    : 40 goroutines
+  Batch size : 1 keys/request
+  Write phase: 15s
+  Read phase : 15s
+
+[1m[36m▸ Phase 1 — Write-Only  (warming 3s...)[0m
+  Seeded 24634 keys. Starting write measurement...
+
+  [1mSEC   OPS/SEC          LATENCY[0m
+  ───────────────────────────────────────────────────────
+  [36m1   [0m  [1m10365         [0m  p50 2.47ms      p99 18.24ms   
+  [36m2   [0m  [1m8628          [0m  p50 2.52ms      p99 20.87ms   
+  [36m3   [0m  [1m8176          [0m  p50 2.75ms      p99 21.93ms   
+  [36m4   [0m  [1m7702          [0m  p50 2.92ms      p99 22.50ms   
+  [36m5   [0m  [1m8299          [0m  p50 2.96ms      p99 22.81ms   
+  [36m6   [0m  [1m3924          [0m  p50 3.05ms      p99 26.36ms   
+  [36m7   [0m  [1m1558          [0m  p50 3.10ms      p99 32.22ms   
+  [36m8   [0m  [1m3817          [0m  p50 3.18ms      p99 42.88ms   
+  [36m9   [0m  [1m7495          [0m  p50 3.20ms      p99 37.88ms   
+  [36m10  [0m  [1m3770          [0m  p50 3.24ms      p99 42.89ms   
+  [36m11  [0m  [1m1310          [0m  p50 3.31ms      p99 58.37ms   
+  [36m12  [0m  [1m1599          [0m  p50 3.39ms      p99 66.20ms   
+  [36m13  [0m  [1m7830          [0m  p50 3.35ms      p99 60.07ms   
+  [36m14  [0m  [1m6725          [0m  p50 3.37ms      p99 58.09ms   
+  [36m15  [0m  [1m4173          [0m  p50 3.39ms      p99 58.81ms   
+
+[1m[33m  ✍  WRITE Results [0m
+  ────────────────────────────────────────────────────────────
+  Total ops        : [1m85411[0m
+  Errors           : 0
+  Avg throughput   : [32m[1m5691 ops/sec[0m
+  p50 throughput   : 6725 ops/sec
+  p99 throughput   : 10365 ops/sec
+  Latency p50      : 3.40ms
+  Latency p95      : 18.91ms
+  Latency p99      : 61.07ms
+  Latency p999     : 288.73ms
+  ────────────────────────────────────────────────────────────
+
+[1m[36m▸ Phase 2 — Read-Only  (pool: 110045 keys, batch-get: 50 keys/request)[0m
+  Reads routed to correct nodes via consistent hashing.
+
+  [1mSEC   OPS/SEC          LATENCY[0m
+  ───────────────────────────────────────────────────────
+  [36m1   [0m  [1m151823        [0m  p50 185µs       p99 1.28ms    
+  [36m2   [0m  [1m98928         [0m  p50 183µs       p99 1.65ms    
+  [36m3   [0m  [1m168119        [0m  p50 180µs       p99 1.83ms    
+  [36m4   [0m  [1m185597        [0m  p50 170µs       p99 1.58ms    
+  [36m5   [0m  [1m58962         [0m  p50 179µs       p99 2.07ms    
+  [36m6   [0m  [1m148996        [0m  p50 182µs       p99 1.96ms    
+  [36m7   [0m  [1m80816         [0m  p50 184µs       p99 2.05ms    
+  [36m8   [0m  [1m168148        [0m  p50 179µs       p99 2.09ms    
+  [36m9   [0m  [1m82178         [0m  p50 182µs       p99 2.30ms    
+  [36m10  [0m  [1m65633         [0m  p50 186µs       p99 3.06ms    
+  [36m11  [0m  [1m180354        [0m  p50 183µs       p99 2.57ms    
+  [36m12  [0m  [1m111798        [0m  p50 183µs       p99 2.73ms    
+  [36m13  [0m  [1m162732        [0m  p50 183µs       p99 2.37ms    
+  [36m14  [0m  [1m180834        [0m  p50 180µs       p99 2.16ms    
+  [36m15  [0m  [1m105709        [0m  p50 183µs       p99 2.13ms    
+
+[1m[33m  📖  READ Results [0m
+  ────────────────────────────────────────────────────────────
+  Total ops        : [1m1952443[0m
+  Errors           : 0
+  Avg throughput   : [32m[1m130042 ops/sec[0m
+  p50 throughput   : 148996 ops/sec
+  p99 throughput   : 185597 ops/sec
+  Latency p50      : 183µs
+  Latency p95      : 779µs
+  Latency p99      : 2.13ms
+  Latency p999     : 8.44ms
+  ────────────────────────────────────────────────────────────
+
+[1m[33m╔══════════════════════════════════════════════════════╗[0m
+[1m[33m║                  PEAK PERFORMANCE                   ║[0m
+[1m[33m╚══════════════════════════════════════════════════════╝[0m
+  [32m[1m✍  Writes[0m  avg 5691     ops/sec   p50 3.40ms    p99 61.07ms
+  [32m[1m📖 Reads[0m   avg 130042   ops/sec   p50 183µs     p99 2.13ms
+  [32m[1m⚡ Total[0m   135733 ops/sec combined (3-node cluster, RF=3)
+

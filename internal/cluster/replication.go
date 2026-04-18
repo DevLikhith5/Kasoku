@@ -23,9 +23,9 @@ func getHTTPClient() *http.Client {
 	httpClientOnce.Do(func() {
 		httpClient = &http.Client{
 			Transport: &http.Transport{
-				MaxIdleConns:        200,
-				MaxIdleConnsPerHost: 100,
-				MaxConnsPerHost:     100,
+				MaxIdleConns:        500,
+				MaxIdleConnsPerHost: 300,
+				MaxConnsPerHost:     300,
 				IdleConnTimeout:     90 * time.Second,
 				DisableKeepAlives:   false,
 			},

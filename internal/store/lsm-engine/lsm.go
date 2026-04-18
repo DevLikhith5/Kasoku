@@ -171,20 +171,71 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 	}
 
 	e.mu.Lock()
+	// Backpressure: if we have too many immutable memtables, wait for one to flush
+	for len(e.immutable) > 5 {
+		e.mu.Unlock()
+		select {
+		case <-e.flushDone:
+		case <-time.After(100 * time.Millisecond):
+		}
+		e.mu.Lock()
+	}
+
+	// Rotate immediately if full BEFORE writing to active
+	if e.active.IsFull() {
+		e.immutable = append(e.immutable, e.active)
+		e.active = NewMemTable(e.config.MemTableSize)
+		select {
+		case e.flushCh <- struct{}{}:
+		default:
+		}
+	}
+
 	e.active.Put(entry)
 	e.cache.Invalidate(key)
 	e.mu.Unlock()
 
-	// Only check IsFull every 128 writes to reduce lock contention
-	// This trades some memory for throughput - max waste is 128 * entry_size
-	if atomic.AddUint32(&e.writeCounter, 1)%128 == 0 {
-		if e.active.IsFull() {
-			select {
-			case e.flushCh <- struct{}{}:
-			default:
-			}
+	return nil
+}
+
+// BatchPut writes multiple key-value pairs in a single WAL lock + single memtable lock.
+// This is significantly faster than calling Put in a loop for batch replication workloads.
+func (e *LSMEngine) BatchPut(pairs []storage.Entry) error {
+	if e.closed.Load() {
+		return storage.ErrEngineClosed
+	}
+
+	// Single WAL write for the whole batch
+	if err := e.wal.BatchAppend(pairs); err != nil {
+		return err
+	}
+
+	e.mu.Lock()
+	// Backpressure: if we have too many immutable memtables, wait for one to flush
+	for len(e.immutable) > 5 {
+		e.mu.Unlock()
+		select {
+		case <-e.flushDone:
+		case <-time.After(100 * time.Millisecond):
+		}
+		e.mu.Lock()
+	}
+
+	// Rotate if active won't fit the batch or is already full
+	if e.active.IsFull() {
+		e.immutable = append(e.immutable, e.active)
+		e.active = NewMemTable(e.config.MemTableSize)
+		select {
+		case e.flushCh <- struct{}{}:
+		default:
 		}
 	}
+
+	for i := range pairs {
+		e.active.Put(pairs[i])
+		e.cache.Invalidate(pairs[i].Key)
+	}
+	e.mu.Unlock()
 
 	return nil
 }
@@ -214,6 +265,25 @@ func (e *LSMEngine) PutWithVectorClock(key string, value []byte, vc storage.Vect
 	}
 
 	e.mu.Lock()
+	// Backpressure
+	for len(e.immutable) > 5 {
+		e.mu.Unlock()
+		select {
+		case <-e.flushDone:
+		case <-time.After(100 * time.Millisecond):
+		}
+		e.mu.Lock()
+	}
+
+	if e.active.IsFull() {
+		e.immutable = append(e.immutable, e.active)
+		e.active = NewMemTable(e.config.MemTableSize)
+		select {
+		case e.flushCh <- struct{}{}:
+		default:
+		}
+	}
+
 	e.active.Put(entry)
 	e.cache.Invalidate(key)
 	e.mu.Unlock()
@@ -244,9 +314,14 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 		return storage.Entry{}, storage.ErrKeyNotFound
 	}
 
-	// 3. Check immutable memtables (lock-free)
-	for _, mem := range e.immutable {
-		if entry, ok := mem.Get(key); ok {
+	// 3. Check immutable memtables (safe iteration)
+	e.mu.RLock()
+	immunes := make([]*MemTable, len(e.immutable))
+	copy(immunes, e.immutable)
+	e.mu.RUnlock()
+
+	for i := len(immunes) - 1; i >= 0; i-- {
+		if entry, ok := immunes[i].Get(key); ok {
 			if entry.Tombstone {
 				e.cache.Put(key, storage.Entry{}, false)
 				return storage.Entry{}, storage.ErrKeyNotFound
@@ -320,8 +395,14 @@ func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
 		return results, nil
 	}
 
-	// 2. Check immutable memtables (lock-free - immutable is append-only)
-	for _, mem := range e.immutable {
+	// 2. Check immutable memtables (safe iteration)
+	e.mu.RLock()
+	immunes := make([]*MemTable, len(e.immutable))
+	copy(immunes, e.immutable)
+	e.mu.RUnlock()
+
+	for i := len(immunes) - 1; i >= 0; i-- {
+		mem := immunes[i]
 		for k := range pendingKeys {
 			if entry, ok := mem.Get(k); ok {
 				if !entry.Tombstone {
@@ -344,28 +425,15 @@ func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
 	e.mu.RUnlock()
 
 	// 4. Check SSTables level by level (lock-free iteration)
+	keysToSearch := make([]string, 0, len(pendingKeys))
+	for k := range pendingKeys {
+		keysToSearch = append(keysToSearch, k)
+	}
+
 	for _, level := range levelSnapshot {
 		for _, sst := range level {
-			var sstPending []string
-			for k := range pendingKeys {
-				if sst.filter.MightContain([]byte(k)) {
-					sstPending = append(sstPending, k)
-				}
-			}
-
-			if len(sstPending) == 0 {
-				continue
-			}
-
-			for _, k := range sstPending {
-				entry, err := sst.Get(k)
-				if err == storage.ErrKeyNotFound {
-					continue
-				}
-				if err != nil {
-					return nil, err
-				}
-
+			found, missing := sst.MultiGet(keysToSearch)
+			for k, entry := range found {
 				if !entry.Tombstone {
 					results[k] = entry
 				}
@@ -375,6 +443,7 @@ func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
 			if len(pendingKeys) == 0 {
 				return results, nil
 			}
+			keysToSearch = missing
 		}
 	}
 
@@ -576,29 +645,8 @@ func (e *LSMEngine) Flush() error {
 
 func (e *LSMEngine) flushMemTable() error {
 
-	e.mu.Lock()
-	if e.active.Len() == 0 {
-		e.mu.Unlock()
-		// Signal flushDone even for no-op so blocked writers can proceed
-		select {
-		case e.flushDone <- struct{}{}:
-		default:
-		}
-		return nil
-	}
-
-	// Rotate: push active to immutable queue, create new active
-	e.immutable = append(e.immutable, e.active)
-	e.active = NewMemTable(e.config.MemTableSize)
-	e.mu.Unlock()
-
-	// Signal flushDone so any blocked writers can retry
-	select {
-	case e.flushDone <- struct{}{}:
-	default:
-	}
-
-	// Flush all immutable memtables in order
+	// Rotation now happens in Put path for zero-stall writes.
+	// This loop just drains the immutable queue to disk.
 	for {
 		e.mu.Lock()
 		if len(e.immutable) == 0 {
@@ -654,7 +702,10 @@ func (e *LSMEngine) flushMemTable() error {
 
 	// Trigger compaction if L0 has too many SSTables
 	e.mu.RLock()
-	l0Count := len(e.levels[0])
+	l0Count := 0
+	if len(e.levels) > 0 {
+		l0Count = len(e.levels[0])
+	}
 	e.mu.RUnlock()
 	// Trigger compaction if L0 has too many SSTables.
 	// Skip this if the engine is closing — compCh is closed and sends would panic.
@@ -1123,4 +1174,22 @@ func deduplicateEntries(entries []storage.Entry, tombstoneTTL time.Duration) []s
 	}
 
 	return result
+}
+
+func (e *LSMEngine) InternalStats() map[string]interface{} {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	l0Count := 0
+	if len(e.levels) > 0 {
+		l0Count = len(e.levels[0])
+	}
+
+	return map[string]interface{}{
+		"active_keys":     e.active.Len(),
+		"immutable_count": len(e.immutable),
+		"l0_sstables":     l0Count,
+		"levels":          len(e.levels),
+		"version":         e.version.Load(),
+	}
 }
