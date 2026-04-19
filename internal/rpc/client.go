@@ -20,11 +20,11 @@ type Client struct {
 func NewClient(nodeAddr string) *Client {
 	return &Client{
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 500 * time.Millisecond, // Fast timeout for replication
 			Transport: &http.Transport{
-				MaxIdleConnsPerHost: 500,
-				MaxConnsPerHost:     500,
-				IdleConnTimeout:     90 * time.Second,
+				MaxIdleConnsPerHost: 100,
+				MaxConnsPerHost:     100,
+				IdleConnTimeout:     30 * time.Second,
 				DisableKeepAlives:   false,
 			},
 		},

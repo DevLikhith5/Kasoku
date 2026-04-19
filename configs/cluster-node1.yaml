@@ -18,13 +18,13 @@ compaction:
     l0_size_threshold: 10737418240
 
 memory:
-    memtable_size: 268435456
-    max_memtable_bytes: 1073741824
+    memtable_size: 67108864  # 64MB for cluster (lower memory pressure)
+    max_memtable_bytes: 536870912
     max_immutable: 10
     bloom_fp_rate: 0.01
-    block_cache_size: 536870912
-    compression_enabled: true
-    use_zstd: true
+    block_cache_size: 268435456
+    compression_enabled: false  # Disable for cluster (reduce CPU)
+    use_zstd: false
 
 wal:
     sync: false
