@@ -19,10 +19,12 @@ compaction:
 
 memory:
     memtable_size: 268435456
-    max_memtable_bytes: 2147483648
-    max_immutable: 20
-    bloom_fp_rate: 0.005
+    max_memtable_bytes: 1073741824
+    max_immutable: 10
+    bloom_fp_rate: 0.01
     block_cache_size: 536870912
+    compression_enabled: true
+    use_zstd: true
 
 wal:
     sync: false
