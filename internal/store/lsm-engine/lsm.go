@@ -741,7 +741,14 @@ func (e *LSMEngine) flushMemTable() error {
 	}
 	e.mu.Unlock()
 
-	// WAL is only safe to reset after ALL pending memtables are flushed
+	// WAL is only safe to reset after ALL pending memtables are flushed.
+	// Save a checkpoint first so that a crash between Checkpoint() and Reset()
+	// can still recover from the correct position — not from byte 0.
+	if _, err := e.wal.Checkpoint(); err != nil {
+		slog.Warn("wal checkpoint failed (non-fatal, recovery may replay extra entries)", "error", err)
+		// Non-fatal: Reset() will still wipe the file; worst case is a
+		// slightly longer replay on next startup, not data loss.
+	}
 	if err := e.wal.Reset(); err != nil {
 		return err
 	}

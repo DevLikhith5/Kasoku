@@ -240,7 +240,17 @@ func (w *WAL) Replay(handler WALReplayHandler) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.wbuf.Flush()
-	if _, err := w.file.Seek(0, 0); err != nil {
+
+	// Load the last checkpoint so we skip entries already safely flushed
+	// to SSTables. On a clean shutdown the WAL is wiped by Reset(), so the
+	// checkpoint file may not exist — that is fine, we start from byte 0.
+	checkpoint, err := w.LoadCheckpoint()
+	if err != nil {
+		return fmt.Errorf("load checkpoint: %w", err)
+	}
+	startOffset := int64(checkpoint)
+
+	if _, err := w.file.Seek(startOffset, io.SeekStart); err != nil {
 		return err
 	}
 	defer func() { _, _ = w.file.Seek(0, io.SeekEnd) }()
@@ -253,7 +263,8 @@ func (w *WAL) Replay(handler WALReplayHandler) error {
 		return err
 	}
 	isJSON := firstByte[0] == '{'
-	if _, err := w.file.Seek(0, 0); err != nil {
+	// Seek back to startOffset (not 0) so we re-read from the checkpoint.
+	if _, err := w.file.Seek(startOffset, io.SeekStart); err != nil {
 		return err
 	}
 
@@ -430,6 +441,9 @@ func (w *WAL) Reset() error {
 	w.wbuf.Reset(file)
 	w.mu.Unlock()
 
+	// The WAL is now empty, so any old checkpoint is invalid.
+	_ = os.Remove(w.path + ".checkpoint")
+
 	return nil
 }
 
@@ -555,6 +569,11 @@ func (w *WAL) truncateBeforeUnlocked(checkpoint uint64) error {
 	}
 	w.file = f
 	w.wbuf.Reset(f)
+
+	// The file has been completely rewritten starting at byte 0.
+	// The old checkpoint offset is now invalid — remove it so Replay()
+	// reads from the beginning of the newly rewritten file.
+	_ = os.Remove(w.path + ".checkpoint")
 	return nil
 }
 

@@ -20,6 +20,9 @@ import (
 )
 
 func main() {
+	// Auto-tune memory limits
+	applyMemoryLimit()
+
 	// Reduce GC frequency for high-throughput workloads
 	if os.Getenv("GOGC") == "" {
 		os.Setenv("GOGC", "200")
