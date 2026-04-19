@@ -125,7 +125,7 @@ The **Cluster Layer** handles distribution across multiple nodes. It implements 
 
 These two layers interact at a single point: the Cluster Layer receives requests and routes them to the Storage Layer for persistence. The Storage Layer is largely unaware that it is part of a distributed system - it simply provides get and put operations. The Cluster Layer adds replication, consistency, and failure handling on top.
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Client Request                           │
 └─────────────────────────────────────────────────────────────────┘
@@ -460,11 +460,11 @@ The receiving node's HTTP handler parses the request and extracts the key and va
 
 The handler calls the Cluster Layer to determine which nodes should store this key. The consistent hashing algorithm computes CRC32("user:1001") and walks clockwise on the ring. It finds three nodes: node-1 (coordinator), node-2, and node-3.
 
-**Step 4: Vector Clock Assignment**
+#### Step 4: Vector Clock Assignment
 
 The Cluster Layer creates a vector clock for this write. The vector clock starts empty, then the coordinator node's entry is incremented. This produces a clock like {"node-1": 1} indicating that node-1 created this version.
 
-**Step 5: Local Write (W=1 Fast Path)**
+#### Step 5: Local Write (W=1 Fast Path)
 
 With W=1 configuration, the coordinator writes to its local Storage Layer and returns success immediately. The Storage Layer appends the entry to the WAL, then inserts it into the active MemTable.
 
@@ -472,11 +472,11 @@ With W=1 configuration, the coordinator writes to its local Storage Layer and re
 
 The HTTP handler returns HTTP 204 (No Content) to the client, indicating success. At this point, the client sees their write as completed.
 
-**Step 7: Async Replication (Background)**
+#### Step 7: Async Replication (Background)
 
 In the background, the coordinator replicates the write to the other nodes. For each replica node, it attempts an HTTP POST to the /internal/replicate endpoint. The replication is fire-and-forget - if it succeeds, great; if it fails (because the node is temporarily down), a hint is stored locally.
 
-**Step 8: Hint Delivery (If Needed)**
+#### Step 8: Hint Delivery (If Needed)
 
 If replication failed, the coordinator stored a hint. A background process periodically checks for unrecovered nodes. When node-2 comes back online, the coordinator delivers the pending hints and deletes them.
 
@@ -496,11 +496,11 @@ The handler parses the key and delegates to the Cluster Layer.
 
 The Cluster Layer determines which nodes should have this key: node-1, node-2, and node-3 (the same 3 nodes as for the write).
 
-**Step 4: Read Coordination (R=1 Fast Path)**
+#### Step 4: Read Coordination (R=1 Fast Path)
 
 With R=1 configuration, the coordinator reads from its local Storage Layer only. It calls Get("user:1001") on its local engine.
 
-**Step 5: Storage Layer Lookup**
+#### Step 5: Storage Layer Lookup
 
 The Storage Layer checks the MemTable first. If the key was recently written, it is found here immediately. If not, the Bloom filters of SSTables are checked, then data blocks, then progressively older levels until finding the key or determining it doesn't exist.
 
@@ -512,31 +512,31 @@ The value (or "key not found" error) is returned to the client via HTTP response
 
 Consider what happens when node-2 crashes during normal operation.
 
-**Before Failure**
+#### Before Failure
 
 Three nodes serve traffic. Client writes to node-1, which replicates to node-2 and node-3. Client reads from node-1 directly.
 
-**Failure Detection**
+#### Failure Detection
 
 Node-1's failure detector sends regular probes to node-2. After several missed responses, the phi accumulator increases node-2's suspicion level. When phi exceeds 8.0, node-2 is marked as failed.
 
-**Gossip Spreads the News**
+#### Gossip Spreads the News
 
 Node-1 includes node-2's failure in its next gossip message to node-3. Node-3 marks node-2 as failed. Over the next few seconds, all nodes agree that node-2 is down.
 
-**Write Operations Continue**
+#### Write Operations Continue
 
 New writes to keys that previously routed to node-2 now route to the next healthy node clockwise on the ring. For example, if node-2 had 1000 keys, they might now be served by node-3. This is "sloppy quorum" - we accept writes to different replicas than ideal.
 
-**Hints Accumulate**
+#### Hints Accumulate
 
 When writes attempt to replicate to node-2 and fail, hints are stored on node-1 (the coordinator). These hints accumulate until node-2 recovers.
 
-**Node Recovery**
+#### Node Recovery
 
 When node-2 comes back online, it announces itself through gossip. The hint delivery process on node-1 detects that node-2 is available again and begins delivering pending hints. Node-2 receives the data that it missed during its outage.
 
-**Compaction and Anti-Entropy**
+#### Compaction and Anti-Entropy
 
 During recovery, node-2 might have divergent data. The read repair process (triggered by normal reads) pushes correct values to node-2. The anti-entropy process (continuous background operation) uses Merkle trees to find and fix any remaining differences.
 
@@ -614,13 +614,13 @@ With R>1 (reading from multiple replicas and waiting for quorum), throughput dec
 
 Throughput numbers describe aggregate performance, but applications care about latency for individual operations.
 
-**Percentiles Explained**
+#### Percentiles Explained
 
 When we say "p99 latency is 500 microseconds," we mean that 99% of operations complete within 500 microseconds. The slowest 1% might take much longer - 5 milliseconds or more.
 
 For interactive applications, p99 latency matters more than averages. A user whose request hits the p99 percentile experiences a noticeable delay. Designing for p99 ensures that even unusual requests complete quickly.
 
-**Observed Latencies**
+#### Observed Latencies
 
 Single-node writes at 79K ops/sec showed p50 latency around 80 microseconds and p99 latency around 450 microseconds. These numbers include all storage engine operations - WAL append, MemTable insert, and cache updates.
 
@@ -645,19 +645,19 @@ These results validate the hypothesis that LSM-tree storage can significantly im
 
 Kasoku has several limitations that production systems might need to address.
 
-**No Transaction Support**
+#### No Transaction Support
 
 Kasoku does not support atomic multi-key operations. If an application needs to atomically update multiple keys, it must implement its own coordination, for example using a distributed lock service.
 
-**No SQL or Query Language**
+#### No SQL or Query Language
 
 Kasoku provides only key-value access. Applications requiring range queries, joins, or SQL expressions must implement these in application code or use a different system.
 
-**No Authentication or Authorization**
+#### No Authentication or Authorization
 
 The current implementation has no access control. Any client that can reach the HTTP port can read or write any key. Production deployments should be network-isolated or protected by a reverse proxy with authentication.
 
-**Limited Monitoring**
+#### Limited Monitoring
 
 While Kasoku exposes Prometheus-format metrics, it lacks a built-in dashboard or alerting system. Operators should integrate with external monitoring infrastructure like Grafana or DataDog.
 
@@ -671,23 +671,23 @@ The tradeoff is explicit: higher W means more replicas must acknowledge each wri
 
 Several enhancements could improve Kasoku's capabilities.
 
-**Transaction Support**
+#### Transaction Support
 
 Adding support for distributed transactions would enable atomic multi-key operations. This could use two-phase commit for correctness or optimistic concurrency for performance.
 
-**Range Queries**
+#### Range Queries
 
 Implementing range scan operations would enable queries like "all keys starting with user:". Range queries could be supported by maintaining additional indexes or using SSTable merge algorithms.
 
-**Tiered Storage**
+#### Tiered Storage
 
 Hot data in the MemTable and recent SSTables could be stored on fast SSD storage, while older cold data moves to cheaper HDD or object storage. This would improve cost-efficiency for large deployments.
 
-**Read Replicas**
+#### Read Replicas
 
 Adding asynchronous read replicas would enable scaling read throughput horizontally. Read replicas would lag the primary by a configurable amount but could serve reads at lower latency for geographically distributed deployments.
 
-**Partition Tolerance Improvements**
+#### Partition Tolerance Improvements
 
 The current hinted handoff mechanism stores hints on a single node. A more robust approach would distribute hints across multiple nodes for higher durability during extended partitions.
 

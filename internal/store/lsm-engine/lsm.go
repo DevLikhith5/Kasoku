@@ -14,32 +14,32 @@ import (
 )
 
 type LSMEngine struct {
-	mu           sync.RWMutex
-	active       *MemTable
-	immutable    []*MemTable // queue of memtables waiting to flush
-	wal          *storage.WAL
-	levels       [][]*SSTableReader
-	version      atomic.Uint64
-	dir          string
-	closed       atomic.Bool
-	flushCh      chan struct{}
-	compCh       chan struct{}
-	flushCond    *sync.Cond // signaled when a flush completes, used for backpressure
-	wg           sync.WaitGroup
-	config       LSMConfig
-	cache        *KeyCache
-	nodeID       string // node identifier for vector clock
-	writeCounter uint32 // atomic counter to reduce IsFull check frequency
+	mu              sync.RWMutex
+	active          *MemTable
+	immutable       []*MemTable // queue of memtables waiting to flush
+	wal             *storage.WAL
+	levels          [][]*SSTableReader
+	version         atomic.Uint64
+	dir             string
+	closed          atomic.Bool
+	flushCh         chan struct{}
+	compCh          chan struct{}
+	flushCond       *sync.Cond // signaled when a flush completes, used for backpressure
+	wg              sync.WaitGroup
+	config          LSMConfig
+	cache           *KeyCache
+	nodeID          string // node identifier for vector clock
+	writeCounter    uint32 // atomic counter to reduce IsFull check frequency
 	maxFlushWorkers int
-	nextFlushID  uint64
-	nextInsertID uint64
-	flushMap     map[uint64]*SSTableReader
-	flushWg      sync.WaitGroup
+	nextFlushID     uint64
+	nextInsertID    uint64
+	flushMap        map[uint64]*SSTableReader
+	flushWg         sync.WaitGroup
 }
 
 type LSMConfig struct {
-	MemTableSize          int64         // soft limit for memtable
-	MaxMemtableBytes     int64         // total memory for all memtables
+	MemTableSize        int64         // soft limit for memtable
+	MaxMemtableBytes    int64         // total memory for all memtables
 	WALSyncInterval     time.Duration // background sync interval (0 = sync every write)
 	WALCheckpointBytes  int64         // bytes written before checkpoint sync (0 = use default)
 	WALMaxBufferedBytes int64         // max buffered before forced flush (0 = use default)
@@ -49,15 +49,15 @@ type LSMConfig struct {
 	LevelRatio          float64 // size ratio between levels
 	KeyCacheSize        int     // number of entries in key cache
 	NodeID              string  // node identifier for vector clock
-	MaxImmutable       int     // max immutable memtables in queue (prevent memory leak)
-	MaxFlushWorkers    int     // number of concurrent flush workers
+	MaxImmutable        int     // max immutable memtables in queue (prevent memory leak)
+	MaxFlushWorkers     int     // number of concurrent flush workers
 }
 
 const (
 	DefaultKeyCacheSize    = 1000000           // 1M entries (increased from 10K)
 	DefaultLevelRatio      = 10.0              // 10x ratio (fewer levels = faster)
 	DefaultL0SizeThreshold = 256 * 1024 * 1024 // 256MB (2x memtable)
-	DefaultMaxImmutable   = 10                 // Max immutable memtables (100MB each = 1GB max)
+	DefaultMaxImmutable    = 10                // Max immutable memtables (100MB each = 1GB max)
 )
 
 func (e *LSMEngine) PutEntry(entry storage.Entry) error {
@@ -117,14 +117,14 @@ func NewLSMEngineWithConfig(dir string, cfg LSMConfig) (*LSMEngine, error) {
 	}
 
 	e := &LSMEngine{
-		active:  NewMemTable(cfg.MemTableSize),
-		wal:     wal,
-		dir:     dir,
-		flushCh: make(chan struct{}, 1),
-		compCh:  make(chan struct{}, 1),
-		config:  cfg,
-		cache:   newKeyCache(cfg.KeyCacheSize),
-		nodeID:  cfg.NodeID,
+		active:          NewMemTable(cfg.MemTableSize),
+		wal:             wal,
+		dir:             dir,
+		flushCh:         make(chan struct{}, 1),
+		compCh:          make(chan struct{}, 1),
+		config:          cfg,
+		cache:           newKeyCache(cfg.KeyCacheSize),
+		nodeID:          cfg.NodeID,
 		maxFlushWorkers: cfg.MaxFlushWorkers,
 		flushMap:        make(map[uint64]*SSTableReader),
 	}
@@ -333,9 +333,7 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 	// 4. Take brief snapshot of levels for SSTable iteration
 	e.mu.RLock()
 	levelSnapshot := make([][]*SSTableReader, len(e.levels))
-	for i, level := range e.levels {
-		levelSnapshot[i] = level
-	}
+	copy(levelSnapshot, e.levels)
 	e.mu.RUnlock()
 
 	// 5. Check SSTables (lock-free iteration)
@@ -418,9 +416,7 @@ func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
 	// 3. Take brief snapshot of levels for SSTable iteration
 	e.mu.RLock()
 	levelSnapshot := make([][]*SSTableReader, len(e.levels))
-	for i, level := range e.levels {
-		levelSnapshot[i] = level
-	}
+	copy(levelSnapshot, e.levels)
 	e.mu.RUnlock()
 
 	// 4. Check SSTables level by level (lock-free iteration)
@@ -798,7 +794,8 @@ func (e *LSMEngine) loadSSTables() error {
 
 		reader, err := OpenSSTable(path)
 		if err != nil {
-			return err
+			slog.Warn("skipping incompatible or corrupted SSTable", "path", path, "error", err)
+			continue
 		}
 
 		levelMap[level] = append(levelMap[level], reader)
@@ -1242,9 +1239,9 @@ func (e *LSMEngine) InternalStats() map[string]interface{} {
 		"levels":          len(e.levels),
 		"version":         e.version.Load(),
 		"config": LSMConfig{
-			LevelRatio:      10.0,
+			LevelRatio:          10.0,
 			CompactionThreshold: 8,
-			MaxFlushWorkers: 4,
+			MaxFlushWorkers:     4,
 		},
 	}
 }
