@@ -68,19 +68,25 @@ type CompactionConfig struct {
 
 type MemoryConfig struct {
 	// Memtable size in bytes
-	MemTableSize int64 `yaml:"memtable_size" env:"KASOKU_MEMTABLE_SIZE" default:"67108864"` // 64MB
+	MemTableSize int64 `yaml:"memtable_size" env:"KASOKU_MEMTABLE_SIZE" default:"268435456"` // 256MB (increased from 64MB)
 
 	// Max memory for memtables
-	MaxMemtableBytes int64 `yaml:"max_memtable_bytes" env:"KASOKU_MAX_MEMTABLE_BYTES" default:"268435456"` // 256MB
+	MaxMemtableBytes int64 `yaml:"max_memtable_bytes" env:"KASOKU_MAX_MEMTABLE_BYTES" default:"1073741824"` // 1GB (increased from 256MB)
 
 	// Maximum number of immutable memtables in queue
-	MaxImmutable int `yaml:"max_immutable" env:"KASOKU_MAX_IMMUTABLE" default:"20"`
+	MaxImmutable int `yaml:"max_immutable" env:"KASOKU_MAX_IMMUTABLE" default:"10"`
 
 	// Bloom filter false positive rate
 	BloomFPRate float64 `yaml:"bloom_fp_rate" env:"KASOKU_BLOOM_FP_RATE" default:"0.01"`
 
-	// Block cache size
-	BlockCacheSize int64 `yaml:"block_cache_size" env:"KASOKU_BLOCK_CACHE_SIZE" default:"134217728"` // 128MB
+	// Block cache size (increased for better read performance)
+	BlockCacheSize int64 `yaml:"block_cache_size" env:"KASOKU_BLOCK_CACHE_SIZE" default:"1073741824"` // 1GB
+
+	// Enable compression (disable for read-heavy workloads)
+	CompressionEnabled bool `yaml:"compression_enabled" env:"KASOKU_COMPRESSION_ENABLED" default:"true"`
+
+	// Use zstd (faster) vs snappy (more compatible)
+	UseZstd bool `yaml:"use_zstd" env:"KASOKU_USE_ZSTD" default:"true"`
 }
 
 type WALConfig struct {

@@ -85,9 +85,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize block cache from config
+	// Initialize block cache and compression from config
 	lsmengine.InitBlockCache(cfg.Memory.BlockCacheSize)
 	logger.Info("block cache initialized", "size_bytes", cfg.Memory.BlockCacheSize)
+
+	// Apply compression settings
+	lsmengine.SetCompression(cfg.Memory.CompressionEnabled, cfg.Memory.UseZstd)
+	logger.Info("compression configured", "enabled", cfg.Memory.CompressionEnabled, "use_zstd", cfg.Memory.UseZstd)
 
 	// Initialize metrics
 	m := metrics.New()

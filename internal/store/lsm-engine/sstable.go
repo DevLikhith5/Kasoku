@@ -20,16 +20,35 @@ const (
 	DefaultBlockSize   = 64 * 1024  // 64KB blocks (optimized for SSD sequential I/O)
 	MaxBlockSize       = 256 * 1024 // 256KB max block size
 	BinaryEncodingMode = true       // BINARY ONLY - for maximum performance
-	UseZstdCompression = true       // Use zstd instead of snappy (faster decompression)
 )
 
 var (
+	CompressEnabled = true       // Configurable at runtime
+	UseZstdCompression = true   // Use zstd (faster) vs snappy
 	zstdEncoder *zstd.Encoder
 	zstdDecoder *zstd.Decoder
 )
 
+func SetCompression(enabled, useZstd bool) {
+	CompressEnabled = enabled
+	UseZstdCompression = useZstd
+
+	// Initialize encoder/decoder based on setting
+	if enabled && useZstd {
+		enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		if err == nil {
+			zstdEncoder = enc
+		}
+		dec, err := zstd.NewReader(nil)
+		if err == nil {
+			zstdDecoder = dec
+		}
+	}
+}
+
 func init() {
-	if UseZstdCompression {
+	// Default: enable zstd compression
+	if CompressEnabled && UseZstdCompression {
 		enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
 		if err == nil {
 			zstdEncoder = enc
@@ -314,8 +333,8 @@ func (w *SSTableWriter) WriteEntry(entry storage.Entry) error {
 	var finalData []byte
 	compressed := false
 
-	// Compress data block
-	if w.compress {
+	// Compress data block (only if compression is enabled)
+	if CompressEnabled && w.compress {
 		var compressedData []byte
 		if UseZstdCompression && zstdEncoder != nil {
 			compressedData = zstdEncoder.EncodeAll(data, nil)
@@ -599,9 +618,9 @@ func (r *SSTableReader) getAtIndex(idx int) (storage.Entry, error) {
 		r.blockCache.Put(cacheKey, data)
 	}
 
-	// Decompress if needed
+	// Decompress if needed (check CompressEnabled)
 	if entry.Compressed {
-		if UseZstdCompression && zstdDecoder != nil {
+		if CompressEnabled && UseZstdCompression && zstdDecoder != nil {
 			decompressed, decErr := decodeZstd(data[4:])
 			if decErr != nil {
 				return storage.Entry{}, decErr
@@ -701,11 +720,11 @@ func (r *SSTableReader) Scan(prefix string) ([]storage.Entry, error) {
 			r.blockCache.Put(cacheKey, data)
 		}
 
-		// Decompress if needed
+		// Decompress if needed (check CompressEnabled)
 		var s storage.Entry
 		blockData := data[4:] // skip length prefix
 		if entry.Compressed {
-			if UseZstdCompression && zstdDecoder != nil {
+			if CompressEnabled && UseZstdCompression && zstdDecoder != nil {
 				decompressed, decErr := decodeZstd(blockData)
 				if decErr != nil {
 					continue

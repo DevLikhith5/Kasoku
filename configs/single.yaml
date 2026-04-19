@@ -1,4 +1,5 @@
 # Single Node Configuration for Benchmarking
+# Tuned for maximum write throughput
 data_dir: ./data/node-1
 port: 9000
 http_port: 9000
@@ -7,7 +8,7 @@ log_level: error
 lsm:
     levels: 5
     level_ratio: 10
-    l0_base_size: 67108864
+    l0_base_size: 268435256
     key_cache_size: 1000000
     max_flush_workers: 4
 
@@ -17,11 +18,13 @@ compaction:
     l0_size_threshold: 10737418240
 
 memory:
-    memtable_size: 67108864 # 64MB
-    max_memtable_bytes: 5368709120
-    max_immutable: 20
-    bloom_fp_rate: 0.005
-    block_cache_size: 1073741824
+    memtable_size: 268435456 # 256MB (large for writes)
+    max_memtable_bytes: 1073741824 # 1GB max
+    max_immutable: 10
+    bloom_fp_rate: 0.01
+    block_cache_size: 1073741824 # 1GB
+    compression_enabled: true # Enable compression for writes
+    use_zstd: true # Use faster zstd
 
 wal:
     sync: false
