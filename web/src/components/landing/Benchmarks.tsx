@@ -3,15 +3,15 @@ import { useRef } from 'react'
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
 const singleNodeData = [
-  { name: 'Writes', value: 43000, fill: '#e11d5a', displayValue: '43K' },
-  { name: 'Reads (Single-Key)', value: 301000, fill: '#f43f5e', displayValue: '301K' },
-  { name: 'Batch Reads', value: 340000, fill: '#fb7185', displayValue: '340K' },
+  { name: 'Writes', value: 226000, fill: '#e11d5a', displayValue: '226K' },
+  { name: 'Reads (Single-Key)', value: 371000, fill: '#f43f5e', displayValue: '371K' },
+  { name: 'Batch Reads', value: 400000, fill: '#fb7185', displayValue: '400K' },
 ]
 
 const clusterData = [
-  { name: 'Writes', value: 9200, fill: '#e11d5a', displayValue: '9.2K' },
+  { name: 'Writes (RF=3)', value: 200000, fill: '#e11d5a', displayValue: '200K+' },
   { name: 'Reads (Single-Key)', value: 330000, fill: '#f43f5e', displayValue: '330K' },
-  { name: 'Batch Reads (Peak)', value: 423000, fill: '#fb7185', displayValue: '423K' },
+  { name: 'Batch Reads (Peak)', value: 490000, fill: '#fb7185', displayValue: '490K' },
 ]
 
 const MIN_BAR_HEIGHT = 4 // Minimum visible bar height in pixels
@@ -160,16 +160,16 @@ export function Benchmarks() {
           className="benchmark-highlights"
         >
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">490K</span>
-            <span className="benchmark-highlight-label">Peak ops/sec (cluster batch)</span>
+            <span className="benchmark-highlight-value">200K+</span>
+            <span className="benchmark-highlight-label">Writes/sec (cluster)</span>
           </div>
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">83.5K</span>
+            <span className="benchmark-highlight-value">226K</span>
             <span className="benchmark-highlight-label">Writes/sec (single node)</span>
           </div>
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">109K</span>
-            <span className="benchmark-highlight-label">Reads/sec (cluster)</span>
+            <span className="benchmark-highlight-value">371K</span>
+            <span className="benchmark-highlight-label">Reads/sec (single node)</span>
           </div>
         </motion.div>
       </div>

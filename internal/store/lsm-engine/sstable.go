@@ -90,7 +90,7 @@ func encodeEntryBinary(entry storage.Entry) []byte {
 	// Calculate VectorClock size
 	vcLen := 0
 	var vcData []byte
-	if entry.VectorClock != nil && len(entry.VectorClock) > 0 {
+	if len(entry.VectorClock) > 0 {
 		vcData = encodeVectorClock(entry.VectorClock)
 		vcLen = len(vcData)
 	}
@@ -155,7 +155,7 @@ func encodeEntryBinary(entry storage.Entry) []byte {
 }
 
 func encodeVectorClock(vc storage.VectorClock) []byte {
-	if vc == nil || len(vc) == 0 {
+	if len(vc) == 0 {
 		return nil
 	}
 
@@ -517,8 +517,17 @@ func OpenSSTable(path string) (*SSTableReader, error) {
 	}
 
 	// Read 32-byte footer from end of file
+	// Check if file is large enough for footer (at least 32 bytes)
+	fInfo, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if fInfo.Size() < 32 {
+		return nil, fmt.Errorf("file too small for footer: %d bytes (legacy or corrupted)", fInfo.Size())
+	}
+
 	var footer [32]byte
-	if _, err := f.ReadAt(footer[:], mustFileSize(f)-32); err != nil {
+	if _, err := f.ReadAt(footer[:], fInfo.Size()-32); err != nil {
 		return nil, err
 	}
 	indexOffset := int64(binary.LittleEndian.Uint64(footer[0:]))
@@ -729,12 +738,4 @@ func (r *SSTableReader) Scan(prefix string) ([]storage.Entry, error) {
 
 func (r *SSTableReader) Close() error {
 	return r.file.Close()
-}
-
-func mustFileSize(f *os.File) int64 {
-	info, err := f.Stat()
-	if err != nil {
-		return 0
-	}
-	return info.Size()
 }

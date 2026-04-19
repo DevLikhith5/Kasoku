@@ -50,6 +50,9 @@ type LSMConfig struct {
 
 	// Base size for L0
 	L0BaseSize int64 `yaml:"l0_base_size" env:"KASOKU_LSM_L0_BASE_SIZE" default:"67108864"` // 64MB
+
+	// Maximum concurrent flush workers
+	MaxFlushWorkers int `yaml:"max_flush_workers" env:"KASOKU_LSM_MAX_FLUSH_WORKERS" default:"4"`
 }
 
 type CompactionConfig struct {
@@ -69,6 +72,9 @@ type MemoryConfig struct {
 
 	// Max memory for memtables
 	MaxMemtableBytes int64 `yaml:"max_memtable_bytes" env:"KASOKU_MAX_MEMTABLE_BYTES" default:"268435456"` // 256MB
+
+	// Maximum number of immutable memtables in queue
+	MaxImmutable int `yaml:"max_immutable" env:"KASOKU_MAX_IMMUTABLE" default:"20"`
 
 	// Bloom filter false positive rate
 	BloomFPRate float64 `yaml:"bloom_fp_rate" env:"KASOKU_BLOOM_FP_RATE" default:"0.01"`
@@ -139,9 +145,10 @@ func DefaultConfig() *Config {
 		LogLevel: "info",
 		LogFile:  "",
 		LSM: LSMConfig{
-			Levels:     7,
-			LevelRatio: 10.0,
-			L0BaseSize: 64 * 1024 * 1024,
+			Levels:          7,
+			LevelRatio:      10.0,
+			L0BaseSize:      64 * 1024 * 1024,
+			MaxFlushWorkers: 4,
 		},
 		Compaction: CompactionConfig{
 			Threshold:       4,
@@ -151,6 +158,7 @@ func DefaultConfig() *Config {
 		Memory: MemoryConfig{
 			MemTableSize:     64 * 1024 * 1024,
 			MaxMemtableBytes: 256 * 1024 * 1024,
+			MaxImmutable:     20,
 			BloomFPRate:      0.01,
 			BlockCacheSize:   128 * 1024 * 1024,
 		},

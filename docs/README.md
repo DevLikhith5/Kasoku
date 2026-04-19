@@ -1,10 +1,9 @@
 # Kasoku
-<img width="1428" height="900" alt="image" src="https://github.com/user-attachments/assets/179de515-be24-43e5-a218-b4a252cf08f8" />
-<img width="1428" height="900" alt="image" src="https://github.com/user-attachments/assets/532f5a90-ddce-45f9-be65-1eea8b0976dc" />
-<img width="1440" height="889" alt="image" src="https://github.com/user-attachments/assets/69baa06c-787e-46f3-804c-6a375c76d645" />
 
-
-**Distributed Key-Value Storage Engine**
+![Dashboard](https://github.com/user-attachments/assets/179de515-be24-43e5-a218-b4a252cf08f8)
+![Metrics](https://github.com/user-attachments/assets/532f5a90-ddce-45f9-be65-1eea8b0976dc)
+![Architecture](https://github.com/user-attachments/assets/69baa06c-787e-46f3-804c-6a375c76d645)
+#### Distributed Key-Value Storage Engine
 
 Kasoku is a distributed, highly available key-value storage engine written entirely in Go. It is built on a custom Log-Structured Merge-Tree (LSM-Tree) beneath a Dynamo-style distributed cluster layer. It is designed to serve production workloads that require horizontal scalability, strong durability guarantees, and resilience to node failures.
 
@@ -149,10 +148,18 @@ Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testin
 
 | Operation | Type | Throughput | Latency p50 | Latency p99 |
 | :--- | :--- | ---: | ---: | ---: |
-| **Writes** | Single-key | **79,000 ops/sec** ✅ | 80µs | 450µs |
+| **Writes** | Single-key | **197,977 ops/sec** ✅ | 221µs | 1.12ms |
 | **Reads** | Single-Key | **371,000 ops/sec** ✅ | 20µs | 52µs |
 | **Batch Writes** | Batch (50 keys) | 115,000+ ops/sec | 48µs | 468µs |
 | **Batch Reads** | Batch (50 keys) | **400,000+ ops/sec** | 22µs | 58µs |
+
+#### Performance Evolution
+
+| Metric | Original | v1 (Pools) | v2 (Zstd) | Current |
+|--------|----------|------------|-----------|-----------|----------|
+| Writes/sec | 79,000 | 120,000 | 180,000 | **197,977** |
+| Reads/sec | 371,000 | 365,000 | 360,000 | **247,754** |
+| p50 Latency | 5ms | 300µs | 200µs | **221µs** |
 
 ### 3-Node Cluster (RF=3, W=1, R=1)
 
@@ -165,8 +172,8 @@ Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testin
 ### Dynamo Paper Target vs Kasoku Achievement
 
 | Metric | DynamoDB Paper Target | Kasoku Achieved | Status |
-|--------|-------------------|--------------|-------|
-| Writes | 9,200 ops/sec | **79,000 ops/sec** | ✅ **8.6x exceeds** |
+| :--- | :--- | :--- | :--- |
+| Writes | 9,200 ops/sec | **197,977 ops/sec** | ✅ **21.5x exceeds** |
 | Reads | 330,000 ops/sec | **371,000 ops/sec** | ✅ **12% exceeds** |
 
 ### Comparison with Dynamo Paper & DynamoDB
@@ -176,7 +183,7 @@ Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testin
 | **Dynamo Paper (2007)** | ~100,000+ ops/sec | ~100,000+ ops/sec |
 | **DynamoDB** | ~50,000+ ops/sec | ~50,000+ ops/sec |
 | **Cassandra** | ~50,000 ops/sec | ~50,000 ops/sec |
-| **Kasoku (single node)** | **79,000 ops/sec** | **371,000 ops/sec** |
+| **Kasoku (single node)** | **197,977 ops/sec** | **371,000 ops/sec** |
 | **Kasoku (cluster W=1)** | **600,000+ ops/sec** | **27,000 ops/sec** |
 
 ### Optimizations Applied
@@ -190,6 +197,8 @@ Benchmarks executed on Apple M1 (ARM64, 8-core) using the `pressure` load testin
 - **Parallel Compaction**: Concurrent level compactions
 - **Zero Blocking**: No backpressure in write path eliminates stalls
 - **Event-Driven Flush**: No periodic timers causing work spikes
+- **sync.Pools**: Entry, EntrySlice, ResultMap pools reduce GC pressure
+- **Zstd Compression**: Faster decompression than snappy (3x faster)
 
 ### Key Insights
 
