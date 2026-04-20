@@ -17,6 +17,9 @@ High-performance distributed key-value store implementing Amazon Dynamo paper wi
 cd docs
 ./setup.sh single   # Start single node
 ./setup.sh cluster  # Start 3-node cluster
+
+# Or run benchmarks
+./run-benchmarks.sh
 ```
 
 ## Project Structure
