@@ -22,10 +22,11 @@ func NewClient(nodeAddr string) *Client {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				MaxIdleConnsPerHost: 500,
+				MaxIdleConnsPerHost:   500,
 				MaxConnsPerHost:     500,
 				IdleConnTimeout:     90 * time.Second,
 				DisableKeepAlives:   false,
+				ResponseHeaderTimeout: 5 * time.Second,
 			},
 		},
 		baseURL: nodeAddr,
