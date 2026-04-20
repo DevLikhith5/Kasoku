@@ -204,7 +204,10 @@ func (w *WAL) Append(entry Entry) error {
 	w.dirty = true
 
 	// Check checkpoint threshold - sync and checkpoint if needed
-	if w.bytesWritten >= w.config.CheckpointBytes {
+	// In legacy mode (SyncInterval=0), always checkpoint each write
+	// In async mode, only checkpoint when CheckpointBytes threshold is reached
+	shouldCheckpoint := w.config.SyncInterval == 0 || (w.config.CheckpointBytes > 0 && w.bytesWritten >= w.config.CheckpointBytes)
+	if shouldCheckpoint {
 		w.wbuf.Flush()
 		if err := w.file.Sync(); err != nil {
 			if w.config.OnSyncError != nil {
@@ -403,7 +406,10 @@ func (w *WAL) BatchAppend(entries []Entry) error {
 		return fmt.Errorf("WAL flush: %w", err)
 	}
 	// Reset checkpoint counter — actual fsync is handled by backgroundSync
-	if w.bytesWritten >= w.config.CheckpointBytes {
+	// In legacy mode (SyncInterval=0), reset after every batch
+	// In async mode, only reset when threshold is reached
+	shouldReset := w.config.SyncInterval == 0 || (w.config.CheckpointBytes > 0 && w.bytesWritten >= w.config.CheckpointBytes)
+	if shouldReset {
 		w.bytesWritten = 0
 	}
 

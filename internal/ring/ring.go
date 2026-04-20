@@ -95,7 +95,7 @@ func (r *Ring) GetNodes(key string, n int) []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	if len(r.nodes) == 0 {
+	if len(r.vnodes) == 0 {
 		return nil
 	}
 
@@ -123,6 +123,9 @@ func (r *Ring) GetNodes(key string, n int) []string {
 
 func (r *Ring) search(pos uint32) int {
 	n := len(r.vnodes)
+	if n == 0 {
+		return 0
+	}
 	idx := sort.Search(n, func(i int) bool {
 		return r.vnodes[i] >= pos
 	})

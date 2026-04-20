@@ -69,7 +69,13 @@ func (cb *CircuitBreaker) Allow() bool {
 		}
 		return false
 	case StateHalfOpen:
-		// Allow limited requests to test recovery
+		// Allow limited requests to test recovery with timeout
+		if time.Since(cb.lastFailureTime) > cb.timeout {
+			// Timeout in half-open - reopen the circuit
+			cb.state = StateOpen
+			cb.failures = 0
+			return false
+		}
 		return cb.consecutiveSuccesses < cb.halfOpenMaxCalls
 	}
 	return false
@@ -111,6 +117,7 @@ func (cb *CircuitBreaker) RecordFailure() {
 	case StateHalfOpen:
 		// Any failure in half-open immediately reopens
 		cb.state = StateOpen
+		cb.failures = 0 // Reset failure count
 		cb.consecutiveSuccesses = 0
 	}
 }

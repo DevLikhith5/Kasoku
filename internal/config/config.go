@@ -105,7 +105,7 @@ type ClusterConfig struct {
 	NodeAddr string `yaml:"node_addr" env:"KASOKU_NODE_ADDR" default:"http://localhost:9000"`
 
 	// Peer nodes
-	Peers []string `yaml:"peers" env:"KASOKU_PEERS" default:""`
+	Peers []string `yaml:"peers" env:"KASOKU_PEERS"`
 
 	// Gossip port
 	GossipPort int `yaml:"gossip_port" env:"KASOKU_GOSSIP_PORT" default:"9002"`
@@ -213,11 +213,15 @@ func applyEnvOverrides(cfg *Config) error {
 	}
 	// Port
 	if v := os.Getenv("KASOKU_PORT"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.Port)
+		var port int
+		fmt.Sscanf(v, "%d", &port)
+		cfg.Port = port
 	}
 	// HTTPPort
 	if v := os.Getenv("KASOKU_HTTP_PORT"); v != "" {
-		fmt.Sscanf(v, "%d", &cfg.HTTPPort)
+		var port int
+		fmt.Sscanf(v, "%d", &port)
+		cfg.HTTPPort = port
 	}
 	// LogLevel
 	if v := os.Getenv("KASOKU_LOG_LEVEL"); v != "" {

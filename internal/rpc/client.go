@@ -154,11 +154,35 @@ func (c *Client) ReplicatedGetEntry(ctx context.Context, key string) (storage.En
 		return storage.Entry{}, false, nil
 	}
 
+	// Safe type assertions to prevent panic on malformed response
+	var keyStr string
+	var valStr string
+	var versionNum float64
+	var tombstoneBool bool
+	var isOK bool
+
+	keyStr, isOK = resp["key"].(string)
+	if !isOK {
+		return storage.Entry{}, false, fmt.Errorf("invalid key type in response")
+	}
+	valStr, isOK = resp["value"].(string)
+	if !isOK {
+		return storage.Entry{}, false, fmt.Errorf("invalid value type in response")
+	}
+	versionNum, isOK = resp["version"].(float64)
+	if !isOK {
+		return storage.Entry{}, false, fmt.Errorf("invalid version type in response")
+	}
+	tombstoneBool, isOK = resp["tombstone"].(bool)
+	if !isOK {
+		return storage.Entry{}, false, fmt.Errorf("invalid tombstone type in response")
+	}
+
 	entry := storage.Entry{
-		Key:       resp["key"].(string),
-		Value:     []byte(resp["value"].(string)),
-		Version:   uint64(resp["version"].(float64)),
-		Tombstone: resp["tombstone"].(bool),
+		Key:       keyStr,
+		Value:     []byte(valStr),
+		Version:   uint64(versionNum),
+		Tombstone: tombstoneBool,
 	}
 
 	return entry, true, nil

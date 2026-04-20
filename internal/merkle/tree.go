@@ -67,12 +67,17 @@ func Diff(local, remote *Node) []string {
 
 	if local.IsLeaf || remote.IsLeaf {
 		// Found differing leaf — return all keys for comparison
+		// Only access Keys if the node is actually a leaf (not internal node with nil Keys)
 		seen := make(map[string]bool)
-		for _, k := range local.Keys {
-			seen[k] = true
+		if local.IsLeaf && local.Keys != nil {
+			for _, k := range local.Keys {
+				seen[k] = true
+			}
 		}
-		for _, k := range remote.Keys {
-			seen[k] = true
+		if remote.IsLeaf && remote.Keys != nil {
+			for _, k := range remote.Keys {
+				seen[k] = true
+			}
 		}
 		result := make([]string, 0, len(seen))
 		for k := range seen {
@@ -117,9 +122,15 @@ func Serialize(n *Node) ([]byte, error) {
 }
 
 func Deserialize(data []byte) (*Node, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
 	var n Node
 	if err := json.Unmarshal(data, &n); err != nil {
 		return nil, err
 	}
+	// Note: JSON doesn't support recursive unmarshaling of pointer fields.
+	// For proper Merkle tree anti-entropy sync, use a different serialization
+	// format (e.g., protobufs) or rebuild tree from keys.
 	return &n, nil
 }

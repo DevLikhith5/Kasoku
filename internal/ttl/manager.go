@@ -150,9 +150,9 @@ func (m *Manager) expireKeys() {
 	now := time.Now()
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if m.closed {
+		m.mu.Unlock()
 		return
 	}
 
@@ -169,12 +169,21 @@ func (m *Manager) expireKeys() {
 	}
 
 	if len(expiredKeys) > 0 && m.onExpire != nil {
+		// Copy keys before releasing lock
+		keysToExpire := make([]string, len(expiredKeys))
+		copy(keysToExpire, expiredKeys)
+		m.mu.Unlock()
+
+		// Call callback WITHOUT holding lock to prevent deadlock
 		go func(keys []string) {
 			for _, key := range keys {
 				m.onExpire(key)
 			}
-		}(expiredKeys)
+		}(keysToExpire)
+		return
 	}
+
+	m.mu.Unlock()
 }
 
 type Item struct {
