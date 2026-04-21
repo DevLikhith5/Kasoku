@@ -145,7 +145,7 @@ run_cluster() {
         "$SERVER" > /tmp/node3.log 2>&1 &
 
     # Wait for health
-    sleep 3
+    sleep 5
     for port in 9000 9001 9002; do
         for i in {1..10}; do
             if curl -s localhost:$port/health >/dev/null 2>&1; then

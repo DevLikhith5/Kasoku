@@ -36,7 +36,7 @@ cluster:
         - http://localhost:9001
         - http://localhost:9002
     replication_factor: 3
-    quorum_size: 2
+    quorum_size: 1
     read_quorum: 1
     vnodes: 150
     rpc_timeout_ms: 2000
