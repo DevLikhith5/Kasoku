@@ -52,6 +52,26 @@ type Cluster struct {
 	isDistributed     atomic.Bool
 }
 
+// GetClient returns RPC client for a node address
+func (c *Cluster) GetClient(nodeAddr string) (*rpc.Client, bool) {
+	return c.getClient(nodeAddr)
+}
+
+// GetQuorumSize returns the configured quorum size
+func (c *Cluster) GetQuorumSize() int {
+	return c.quorumSize
+}
+
+// GetReadQuorum returns the configured read quorum
+func (c *Cluster) GetReadQuorum() int {
+	return c.readQuorum
+}
+
+// GetReplicationFactor returns the configured replication factor
+func (c *Cluster) GetReplicationFactor() int {
+	return c.replicationFactor
+}
+
 type ClusterConfig struct {
 	NodeID            string
 	NodeAddr          string // Base URL for this node (e.g., "http://localhost:8080")
