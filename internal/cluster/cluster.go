@@ -298,6 +298,14 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 		go func(replicaAddr string) {
 			defer wg.Done()
 
+			// Check if quorum already reached before starting
+			mu.Lock()
+			if successCount >= c.quorumSize {
+				mu.Unlock()
+				return
+			}
+			mu.Unlock()
+
 			client, ok := c.getClient(replicaAddr)
 			if !ok {
 				c.logger.Debug("no client for replica", "replica", replicaAddr)
