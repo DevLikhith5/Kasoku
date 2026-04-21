@@ -276,7 +276,14 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 	}
 	localEnd := time.Now()
 
-	// Replicate to other nodes
+	// Async replication: fire and forget for maximum throughput
+	// Only wait for quorum in strong consistency mode (W > 1)
+	if c.quorumSize <= 1 && isReplica {
+		go c.asyncReplicate(replicas, key, value)
+		return nil
+	}
+
+	// Replicate to other nodes (sync path for W>1)
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
 	defer cancel()
 
@@ -342,6 +349,26 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 	}
 
 	return nil
+}
+
+// asyncReplicate replicates to other nodes in background without waiting
+func (c *Cluster) asyncReplicate(replicas []string, key string, value []byte) {
+	for _, replica := range replicas {
+		if replica == c.nodeID {
+			continue
+		}
+		go func(replicaAddr string) {
+			client, ok := c.getClient(replicaAddr)
+			if !ok {
+				return
+			}
+			bkgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := client.ReplicatedPutBinary(bkgCtx, key, value); err != nil {
+				c.logger.Debug("async replication failed", "replica", replicaAddr, "error", err)
+			}
+		}(replica)
+	}
 }
 
 // Dynamo W=1 optimized: write to local node only (fastest path)
