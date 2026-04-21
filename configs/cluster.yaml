@@ -23,8 +23,8 @@ memory:
 
 wal:
     sync: false
-    sync_interval: 100ms
-    checkpoint_bytes: 67108864
+    sync_interval: 200ms
+    checkpoint_bytes: 134217728
     max_file_size: 67108864
 
 cluster:
