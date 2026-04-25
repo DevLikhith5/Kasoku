@@ -12,6 +12,9 @@ server
 kvctl-new
 kasoku-server-new
 bin/
+grpc_pressure
+pressure
+grpc-single-bench
 
 # Benchmarks (compiled)
 bench
