@@ -11,6 +11,7 @@ import (
 
 	"github.com/DevLikhith5/kasoku/internal/ring"
 	"github.com/DevLikhith5/kasoku/internal/rpc"
+	grpcrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
@@ -38,7 +39,9 @@ type Cluster struct {
 	nodeAddr          string
 	ring              *ring.Ring
 	store             storage.StorageEngine
-	clients           map[string]*rpc.Client // keyed by node address
+	clients           map[string]*rpc.Client // keyed by node address (HTTP)
+	grpcClients       map[string]*grpcrpc.ReplicatedClient // keyed by node address (gRPC)
+	grpcPool          *grpcrpc.Pool // shared gRPC connection pool
 	nodeAddrMap       map[string]string      // nodeID -> address
 	replicationFactor int
 	quorumSize        int
@@ -50,6 +53,12 @@ type Cluster struct {
 	ringCache         *RingCache
 	aliveSnapshot     atomic.Pointer[map[string]bool]
 	isDistributed     atomic.Bool
+
+	// Background replication for eventual consistency
+	backgroundReplicator *BackgroundReplicator
+	gossipProtocol       *GossipProtocol
+	merkleAntiEntropy   *MerkleAntiEntropy
+	hintStore           *HintStore
 }
 
 // GetClient returns RPC client for a node address
@@ -75,6 +84,7 @@ func (c *Cluster) GetReplicationFactor() int {
 type ClusterConfig struct {
 	NodeID            string
 	NodeAddr          string // Base URL for this node (e.g., "http://localhost:8080")
+	GRPCPort         int  // gRPC port for inter-node communication
 	Ring              *ring.Ring
 	Store             storage.StorageEngine
 	ReplicationFactor int
@@ -135,6 +145,8 @@ func New(cfg ClusterConfig) *Cluster {
 		logger:            logger,
 		peers:             cfg.Peers,
 		clients:           make(map[string]*rpc.Client),
+		grpcClients:       make(map[string]*grpcrpc.ReplicatedClient),
+		grpcPool:          grpcrpc.NewPool(),
 		nodeAddrMap:       make(map[string]string),
 	}
 
@@ -152,12 +164,24 @@ func New(cfg ClusterConfig) *Cluster {
 	// Register this node's address
 	c.nodeAddrMap[cfg.NodeID] = cfg.NodeAddr
 
-	// Initialize RPC clients for peers
+	// Get gRPC port for peers
+	grpcPort := cfg.GRPCPort
+	if grpcPort == 0 {
+		grpcPort = 9002 // default
+	}
+
+	// Initialize RPC clients for peers (both HTTP and gRPC)
 	for _, peer := range cfg.Peers {
 		c.clients[peer] = rpc.NewClient(peer)
-		// Try to derive node ID from peer address for mapping
 		peerNodeID := extractNodeID(peer)
 		c.nodeAddrMap[peerNodeID] = peer
+
+		// Create gRPC client for this peer using pool
+		grpcAddr := convertToGRPCAddr(peer, grpcPort)
+		client, err := c.grpcPool.Get(grpcAddr)
+		if err == nil {
+			c.grpcClients[peer] = client
+		}
 	}
 	// Initialize alive set snapshot
 	initialAlive := c.members.AliveSet()
@@ -244,8 +268,6 @@ func (c *Cluster) snapshotAliveSet() map[string]bool {
 // ReplicatedPut writes a key-value pair to the cluster with replication
 // The coordinator pattern: this node coordinates the write to all replicas
 func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) error {
-	totalStart := time.Now()
-
 	aliveSet := c.snapshotAliveSet()
 	c.mu.RLock()
 	replicas := c.getReplicasForKey(key, aliveSet)
@@ -266,20 +288,20 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 		}
 	}
 
-	// Write to local store first — if this fails, the whole operation fails
-	localStart := time.Now()
+	// Write locally with WAL for durability
 	if isReplica {
 		if err := c.store.Put(key, value); err != nil {
 			c.logger.Error("local write failed", "key", key, "error", err)
 			return fmt.Errorf("local write failed: %w", err)
 		}
 	}
-	localEnd := time.Now()
 
-	// Async replication: fire and forget for maximum throughput
-	// Only wait for quorum in strong consistency mode (W > 1)
+	// Background replication for W=1 (Dynamo-style eventual consistency)
+	// Write locally + enqueue for async peer sync - no RPC on hot path
 	if c.quorumSize <= 1 && isReplica {
-		go c.asyncReplicate(replicas, key, value)
+		if c.backgroundReplicator != nil {
+			c.backgroundReplicator.Enqueue(key, value, false, 0)
+		}
 		return nil
 	}
 
@@ -294,7 +316,6 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	replicationStart := time.Now()
 
 	for _, replica := range replicas {
 		if replica == c.nodeID {
@@ -314,35 +335,39 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 			mu.Unlock()
 
 			client, ok := c.getClient(replicaAddr)
-			if !ok {
-				c.logger.Debug("no client for replica", "replica", replicaAddr)
+		if !ok {
+			c.logger.Debug("no client for replica", "replica", replicaAddr)
+			return
+		}
+
+		replicaStart := time.Now()
+
+		// Try gRPC first, fall back to HTTP
+		if grpcClient, ok := c.grpcClients[replicaAddr]; ok {
+			if err := grpcClient.ReplicatedPutBinary(timeoutCtx, key, value); err == nil {
+				mu.Lock()
+				successCount++
+				mu.Unlock()
 				return
 			}
+		}
 
-			replicaStart := time.Now()
-			if err := client.ReplicatedPutBinary(timeoutCtx, key, value); err != nil {
-				c.logger.Debug("replication to replica failed",
-					"replica", replicaAddr,
-					"error", err,
-					"timing.replica_ms", time.Since(replicaStart).Milliseconds())
-				return
-			}
+// Fall back to HTTP
+		if err := client.ReplicatedPutBinary(timeoutCtx, key, value); err != nil {
+			c.logger.Debug("replication to replica failed",
+				"replica", replicaAddr,
+				"error", err,
+				"timing.replica_ms", time.Since(replicaStart).Milliseconds())
+			return
+		}
 
-			mu.Lock()
+mu.Lock()
 			successCount++
 			mu.Unlock()
 		}(replica)
 	}
 
 	wg.Wait()
-	replicationEnd := time.Now()
-
-	c.logger.Debug("REPLICATED_PUT_COMPLETED",
-		"key", key,
-		"acks", successCount,
-		"local_ms", localEnd.Sub(localStart).Milliseconds(),
-		"replication_ms", replicationEnd.Sub(replicationStart).Milliseconds(),
-		"total_ms", time.Since(totalStart).Milliseconds())
 
 	if successCount < c.quorumSize {
 		return fmt.Errorf("%w: got %d acks, need %d", ErrQuorumNotReached, successCount, c.quorumSize)
@@ -364,6 +389,15 @@ func (c *Cluster) asyncReplicate(replicas []string, key string, value []byte) {
 			}
 			bkgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
+
+			// Try gRPC first
+			if grpcClient, ok := c.grpcClients[replicaAddr]; ok {
+				if err := grpcClient.ReplicatedPutBinary(bkgCtx, key, value); err == nil {
+					return
+				}
+			}
+
+			// Fall back to HTTP
 			if err := client.ReplicatedPutBinary(bkgCtx, key, value); err != nil {
 				c.logger.Debug("async replication failed", "replica", replicaAddr, "error", err)
 			}
@@ -379,8 +413,6 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 		return nil
 	}
 
-	// W=1: write to local node only (fastest path for Dynamo eventual consistency)
-	// Background async replication can be added later for durability
 	entriesSlice := make([]storage.Entry, 0, len(entries))
 	for key, value := range entries {
 		entriesSlice = append(entriesSlice, storage.Entry{Key: key, Value: value})
@@ -388,6 +420,13 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 
 	if err := c.store.BatchPut(entriesSlice); err != nil {
 		return fmt.Errorf("local batch write failed: %w", err)
+	}
+
+	// Async batch replication to peers using gRPC batch
+	if c.backgroundReplicator != nil {
+		for key, value := range entries {
+			c.backgroundReplicator.Enqueue(key, value, false, 0)
+		}
 	}
 
 	return nil
@@ -811,21 +850,59 @@ func (c *Cluster) getClient(nodeID string) (*rpc.Client, bool) {
 	}
 	c.mu.RUnlock()
 
-	// Slow path: upgrade to write lock and re-check before creating
-	// to guard against two goroutines concurrently entering this path.
+	// Slow path: create client on demand
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// Re-check under write lock (double-checked locking)
+
+	// Double-check after acquiring write lock
+	if client, ok := c.clients[nodeID]; ok {
+		return client, true
+	}
 	if client, ok := c.clients[addr]; ok {
 		return client, true
 	}
-	client := rpc.NewClient(addr)
-	c.clients[addr] = client
-	return client, true
+
+	// Create new client
+	newClient := rpc.NewClient(addr)
+	c.clients[addr] = newClient
+	return newClient, true
+}
+
+// GetPeerClients returns a map of all peer clients (excluding self)
+func (c *Cluster) GetPeerClients() map[string]*rpc.Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	result := make(map[string]*rpc.Client)
+	for id, client := range c.clients {
+		if id != c.nodeID && id != c.nodeAddr {
+			result[id] = client
+		}
+	}
+	return result
 }
 
 func (c *Cluster) GetNodeID() string {
 	return c.nodeID
+}
+
+func (c *Cluster) GetMembership() map[string]MemberInfo {
+	result := make(map[string]MemberInfo)
+	if c.members == nil {
+		return result
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	for nodeID, m := range c.members.members {
+		result[nodeID] = MemberInfo{
+			Addr:      m.Address,
+			Heartbeat: m.LastSeen.UnixMilli(),
+			State:     m.State.String(),
+		}
+	}
+	return result
 }
 
 func (c *Cluster) GetReplicas(key string) []string {
@@ -863,4 +940,165 @@ func (c *Cluster) SetNodeAddr(nodeID, addr string) {
 	defer c.mu.Unlock()
 	c.clients[addr] = rpc.NewClient(addr)
 	c.nodeAddrMap[nodeID] = addr
+}
+
+// StartBackgroundWorkers starts background replication, gossip, and anti-entropy
+func (c *Cluster) StartBackgroundWorkers(ctx context.Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	queue := NewReplicationQueue(DefaultMaxQueueSize, DefaultFlushInterval, DefaultMaxBatchSize)
+	c.backgroundReplicator = NewBackgroundReplicator(c, queue, c.logger)
+	c.backgroundReplicator.Start(ctx)
+
+	c.gossipProtocol = NewGossipProtocol(c, c.members, c.logger)
+	c.gossipProtocol.Start(ctx)
+
+	c.merkleAntiEntropy = NewMerkleAntiEntropy(c, c.backgroundReplicator, c.logger)
+	c.merkleAntiEntropy.Start(ctx)
+
+	c.logger.Info("background workers started",
+		"quorum_size", c.quorumSize,
+		"replication_factor", c.replicationFactor)
+}
+
+// StopBackgroundWorkers stops all background workers
+func (c *Cluster) StopBackgroundWorkers() {
+	if c.backgroundReplicator != nil {
+		c.backgroundReplicator.Stop()
+	}
+	if c.gossipProtocol != nil {
+		c.gossipProtocol.Stop()
+	}
+	if c.merkleAntiEntropy != nil {
+		c.merkleAntiEntropy.Stop()
+	}
+}
+
+// EnqueueForReplication adds a key/value to the background replication queue
+func (c *Cluster) EnqueueForReplication(key string, value []byte, tombstone bool, version uint64) error {
+	if c.backgroundReplicator == nil {
+		return nil
+	}
+	return c.backgroundReplicator.Enqueue(key, value, tombstone, version)
+}
+
+// EnqueueBatchForReplication adds multiple entries to the background replication queue
+func (c *Cluster) EnqueueBatchForReplication(entries []storage.Entry) error {
+	if c.backgroundReplicator == nil {
+		return nil
+	}
+	for _, e := range entries {
+		c.backgroundReplicator.Enqueue(e.Key, e.Value, e.Tombstone, e.Version)
+	}
+	return nil
+}
+
+// GetBackgroundReplicatorStats returns stats for monitoring
+func (c *Cluster) GetBackgroundReplicatorStats() map[string]interface{} {
+	if c.backgroundReplicator == nil {
+		return nil
+	}
+	return c.backgroundReplicator.GetStats()
+}
+
+// AddHint stores a hint for a failed node (hint handoff)
+func (c *Cluster) AddHint(targetNode, key string, value []byte) {
+	if c.hintStore == nil {
+		c.hintStore = NewHintStore()
+	}
+	c.hintStore.Store(key, value, targetNode)
+}
+
+// GetHintsForNode returns hints destined for a specific node
+func (c *Cluster) GetHintsForNode(nodeID string) []*Hint {
+	if c.hintStore == nil {
+		return nil
+	}
+	return c.hintStore.GetHintsForNode(nodeID)
+}
+
+// RemoveHint removes a hint after successful delivery
+func (c *Cluster) RemoveHint(key, targetNode string) {
+	if c.hintStore == nil {
+		return
+	}
+	c.hintStore.RemoveHint(key, targetNode)
+}
+
+// StartHintDelivery starts background delivery of hints to recovered nodes
+func (c *Cluster) StartHintDelivery(ctx context.Context) {
+	if c.hintStore == nil {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.deliverHints()
+			}
+		}
+	}()
+}
+
+func (c *Cluster) deliverHints() {
+	if c.hintStore == nil {
+		return
+	}
+
+	peers := c.GetPeerClients()
+	for addr := range peers {
+		hints := c.GetHintsForNode(addr)
+		if len(hints) == 0 {
+			continue
+		}
+
+		client, ok := c.GetClient(addr)
+		if !ok {
+			continue
+		}
+
+		for _, hint := range hints {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			err := client.ReplicatedPutBinary(ctx, hint.Key, hint.Value)
+			cancel()
+
+			if err == nil {
+				c.RemoveHint(hint.Key, addr)
+			}
+		}
+	}
+}
+
+// convertToGRPCAddr converts an HTTP address to gRPC address
+func convertToGRPCAddr(httpAddr string, grpcPort int) string {
+	// Extract host from http://localhost:9000
+	host := httpAddr
+	if idx := len("http://"); idx < len(host) {
+		host = httpAddr[idx:]
+	}
+	// Remove any trailing path
+	if idx := findByte(host, '/'); idx > 0 {
+		host = host[:idx]
+	}
+	// Remove port if present
+	if idx := findByte(host, ':'); idx > 0 {
+		host = host[:idx]
+	}
+	return fmt.Sprintf("%s:%d", host, grpcPort)
+}
+
+func findByte(s string, b byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == b {
+			return i
+		}
+	}
+	return -1
 }

@@ -1,8 +1,9 @@
 # 3-Node Cluster Configuration for Benchmarking
-data_dir: ${KASOKU_DATA_DIR:-./data/node1}
-port: ${KASOKU_PORT:-9000}
-http_port: ${KASOKU_HTTP_PORT:-9000}
-log_level: error
+data_dir: ./data/node1
+port: 9000
+http_port: 9001
+grpc_port: 9002
+log_level: warn
 
 lsm:
     levels: 5
@@ -23,14 +24,14 @@ memory:
 
 wal:
     sync: false
-    sync_interval: 100ms
-    checkpoint_bytes: 67108864
+    sync_interval: 500ms
+    checkpoint_bytes: 1073741824
     max_file_size: 67108864
 
 cluster:
     enabled: true
-    node_id: ${KASOKU_NODE_ID:-node-1}
-    node_addr: ${KASOKU_NODE_ADDR:-http://localhost:9000}
+    node_id: node-1
+    node_addr: http://localhost:9000
     peers:
         - http://localhost:9000
         - http://localhost:9001

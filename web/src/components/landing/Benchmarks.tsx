@@ -2,19 +2,19 @@ import { motion, useScroll, useTransform } from 'framer-motion'
 import { useRef } from 'react'
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
-const singleNodeData = [
-  { name: 'Writes', value: 43000, fill: '#e11d5a', displayValue: '43K' },
-  { name: 'Reads (Single-Key)', value: 301000, fill: '#f43f5e', displayValue: '301K' },
-  { name: 'Batch Reads', value: 340000, fill: '#fb7185', displayValue: '340K' },
+const httpClusterData = [
+  { name: 'Writes', value: 140000, fill: '#e11d5a', displayValue: '140K' },
+  { name: 'Reads', value: 30000, fill: '#f43f5e', displayValue: '30K' },
+  { name: 'Total', value: 170000, fill: '#fb7185', displayValue: '170K' },
 ]
 
-const clusterData = [
-  { name: 'Writes', value: 9200, fill: '#e11d5a', displayValue: '9.2K' },
-  { name: 'Reads (Single-Key)', value: 330000, fill: '#f43f5e', displayValue: '330K' },
-  { name: 'Batch Reads (Peak)', value: 423000, fill: '#fb7185', displayValue: '423K' },
+const grpcClusterData = [
+  { name: 'Writes', value: 720000, fill: '#e11d5a', displayValue: '720K' },
+  { name: 'Reads', value: 1150000, fill: '#f43f5e', displayValue: '1.15M' },
+  { name: 'Total', value: 870000, fill: '#fb7185', displayValue: '870K' },
 ]
 
-const MIN_BAR_HEIGHT = 4 // Minimum visible bar height in pixels
+const MIN_BAR_HEIGHT = 4
 
 const CustomBar = (props: any) => {
   const { x, y, width, height, fill, payload } = props
@@ -81,14 +81,14 @@ export function Benchmarks() {
           transition={{ duration: 0.6 }}
           className="benchmarks-header"
         >
-          <h2 className="benchmarks-title">Performance Benchmarks</h2>
+          <h2 className="benchmarks-title">3-Node Cluster Performance</h2>
           <p className="benchmarks-subtitle">
-            Apple M1 · 8-core · pressure load testing tool
+            Apple M1 · 8-core · gRPC with connection pooling · RF=3
           </p>
         </motion.div>
 
         <div className="benchmarks-grid">
-          {/* Single Node chart */}
+          {/* HTTP Cluster */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             whileInView={{ opacity: 1, y: 0 }}
@@ -96,10 +96,10 @@ export function Benchmarks() {
             transition={{ delay: 0.1 }}
             className="benchmark-card"
           >
-            <h3 className="benchmark-card-title">Single Node</h3>
+            <h3 className="benchmark-card-title">HTTP (baseline)</h3>
             <div className="benchmark-chart">
               <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={singleNodeData} margin={{ top: 24, right: 8, bottom: 0, left: 0 }}>
+                <BarChart data={httpClusterData} margin={{ top: 24, right: 8, bottom: 0, left: 0 }}>
                   <XAxis
                     dataKey="name"
                     tick={{ fontSize: 11, fontFamily: 'var(--font-sans)', fill: 'var(--text-muted)' }}
@@ -112,7 +112,7 @@ export function Benchmarks() {
                     shape={<CustomBar />}
                     barSize={48}
                   >
-                    {singleNodeData.map((entry, i) => (
+                    {httpClusterData.map((entry, i) => (
                       <Cell key={i} fill={entry.fill} />
                     ))}
                   </Bar>
@@ -121,18 +121,18 @@ export function Benchmarks() {
             </div>
           </motion.div>
 
-          {/* Cluster chart */}
+          {/* gRPC Cluster */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            transition={{ delay: 0.2 }}
+            transition={{ delay: 0.15 }}
             className="benchmark-card"
           >
-            <h3 className="benchmark-card-title">3-Node Cluster (RF=3)</h3>
+            <h3 className="benchmark-card-title">gRPC <span style={{ color: '#22c55e', fontSize: '0.7em' }}>5x faster</span></h3>
             <div className="benchmark-chart">
               <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={clusterData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                <BarChart data={grpcClusterData} margin={{ top: 24, right: 8, bottom: 0, left: 0 }}>
                   <XAxis
                     dataKey="name"
                     tick={{ fontSize: 11, fontFamily: 'var(--font-sans)', fill: 'var(--text-muted)' }}
@@ -140,8 +140,12 @@ export function Benchmarks() {
                     tickLine={false}
                   />
                   <Tooltip content={<CustomTooltip />} cursor={{ fill: 'transparent' }} />
-                  <Bar dataKey="value" radius={[6, 6, 0, 0]} barSize={48}>
-                    {clusterData.map((entry, i) => (
+                  <Bar
+                    dataKey="value"
+                    shape={<CustomBar />}
+                    barSize={48}
+                  >
+                    {grpcClusterData.map((entry, i) => (
                       <Cell key={i} fill={entry.fill} />
                     ))}
                   </Bar>
@@ -160,16 +164,16 @@ export function Benchmarks() {
           className="benchmark-highlights"
         >
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">490K</span>
-            <span className="benchmark-highlight-label">Peak ops/sec (cluster batch)</span>
+            <span className="benchmark-highlight-value">870K</span>
+            <span className="benchmark-highlight-label">Cluster ops/sec (gRPC)</span>
           </div>
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">83.5K</span>
-            <span className="benchmark-highlight-label">Writes/sec (single node)</span>
+            <span className="benchmark-highlight-value">38x</span>
+            <span className="benchmark-highlight-label">Read speedup with gRPC</span>
           </div>
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">109K</span>
-            <span className="benchmark-highlight-label">Reads/sec (cluster)</span>
+            <span className="benchmark-highlight-value">RF=3</span>
+            <span className="benchmark-highlight-label">Replication factor</span>
           </div>
         </motion.div>
       </div>

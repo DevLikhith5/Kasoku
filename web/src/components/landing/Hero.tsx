@@ -73,17 +73,17 @@ export function Hero() {
           className="hero-stats"
         >
           <div className="hero-stat">
-            <div className="hero-stat-value">7.3M</div>
-            <div className="hero-stat-label">Reads/sec</div>
+            <div className="hero-stat-value">1.83M</div>
+            <div className="hero-stat-label">Peak ops/sec</div>
           </div>
           <div className="hero-stat-divider" />
           <div className="hero-stat">
-            <div className="hero-stat-value">174ns</div>
-            <div className="hero-stat-label">Read Latency</div>
+            <div className="hero-stat-value">3.6x</div>
+            <div className="hero-stat-label">gRPC speedup</div>
           </div>
           <div className="hero-stat-divider" />
           <div className="hero-stat">
-            <div className="hero-stat-value">N=3</div>
+            <div className="hero-stat-value">RF=3</div>
             <div className="hero-stat-label">Replication</div>
           </div>
         </motion.div>

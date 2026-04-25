@@ -1,22 +1,20 @@
 # Kasoku Performance Benchmarks
 
-## Latest Results (April 2026)
+## Latest Results (April 2026) - gRPC vs HTTP
 
 ### Single Node Performance
 
-| Metric | Ops/sec | Latency p50 | Latency p99 |
-|--------|--------|-------------|-------------|
-| **Writes** | 255,735 | 46µs | 602µs |
-| **Reads (Batch)** | 244,398 | 76µs | 728µs |
-| **Total** | 500,133 | - | - |
+| Protocol | Writes | Reads | Total | Speedup |
+|---------|--------|-------|-------|---------|
+| HTTP | 344K | 169K | 513K | baseline |
+| gRPC | 1.22M | 2.44M | **1.83M** | **3.6x** |
 
-### 3-Node Cluster (RF=3, W=2, R=1) - Strong Consistency
+### 3-Node Cluster Performance
 
-| Metric | Ops/sec | Latency p50 | Latency p99 |
-|--------|--------|-------------|-------------|
-| **Writes** | 82,390 | 138µs | 1.37ms |
-| **Reads** | 125,415 | 155µs | 1.55ms |
-| **Total** | 207,805 | - | - |
+| Protocol | Writes | Reads | Total | Speedup |
+|---------|--------|-------|-------|---------|
+| HTTP | 140K | 30K | 170K | baseline |
+| gRPC | 720K | 1.15M | **870K** | **5.1x** |
 
 ## Benchmark Configuration
 
@@ -27,17 +25,15 @@
 
 ### Software Settings
 - MemTable Size: 256MB
-- Block Size: 64KB
-- Block Cache: 1GB
-- Key Cache: 1M entries
-- WAL: Async (100ms sync interval)
-- Encoding: Binary with magic byte
+- Block Cache: 512MB
+- WAL: Async (500ms sync interval)
+- Encoding: ProtoBuf
 
 ### Test Parameters
 - Workers: 30
-- Batch Size: 25 keys/request
-- Test Duration: 20 seconds
-- Warm-up: 3 seconds
+- Batch Size: 50 keys/request
+- Test Duration: 10 seconds
+- Warm-up: 1-2 seconds
 
 ## How to Run
 
@@ -45,64 +41,101 @@
 ```bash
 # Build the server and benchmark tool
 go build -o kasoku-server ./cmd/server/
-go build -o pressure ./tools/benchmarks/pressure/
+go build -o pressure ./benchmarks/pressure/
 ```
 
-### Single Node Benchmark
-
+### HTTP Benchmark (Single Node)
 ```bash
 # Start single node
-KASOKU_CONFIG=configs/single.yaml ./kasoku-server &
+./kasoku-server -config ./configs/single.yaml &
 
-# Run benchmark
-./pressure -nodes=localhost:9000 -write-duration=20s -read-duration=20s -workers=30 -batch=25
+# Run HTTP benchmark
+./pressure -nodes=localhost:9001 -workers=30 -batch=50 -write-duration=10s -read-duration=10s -warm=1s
 ```
 
-### 3-Node Cluster Benchmark
-
+### gRPC Benchmark (Single Node)
 ```bash
-# Start node 1
-KASOKU_NODE_ID=node-1 KASOKU_DATA_DIR=./data/node1 KASOKU_HTTP_PORT=9000 KASOKU_CONFIG=configs/cluster.yaml ./kasoku-server &
+# Start single node
+./kasoku-server -config ./configs/single.yaml &
 
-# Start node 2
-KASOKU_NODE_ID=node-2 KASOKU_DATA_DIR=./data/node2 KASOKU_HTTP_PORT=9001 KASOKU_CONFIG=configs/cluster.yaml ./kasoku-server &
-
-# Start node 3
-KASOKU_NODE_ID=node-3 KASOKU_DATA_DIR=./data/node3 KASOKU_HTTP_PORT=9002 KASOKU_CONFIG=configs/cluster.yaml ./kasoku-server &
-
-# Run benchmark
-./pressure -nodes=localhost:9000,localhost:9001,localhost:9002 -write-duration=20s -read-duration=20s -workers=30 -batch=25
+# Run gRPC benchmark
+go run ./cmd/grpc-bench/main.go
 ```
+
+### 3-Node Cluster HTTP
+```bash
+# Start cluster
+./kasoku-server -config ./configs/node1.yaml &
+./kasoku-server -config ./configs/node2.yaml &
+./kasoku-server -config ./configs/node3.yaml &
+
+# Run HTTP benchmark
+./pressure -nodes=localhost:9001,localhost:9003,localhost:9005 -workers=30 -batch=50 -write-duration=10s -read-duration=10s -warm=2s
+```
+
+### 3-Node Cluster gRPC
+```bash
+# Start cluster
+./kasoku-server -config ./configs/node1.yaml &
+./kasoku-server -config ./configs/node2.yaml &
+./kasoku-server -config ./configs/node3.yaml &
+
+# Run gRPC benchmark
+go run ./cmd/grpc-bench/main.go
+```
+
+## Configuration Files
+
+### single.yaml
+```yaml
+port: 9000
+http_port: 9001
+grpc_port: 9002
+memtable_size: 268435456
+block_cache_size: 536870912
+wal:
+    sync_interval: 500ms
+cluster:
+    enabled: false
+```
+
+### node1.yaml, node2.yaml, node3.yaml
+```yaml
+# node1: port=9000, http=9001, grpc=9002
+# node2: port=9002, http=9003, grpc=9004
+# node3: port=9004, http=9005, grpc=9006
+
+memtable_size: 256MB
+block_cache_size: 512MB
+cluster:
+    enabled: true
+    replication_factor: 3
+    quorum_size: 1
+    read_quorum: 1
+    vnodes: 150
+```
+
+## Key Findings
+
+1. **gRPC is 3.6x faster** on single node, **5.1x faster** on cluster
+2. **Reads benefit most** - 14x faster (single), 38x faster (cluster)
+3. **Connection pooling** eliminates setup overhead
+4. **Binary encoding** (ProtoBuf) vs JSON reduces serialization
 
 ## Understanding Results
 
+### Why gRPC Is Faster
+- **Connection pooling**: 4-16 persistent connections reused
+- **Binary encoding**: ProtoBuf vs JSON
+- **No HTTP overhead**: No request/response framing
+- **Streaming support**: Efficient batch operations
+
 ### Why Cluster Writes Are Lower
-In distributed mode with RF=3 and W=2:
-- Each write is replicated to 3 nodes
-- Coordinator waits for 2 acks before responding
-- Network latency between nodes affects throughput
+- Each write replicates to 3 nodes (RF=3)
+- Background async replication adds overhead
+- Network latency between nodes
 
-### Why Cluster Reads Are Higher Peak
-With R=1 (eventual consistency):
-- Reads can be served by any node with the data
-- Peak throughput can exceed single node when data is distributed
-- Average is lower due to coordinator routing overhead
-
-### LSM Engine Fix Applied (April 2026)
-Fixed race condition in flush/compact loops:
-- Added directFlushCh channel to coordinate flush operations
-- Added flushing atomic flag to prevent dual flushing
-- Performance improved significantly over original benchmarks
-
-## Performance Tips
-
-### Maximize Single Node Performance
-- Use `kasoku-single.yaml` config
-- Disable cluster mode
-- Increase memory settings for larger caches
-
-### Maximize Cluster Throughput
-- Use R=1 for reads (eventual consistency)
-- Place nodes in same datacenter for low latency
-- Use larger batch sizes (25-100)
-- Tune worker count based on CPU cores
+### Why Cluster Reads Are Much Higher with gRPC
+- Connection pooling eliminates setup latency
+- gRPC MultiGet is more efficient than HTTP batch
+- Less serialization overhead

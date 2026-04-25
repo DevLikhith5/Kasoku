@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package api;
+
+option go_package = "github.com/DevLikhith5/kasoku/api";
+
+service KasokuService {
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc BatchPut(BatchPutRequest) returns (BatchPutResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Scan(ScanRequest) returns (ScanResponse);
+  rpc MultiGet(MultiGetRequest) returns (MultiGetResponse);
+
+  // Cluster operations
+  rpc Replicate(stream ReplicateRequest) returns (stream ReplicateResponse);
+  rpc Sync(SyncRequest) returns (SyncResponse);
+}
+
+message PutRequest {
+  string key = 1;
+  bytes value = 2;
+}
+
+message PutResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message GetRequest {
+  string key = 1;
+}
+
+message GetResponse {
+  Entry entry = 1;
+  string error = 2;
+}
+
+message BatchPutRequest {
+  repeated Entry entries = 1;
+}
+
+message BatchPutResponse {
+  int32 count = 1;
+  string error = 2;
+}
+
+message DeleteRequest {
+  string key = 1;
+}
+
+message DeleteResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message ScanRequest {
+  string prefix = 1;
+}
+
+message ScanResponse {
+  repeated Entry entries = 1;
+  string error = 2;
+}
+
+message MultiGetRequest {
+  repeated string keys = 1;
+}
+
+message MultiGetResponse {
+  map<string, Entry> entries = 1;
+  string error = 2;
+}
+
+message Entry {
+  string key = 1;
+  bytes value = 2;
+  uint64 version = 3;
+  int64 timestamp = 4;
+  bool tombstone = 5;
+  map<string, uint32> vector_clock = 6;
+}
+
+message ReplicateRequest {
+  Entry entry = 1;
+  uint64 origin_node = 2;
+}
+
+message ReplicateResponse {
+  bool success = 1;
+}
+
+message SyncRequest {
+  uint64 since_version = 1;
+}
+
+message SyncResponse {
+  repeated Entry entries = 1;
+  uint64 version = 2;
+}

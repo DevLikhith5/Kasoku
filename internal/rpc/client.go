@@ -333,6 +333,75 @@ func (c *Client) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
+type GossipStateRequest struct {
+	NodeID        string            `json:"node_id"`
+	NodeAddr      string            `json:"node_addr"`
+	Version       uint64            `json:"version"`
+	LastHeartbeat int64             `json:"last_heartbeat"`
+	Membership    map[string]string `json:"membership"`
+}
+
+type GossipStateResponse struct {
+	NodeID        string            `json:"node_id"`
+	NodeAddr      string            `json:"node_addr"`
+	Version       uint64            `json:"version"`
+	LastHeartbeat int64             `json:"last_heartbeat"`
+	Membership    map[string]string `json:"membership"`
+}
+
+func (c *Client) ExchangeGossip(ctx context.Context, state *GossipStateRequest) (*GossipStateResponse, error) {
+	url := fmt.Sprintf("%s/internal/gossip/state", c.baseURL)
+
+	var resp GossipStateResponse
+	err := c.doRequest(ctx, http.MethodPost, url, state, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
+type MerkleRootRequest struct {
+	Keys []string `json:"keys"`
+}
+
+type MerkleRootResponse struct {
+	RootHash []byte `json:"root_hash"`
+}
+
+func (c *Client) GetMerkleRoot(ctx context.Context) ([]byte, error) {
+	url := fmt.Sprintf("%s/internal/merkle/root", c.baseURL)
+
+	var resp MerkleRootResponse
+	err := c.doRequest(ctx, http.MethodGet, url, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.RootHash, nil
+}
+
+type KeyDiffRequest struct {
+	Keys []string `json:"keys"`
+}
+
+type KeyDiffResponse struct {
+	Keys []string `json:"keys"`
+}
+
+func (c *Client) GetKeyDifferences(ctx context.Context, keys []string) ([]string, error) {
+	url := fmt.Sprintf("%s/internal/merkle/diff", c.baseURL)
+
+	reqBody := KeyDiffRequest{Keys: keys}
+	var resp KeyDiffResponse
+	err := c.doRequest(ctx, http.MethodPost, url, reqBody, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Keys, nil
+}
+
 type NodeInfoResponse struct {
 	NodeID string    `json:"node_id"`
 	Addr   string    `json:"addr"`

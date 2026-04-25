@@ -129,6 +129,42 @@ func (h *HashMapEngine) BatchPut(pairs []Entry) error {
 	return nil
 }
 
+func (h *HashMapEngine) PutAsync(key string, value []byte) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.validate(key, value); err != nil {
+		return err
+	}
+	entry := Entry{
+		Key:       key,
+		Value:     value,
+		Version:   h.version.Add(1),
+		TimeStamp: time.Now(),
+	}
+	h.data[key] = entry
+	return nil
+}
+
+func (h *HashMapEngine) BatchPutAsync(pairs []Entry) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range pairs {
+		if err := h.validate(pairs[i].Key, pairs[i].Value); err != nil {
+			return err
+		}
+		if pairs[i].Version == 0 {
+			pairs[i].Version = h.version.Add(1)
+		}
+		if pairs[i].TimeStamp.IsZero() {
+			pairs[i].TimeStamp = time.Now()
+		}
+	}
+	for _, entry := range pairs {
+		h.data[entry.Key] = entry
+	}
+	return nil
+}
+
 func (h *HashMapEngine) Get(key string) (Entry, error) {
 	if h.closed.Load() {
 		return Entry{}, ErrEngineClosed

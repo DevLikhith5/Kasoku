@@ -88,6 +88,7 @@ func (s *Server) handleBatchPut(w http.ResponseWriter, r *http.Request) {
 			applied = len(req.Entries)
 		}
 	} else {
+		// Single-node: use WAL for durability
 		if err := s.store.BatchPut(entries); err != nil {
 			errs = len(req.Entries)
 		} else {
@@ -107,8 +108,23 @@ func (s *Server) handleBatchPut(w http.ResponseWriter, r *http.Request) {
 }
 
 // replicatedBatchPut writes entries to the cluster with quorum-based replication
+// Production-ready: always uses WAL for durability
 func (s *Server) replicatedBatchPut(ctx context.Context, entries []storage.Entry) error {
 	if len(entries) == 0 {
+		return nil
+	}
+
+	quorumSize := s.cluster.GetQuorumSize()
+
+	// Always use WAL for durability in production
+	if err := s.store.BatchPut(entries); err != nil {
+		return err
+	}
+
+	// For W=1, use fire-and-forget background replication
+	// For W>1, wait for quorum
+	if quorumSize <= 1 {
+		s.cluster.EnqueueBatchForReplication(entries)
 		return nil
 	}
 
@@ -119,87 +135,42 @@ func (s *Server) replicatedBatchPut(ctx context.Context, entries []storage.Entry
 	resultCh := make(chan batchResult, 1)
 
 	go func() {
-		nodeBatches := make(map[string][]storage.Entry)
-		keyToReplicas := make(map[string][]string)
-
-		for _, entry := range entries {
-			replicas := s.ring.GetNodes(entry.Key, ReplicationFactor)
-			keyToReplicas[entry.Key] = replicas
-			for _, replica := range replicas {
-				nodeBatches[replica] = append(nodeBatches[replica], entry)
-			}
-		}
-
 		successCount := 0
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 
-		quorumSize := s.cluster.GetQuorumSize()
+		peerClients := s.cluster.GetPeerClients()
 
-		for addr, batch := range nodeBatches {
-			isLocal := addr == s.nodeID || addr == s.addr
-			if isLocal {
-				if err := s.store.BatchPut(batch); err != nil {
-					mu.Lock()
-					successCount--
-					mu.Unlock()
-				}
-				mu.Lock()
-				successCount++
-				mu.Unlock()
-				continue
-			}
-
-			// W=1: Fire and forget - async replication, don't wait
-			if quorumSize <= 1 {
-				go func(nodeAddr string, batch []storage.Entry) {
-					client, ok := s.cluster.GetClient(nodeAddr)
-					if !ok {
-						return
-					}
-					rpcEntries := make([]rpc.BatchWriteEntry, len(batch))
-					for i, e := range batch {
-						rpcEntries[i] = rpc.BatchWriteEntry{Key: e.Key, Value: e.Value}
-					}
-					bkgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					defer cancel()
-					client.BatchReplicatedPut(bkgCtx, rpcEntries)
-					// Fire and forget - don't wait for response
-				}(addr, batch)
-				mu.Lock()
-				successCount++ // Count as success immediately
-				mu.Unlock()
-				continue
-			}
-
-			// W>1: Sync replication - wait for quorum
+		for addr, client := range peerClients {
 			wg.Add(1)
-			go func(nodeAddr string, batch []storage.Entry) {
+			go func(nodeAddr string, c *rpc.Client) {
 				defer wg.Done()
-				client, ok := s.cluster.GetClient(nodeAddr)
-				if !ok {
-					return
-				}
-				rpcEntries := make([]rpc.BatchWriteEntry, len(batch))
-				for i, e := range batch {
+
+				rpcEntries := make([]rpc.BatchWriteEntry, len(entries))
+				for i, e := range entries {
 					rpcEntries[i] = rpc.BatchWriteEntry{Key: e.Key, Value: e.Value}
 				}
-				if _, err := client.BatchReplicatedPut(ctx, rpcEntries); err != nil {
+
+				replCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				if _, err := c.BatchReplicatedPut(replCtx, rpcEntries); err != nil {
 					return
 				}
+
 				mu.Lock()
 				successCount++
 				mu.Unlock()
-			}(addr, batch)
+			}(addr, client)
 		}
 
 		wg.Wait()
 
-		if successCount < quorumSize {
-			resultCh <- batchResult{err: fmt.Errorf("quorum not reached: got %d, need %d", successCount, quorumSize)}
-			return
+		if successCount < quorumSize-1 {
+			resultCh <- batchResult{err: fmt.Errorf("quorum not reached: got %d, need %d", successCount, quorumSize-1)}
+		} else {
+			resultCh <- batchResult{success: successCount}
 		}
-		resultCh <- batchResult{success: successCount}
 	}()
 
 	select {

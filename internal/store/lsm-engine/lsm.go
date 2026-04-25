@@ -297,6 +297,87 @@ func (e *LSMEngine) PutWithVectorClock(key string, value []byte, vc storage.Vect
 	return nil
 }
 
+// PutAsync writes to memtable only, skips WAL - for fire-and-forget replication
+// Data may be lost on crash but much faster for W=1 eventual consistency
+func (e *LSMEngine) PutAsync(key string, value []byte) error {
+	if e.closed.Load() {
+		return storage.ErrEngineClosed
+	}
+
+	if len(key) > storage.MaxKeyLen {
+		return storage.ErrKeyTooLong
+	}
+	if len(value) > storage.MaxValueLen {
+		return storage.ErrValueTooLarge
+	}
+
+	entry := storage.Entry{
+		Key:         key,
+		Value:       value,
+		Version:     e.version.Add(1),
+		TimeStamp:   time.Now(),
+		VectorClock: storage.NewVectorClock().Increment(e.nodeID),
+	}
+
+	e.mu.Lock()
+	if e.active.IsFull() {
+		maxImm := e.config.MaxImmutable
+		if maxImm <= 0 {
+			maxImm = DefaultMaxImmutable
+		}
+		if len(e.immutable) >= maxImm {
+			if len(e.immutable) > 0 {
+				e.immutable = e.immutable[1:]
+			}
+		}
+		e.immutable = append(e.immutable, e.active)
+		e.active = NewMemTable(e.config.MemTableSize)
+		select {
+		case e.flushCh <- struct{}{}:
+		default:
+		}
+	}
+
+	e.active.Put(entry)
+	e.cache.Invalidate(key)
+	e.mu.Unlock()
+
+	return nil
+}
+
+// BatchPutAsync writes multiple entries without WAL - fire-and-forget mode
+func (e *LSMEngine) BatchPutAsync(pairs []storage.Entry) error {
+	if e.closed.Load() {
+		return storage.ErrEngineClosed
+	}
+
+	e.mu.Lock()
+	for _, entry := range pairs {
+		if e.active.IsFull() {
+			maxImm := e.config.MaxImmutable
+			if maxImm <= 0 {
+				maxImm = DefaultMaxImmutable
+			}
+			if len(e.immutable) >= maxImm {
+				if len(e.immutable) > 0 {
+					e.immutable = e.immutable[1:]
+				}
+			}
+			e.immutable = append(e.immutable, e.active)
+			e.active = NewMemTable(e.config.MemTableSize)
+			select {
+			case e.flushCh <- struct{}{}:
+			default:
+			}
+		}
+		e.active.Put(entry)
+		e.cache.Invalidate(entry.Key)
+	}
+	e.mu.Unlock()
+
+	return nil
+}
+
 func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 	if e.closed.Load() {
 		return storage.Entry{}, storage.ErrEngineClosed

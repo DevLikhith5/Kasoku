@@ -19,6 +19,9 @@ type Config struct {
 	// HTTP port (if different from gRPC)
 	HTTPPort int `yaml:"http_port" env:"KASOKU_HTTP_PORT" default:"9001"`
 
+	// gRPC port (if different from port)
+	GRPCPort int `yaml:"grpc_port" env:"KASOKU_GRPC_PORT" default:"9002"`
+
 	// Log level (debug, info, warn, error)
 	LogLevel string `yaml:"log_level" env:"KASOKU_LOG_LEVEL" default:"info"`
 
@@ -103,6 +106,9 @@ type ClusterConfig struct {
 
 	// Node address (for inter-node communication)
 	NodeAddr string `yaml:"node_addr" env:"KASOKU_NODE_ADDR" default:"http://localhost:9000"`
+
+	// gRPC address (for inter-node communication)
+	GRPCAddr string `yaml:"grpc_addr" env:"KASOKU_GRPC_ADDR" default:"localhost:9002"`
 
 	// Peer nodes
 	Peers []string `yaml:"peers" env:"KASOKU_PEERS"`

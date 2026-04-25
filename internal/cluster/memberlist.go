@@ -141,6 +141,33 @@ func (ml *MemberList) RandomMember() string {
 	return alive[rand.Intn(len(alive))]
 }
 
+func (ml *MemberList) GetRandomPeers(count int) []string {
+	ml.mu.RLock()
+	defer ml.mu.RUnlock()
+
+	alive := make([]string, 0, len(ml.members))
+	for nodeID, m := range ml.members {
+		if nodeID != ml.self && m.State == MemberStateAlive {
+			alive = append(alive, nodeID)
+		}
+	}
+	if len(alive) == 0 {
+		return nil
+	}
+
+	if len(alive) <= count {
+		return alive
+	}
+
+	result := make([]string, count)
+	for i := range result {
+		idx := rand.Intn(len(alive))
+		result[i] = alive[idx]
+		alive = append(alive[:idx], alive[idx+1:]...)
+	}
+	return result
+}
+
 func (ml *MemberList) MemberCount() int {
 	ml.mu.RLock()
 	defer ml.mu.RUnlock()

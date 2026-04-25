@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
 	"log/slog"
@@ -46,6 +47,9 @@ func NewDistributed(store storage.StorageEngine, nodeID, addr string, logger *sl
 
 	c := cluster.New(*cfg)
 
+	// Start background workers for eventual consistency (gossip, background replication, anti-entropy)
+	c.StartBackgroundWorkers(context.Background())
+
 	s := &Server{
 		store:   store,
 		nodeID:  nodeID,
@@ -57,6 +61,10 @@ func NewDistributed(store storage.StorageEngine, nodeID, addr string, logger *sl
 	}
 
 	return s
+}
+
+func (s *Server) Cluster() *cluster.Cluster {
+	return s.cluster
 }
 
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
@@ -89,6 +97,13 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("/internal/replicate", s.handleInternalReplicate)
 		mux.HandleFunc("/internal/replicate/batch", s.handleInternalBatchReplicate)
 		mux.HandleFunc("/internal/replicate/batch/get", s.handleInternalBatchGet)
+
+		// Gossip protocol endpoints
+		mux.HandleFunc("/internal/gossip/state", s.handleGossipState)
+
+		// Merkle tree endpoints for anti-entropy
+		mux.HandleFunc("/internal/merkle/root", s.handleMerkleRoot)
+		mux.HandleFunc("/internal/merkle/diff", s.handleMerkleDiff)
 	}
 
 	// Hash ring visualization endpoint

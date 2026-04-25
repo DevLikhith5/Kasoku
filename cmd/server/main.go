@@ -4,18 +4,22 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	kasokuapi "github.com/DevLikhith5/kasoku/api"
 	"github.com/DevLikhith5/kasoku/cmd/server/handler"
 	"github.com/DevLikhith5/kasoku/cmd/server/metrics"
 	"github.com/DevLikhith5/kasoku/internal/cluster"
 	"github.com/DevLikhith5/kasoku/internal/config"
 	"github.com/DevLikhith5/kasoku/internal/ring"
 	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
+	rpcgrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
+	"google.golang.org/grpc"
 	"flag"
 )
 
@@ -114,10 +118,17 @@ func main() {
 		// match, leading to infinite proxy loops and crashes.
 		r.AddNode(nodeAddr) // Add self using nodeAddr as identity
 
+		// get gRPC port for cluster config
+		clusterGRPCPort := cfg.GRPCPort
+		if clusterGRPCPort == 0 {
+			clusterGRPCPort = cfg.Port + 2
+		}
+
 		// Create cluster config — use nodeAddr as NodeID for ring consistency
 		clusterCfg := cluster.ClusterConfig{
 			NodeID:            nodeAddr, // Use URL as ID for ring consistency
 			NodeAddr:          nodeAddr,
+			GRPCPort:         clusterGRPCPort,
 			Ring:              r,
 			Store:             store,
 			ReplicationFactor: cfg.Cluster.ReplicationFactor,
@@ -180,6 +191,31 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	grpcPort := cfg.GRPCPort
+	if grpcPort == 0 {
+		grpcPort = cfg.Port + 2
+	}
+	grpcAddr := fmt.Sprintf(":%d", grpcPort)
+	logger.Info("starting gRPC server", "addr", grpcAddr, "node_id", cfg.Cluster.NodeID)
+
+	grpcServer := grpc.NewServer()
+	grpcSrv := rpcgrpc.NewServer(store, nodeAddr, nodeAddr, logger)
+	if cfg.Cluster.Enabled && server != nil && server.Cluster() != nil {
+		grpcSrv.SetCluster(server.Cluster())
+	}
+	kasokuapi.RegisterKasokuServiceServer(grpcServer, grpcSrv)
+
+	go func() {
+		listener, err := net.Listen("tcp", grpcAddr)
+		if err != nil {
+			logger.Error("gRPC listener error", "error", err)
+			return
+		}
+		if err := grpcServer.Serve(listener); err != nil {
+			logger.Error("gRPC server error", "error", err)
+		}
+	}()
+
 	// Graceful shutdown
 	go func() {
 		sig := make(chan os.Signal, 1)
@@ -193,6 +229,8 @@ func main() {
 		if err := httpServer.Shutdown(ctx); err != nil {
 			logger.Error("server shutdown error", "error", err)
 		}
+
+		grpcServer.GracefulStop()
 
 		if err := store.Close(); err != nil {
 			logger.Error("store close error", "error", err)
