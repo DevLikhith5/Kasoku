@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/DevLikhith5/kasoku/api"
 	"google.golang.org/grpc"
@@ -23,8 +24,12 @@ type ReplicatedClient struct {
 }
 
 func NewReplicatedClient(addr string) (*ReplicatedClient, error) {
-	conn, err := grpc.NewClient(addr,
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := grpc.DialContext(ctx, addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to %s: %w", addr, err)
