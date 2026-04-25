@@ -561,32 +561,8 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 }
 
 // ReplicatedBatchGet coordinates high-throughput bulk reads from the cluster.
-// Dynamo R=1 optimized: read from local node only for maximum throughput
-// For true eventual consistency, read from any 1 node - local first is fastest
+// Dynamo R=1 optimized: Smart routing - local reads fast, remote reads parallelized
 func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[string]storage.Entry, error) {
-	if len(keys) == 0 {
-		return nil, nil
-	}
-
-	// R=1: read from local node directly (fastest path, no coordination overhead)
-	// This is the Dynamo optimization - read from nearest replica
-	results, err := c.store.MultiGet(keys)
-	if err != nil {
-		return nil, err
-	}
-
-	// Found everything locally - great!
-	if len(results) >= len(keys) {
-		return results, nil
-	}
-
-	// Partial hit - may need to fetch missing from other nodes
-	// For now, just return what we have (eventual consistency with local-first)
-	// In production, could async fetch missing keys from other nodes
-	return results, nil
-}
-
-func (c *Cluster) _ReplicatedBatchGetOLD(ctx context.Context, keys []string) (map[string]storage.Entry, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
@@ -594,7 +570,7 @@ func (c *Cluster) _ReplicatedBatchGetOLD(ctx context.Context, keys []string) (ma
 	aliveSet := c.snapshotAliveSet()
 	results := make(map[string]storage.Entry, len(keys))
 
-	// Group keys by target nodes
+	// Group keys by target nodes for parallel fetch
 	nodeBatches := make(map[string][]string)
 	c.mu.RLock()
 	for _, k := range keys {
@@ -602,7 +578,6 @@ func (c *Cluster) _ReplicatedBatchGetOLD(ctx context.Context, keys []string) (ma
 		if len(replicas) == 0 {
 			continue
 		}
-		// R=1 optimization: coordinate with primary replica
 		primary := replicas[0]
 		nodeBatches[primary] = append(nodeBatches[primary], k)
 	}
@@ -613,7 +588,7 @@ func (c *Cluster) _ReplicatedBatchGetOLD(ctx context.Context, keys []string) (ma
 		err     error
 	}
 	resChan := make(chan batchResult, len(nodeBatches))
-	ctx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
+	fetchCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
 	defer cancel()
 
 	for nodeAddr, batchKeys := range nodeBatches {
@@ -638,53 +613,35 @@ func (c *Cluster) _ReplicatedBatchGetOLD(ctx context.Context, keys []string) (ma
 			continue
 		}
 
+		// Remote node - parallel fetch
 		go func(addr string, ks []string) {
 			client, ok := c.getClient(addr)
 			if !ok {
 				resChan <- batchResult{err: fmt.Errorf("no client for %s", addr)}
 				return
 			}
-			entries, err := client.BatchReplicatedGet(ctx, ks)
+			entries, err := client.BatchReplicatedGet(fetchCtx, ks)
 			resChan <- batchResult{entries: entries, err: err}
 		}(nodeAddr, batchKeys)
 	}
 
-	// Dynamo eventual consistency: R=1 means only need 1 successful response
-	// Wait for minimum successes (readQuorum), not all nodes
-	minSuccesses := c.readQuorum
-	if minSuccesses <= 0 {
-		minSuccesses = 1
-	}
-
-	successCount := 0
-	nodeCount := len(nodeBatches)
-	for {
-		select {
-		case res := <-resChan:
-			nodeCount--
-			if res.err == nil {
-				successCount++
-				for _, e := range res.entries {
-					if e.Found {
-						results[e.Key] = storage.Entry{
-							Key: e.Key, Value: e.Value, Tombstone: e.Tombstone,
-						}
-					}
+	// Collect results
+	for range nodeBatches {
+		res := <-resChan
+		if res.err != nil {
+			continue
+		}
+		for _, entry := range res.entries {
+			if entry.Found {
+				results[entry.Key] = storage.Entry{
+					Key:   entry.Key,
+					Value: entry.Value,
 				}
-			}
-			// Got enough successes - return
-			if successCount >= minSuccesses {
-				return results, nil
-			}
-			// All nodes exhausted - return what we have
-			if nodeCount <= 0 {
-				if len(results) == 0 {
-					return nil, fmt.Errorf("no successful reads from any replica")
-				}
-				return results, nil
 			}
 		}
 	}
+
+	return results, nil
 }
 
 func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
