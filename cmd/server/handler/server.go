@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
+	"time"
 
 	"log/slog"
 
@@ -13,6 +15,104 @@ import (
 	"github.com/DevLikhith5/kasoku/internal/ring"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
+
+type AuthMiddleware struct {
+	APIKey   string
+	Enabled  bool
+	Next     *Server
+}
+
+func (s *Server) AuthMiddleware(apiKey string, enabled bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !enabled || apiKey == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Skip auth for metrics endpoint
+			if r.URL.Path == "/metrics" || r.URL.Path == "/health" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			key := r.Header.Get("X-API-Key")
+			if key == "" {
+				key = r.URL.Query().Get("api_key")
+			}
+
+			if key == "" {
+				http.Error(w, "API key required", http.StatusUnauthorized)
+				return
+			}
+
+			if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) != 1 {
+				http.Error(w, "Invalid API key", http.StatusUnauthorized)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+type RateLimiter struct {
+	tokens    chan struct{}
+	rate      int
+	burst     int
+	enabled   bool
+}
+
+func NewRateLimiter(rate, burst int, enabled bool) *RateLimiter {
+	rl := &RateLimiter{
+		tokens:  make(chan struct{}, burst),
+		rate:    rate,
+		burst:   burst,
+		enabled: enabled,
+	}
+	if enabled {
+		for i := 0; i < burst; i++ {
+			rl.tokens <- struct{}{}
+		}
+		go rl.refill()
+	}
+	return rl
+}
+
+func (rl *RateLimiter) refill() {
+	ticker := time.NewTicker(time.Second / time.Duration(rl.rate))
+	defer ticker.Stop()
+	for range ticker.C {
+		select {
+		case rl.tokens <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (rl *RateLimiter) Allow() bool {
+	if !rl.enabled {
+		return true
+	}
+	select {
+	case <-rl.tokens:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) RateLimitMiddleware(rl *RateLimiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !rl.Allow() {
+				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 const ReplicationFactor = 3
 

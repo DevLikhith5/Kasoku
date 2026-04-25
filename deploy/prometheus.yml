@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'kasoku'
+    static_configs:
+      - targets: ['kasoku-node1:9001', 'kasoku-node2:9003', 'kasoku-node3:9005']
+    metrics_path: /metrics

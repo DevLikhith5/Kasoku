@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
@@ -20,6 +21,7 @@ import (
 	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
 	rpcgrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"flag"
 )
 
@@ -191,6 +193,25 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Start HTTP/HTTPS server
+	var httpErr error
+	if cfg.TLS.Enabled {
+		cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		if err != nil {
+			logger.Error("failed to load TLS cert", "error", err)
+			fmt.Fprintf(os.Stderr, "failed to load TLS cert: %v\n", err)
+			os.Exit(1)
+		}
+		httpServer.TLSConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+		}
+		logger.Info("TLS enabled", "cert", cfg.TLS.CertFile)
+		httpErr = httpServer.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+	} else {
+		httpErr = httpServer.ListenAndServe()
+	}
+
 	grpcPort := cfg.GRPCPort
 	if grpcPort == 0 {
 		grpcPort = cfg.Port + 2
@@ -198,7 +219,18 @@ func main() {
 	grpcAddr := fmt.Sprintf(":%d", grpcPort)
 	logger.Info("starting gRPC server", "addr", grpcAddr, "node_id", cfg.Cluster.NodeID)
 
-	grpcServer := grpc.NewServer()
+	grpcOpts := []grpc.ServerOption{}
+	if cfg.TLS.Enabled {
+		cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		if err != nil {
+			logger.Error("failed to load TLS cert", "error", err)
+			os.Exit(1)
+		}
+		grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewServerTLSFromCert(&cert)))
+		logger.Info("gRPC TLS enabled")
+	}
+
+	grpcServer := grpc.NewServer(grpcOpts...)
 	grpcSrv := rpcgrpc.NewServer(store, nodeAddr, nodeAddr, logger)
 	if cfg.Cluster.Enabled && server != nil && server.Cluster() != nil {
 		grpcSrv.SetCluster(server.Cluster())
@@ -237,7 +269,7 @@ func main() {
 		}
 	}()
 
-	if err := httpServer.ListenAndServe(); err != nil {
+	if err := httpErr; err != nil && err != http.ErrServerClosed {
 		logger.Error("server error", "error", err)
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)

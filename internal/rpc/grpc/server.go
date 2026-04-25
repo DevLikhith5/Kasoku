@@ -10,11 +10,31 @@ import (
 
 	"github.com/DevLikhith5/kasoku/api"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
+)
+
+var (
+	grpcRequestsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kasoku_grpc_requests_total",
+			Help: "Total number of gRPC requests.",
+		},
+		[]string{"method", "status"},
+	)
+	grpcRequestDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kasoku_grpc_request_duration_seconds",
+			Help:    "gRPC request latency.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5},
+		},
+		[]string{"method"},
+	)
 )
 
 type Logger interface {

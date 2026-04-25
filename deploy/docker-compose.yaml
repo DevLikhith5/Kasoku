@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  kasoku-node1:
+    build: .
+    ports:
+      - "9001:9001"
+      - "9002:9002"
+    environment:
+      - KASOKU_CONFIG=/app/configs/node1.yaml
+      - KASOKU_CLUSTER_ENABLED=true
+      - KASOKU_CLUSTER_NODE_ID=node-1
+      - KASOKU_CLUSTER_NODE_ADDR=http://kasoku-node1:9000
+      - KASOKU_CLUSTER_PEERS=http://kasoku-node1:9000,http://kasoku-node2:9000,http://kasoku-node3:9000
+      - KASOKU_TLS_ENABLED=false
+      - KASOKU_AUTH_ENABLED=false
+    volumes:
+      - ./configs:/app/configs
+      - node1-data:/app/data
+    networks:
+      - kasoku-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  kasoku-node2:
+    build: .
+    ports:
+      - "9003:9003"
+      - "9004:9004"
+    environment:
+      - KASOKU_CONFIG=/app/configs/node2.yaml
+      - KASOKU_CLUSTER_ENABLED=true
+      - KASOKU_CLUSTER_NODE_ID=node-2
+      - KASOKU_CLUSTER_NODE_ADDR=http://kasoku-node2:9000
+      - KASOKU_CLUSTER_PEERS=http://kasoku-node1:9000,http://kasoku-node2:9000,http://kasoku-node3:9000
+    networks:
+      - kasoku-net
+    volumes:
+      - ./configs:/app/configs
+      - node2-data:/app/data
+
+  kasoku-node3:
+    build: .
+    ports:
+      - "9005:9005"
+      - "9006:9006"
+    environment:
+      - KASOKU_CONFIG=/app/configs/node3.yaml
+      - KASOKU_CLUSTER_ENABLED=true
+      - KASOKU_CLUSTER_NODE_ID=node-3
+      - KASOKU_CLUSTER_NODE_ADDR=http://kasoku-node3:9000
+      - KASOKU_CLUSTER_PEERS=http://kasoku-node1:9000,http://kasoku-node2:9000,http://kasoku-node3:9000
+    networks:
+      - kasoku-net
+    volumes:
+      - ./configs:/app/configs
+      - node3-data:/app/data
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - kasoku-net
+
+networks:
+  kasoku-net:
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:

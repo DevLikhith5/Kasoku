@@ -22,11 +22,20 @@ type Config struct {
 	// gRPC port (if different from port)
 	GRPCPort int `yaml:"grpc_port" env:"KASOKU_GRPC_PORT" default:"9002"`
 
+	// TLS settings
+	TLS TLSConfig `yaml:"tls"`
+
+	// Auth settings
+	Auth AuthConfig `yaml:"auth"`
+
 	// Log level (debug, info, warn, error)
 	LogLevel string `yaml:"log_level" env:"KASOKU_LOG_LEVEL" default:"info"`
 
 	// Log file path (empty = stdout)
 	LogFile string `yaml:"log_file" env:"KASOKU_LOG_FILE" default:""`
+
+	// Rate limiting
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
 
 	// LSM Engine settings
 	LSM LSMConfig `yaml:"lsm"`
@@ -42,6 +51,42 @@ type Config struct {
 
 	// Cluster settings (for distributed mode)
 	Cluster ClusterConfig `yaml:"cluster"`
+}
+
+type TLSConfig struct {
+	// Enable TLS
+	Enabled bool `yaml:"enabled" env:"KASOKU_TLS_ENABLED" default:"false"`
+
+	// TLS certificate file
+	CertFile string `yaml:"cert_file" env:"KASOKU_TLS_CERT_FILE" default:"./certs/server-cert.pem"`
+
+	// TLS key file
+	KeyFile string `yaml:"key_file" env:"KASOKU_TLS_KEY_FILE" default:"./certs/server-key.pem"`
+
+	// Client certificate verification (none, request, require)
+	ClientAuth string `yaml:"client_auth" env:"KASOKU_TLS_CLIENT_AUTH" default:"none"`
+}
+
+type AuthConfig struct {
+	// Enable authentication
+	Enabled bool `yaml:"enabled" env:"KASOKU_AUTH_ENABLED" default:"false"`
+
+	// API key for authentication
+	APIKey string `yaml:"api_key" env:"KASOKU_AUTH_API_KEY"`
+
+	// JWT secret for JWT authentication
+	JWTSecret string `yaml:"jwt_secret" env:"KASOKU_AUTH_JWT_SECRET"`
+}
+
+type RateLimitConfig struct {
+	// Enable rate limiting
+	Enabled bool `yaml:"enabled" env:"KASOKU_RATE_LIMIT_ENABLED" default:"false"`
+
+	// Requests per second per client
+	RequestsPerSecond int `yaml:"requests_per_second" env:"KASOKU_RATE_LIMIT_RPS" default:"1000"`
+
+	// Burst size
+	Burst int `yaml:"burst" env:"KASOKU_RATE_LIMIT_BURST" default:"100"`
 }
 
 type LSMConfig struct {
