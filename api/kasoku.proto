@@ -84,6 +84,7 @@ message Entry {
 message ReplicateRequest {
   Entry entry = 1;
   uint64 origin_node = 2;
+  string target_node = 3; // hint: original intended replica for this write
 }
 
 message ReplicateResponse {

@@ -2,6 +2,7 @@
 data_dir: ./data/node-1
 port: 9000
 http_port: 9000
+grpc_port: 9002
 grpc: true
 log_level: error
 

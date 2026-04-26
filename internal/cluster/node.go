@@ -267,7 +267,12 @@ func (n *Node) getVectorClock(key string) (storage.VectorClock, bool) {
 	return vc, ok
 }
 
-func (n *Node) HandleReplicate(ctx context.Context, key string, value []byte) error {
+func (n *Node) HandleReplicate(ctx context.Context, key string, value []byte, targetNode string) error {
+	// If targetNode is set, this is a hinted write - store hint locally
+	// The fallback node stores the hint so it can deliver when target recovers
+	if targetNode != "" {
+		n.hints.Store(key, value, targetNode)
+	}
 	return n.engine.Put(key, value)
 }
 

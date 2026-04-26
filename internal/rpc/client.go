@@ -37,6 +37,7 @@ type ReplicatedWriteRequest struct {
 	Key         string            `json:"key"`
 	Value       []byte            `json:"value"`
 	VectorClock map[string]uint64 `json:"vector_clock,omitempty"`
+	TargetNode  string            `json:"target_node,omitempty"` // hint: original target node for this replica
 }
 
 type ReplicatedWriteResponse struct {

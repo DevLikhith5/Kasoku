@@ -193,7 +193,7 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start HTTP/HTTPS server
+	// Start HTTP/HTTPS server in background (goroutine)
 	var httpErr error
 	if cfg.TLS.Enabled {
 		cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
@@ -207,9 +207,9 @@ func main() {
 			MinVersion:   tls.VersionTLS12,
 		}
 		logger.Info("TLS enabled", "cert", cfg.TLS.CertFile)
-		httpErr = httpServer.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		go func() { httpErr = httpServer.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile) }()
 	} else {
-		httpErr = httpServer.ListenAndServe()
+		go func() { httpErr = httpServer.ListenAndServe() }()
 	}
 
 	grpcPort := cfg.GRPCPort
@@ -269,9 +269,11 @@ func main() {
 		}
 	}()
 
-	if err := httpErr; err != nil && err != http.ErrServerClosed {
-		logger.Error("server error", "error", err)
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
-	}
+		if err := httpErr; err != nil && err != http.ErrServerClosed {
+			logger.Error("server error", "error", err)
+			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+		}
+		
+	// Wait forever (servers run in goroutines)
+	select {}
 }

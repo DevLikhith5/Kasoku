@@ -49,6 +49,14 @@ func (s *MockStore) BatchPut(pairs []storage.Entry) error {
 	return nil
 }
 
+func (s *MockStore) BatchPutAsync(pairs []storage.Entry) error {
+	return s.BatchPut(pairs)
+}
+
+func (s *MockStore) PutAsync(key string, value []byte) error {
+	return s.Put(key, value)
+}
+
 func (s *MockStore) Get(key string) (storage.Entry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -161,10 +169,17 @@ func TestCluster_IsPrimary(t *testing.T) {
 	r.AddNode("node-2")
 	r.AddNode("node-3")
 
+	// Initialize members and mark all as alive
+	members := NewMemberList("node-1")
+	members.Merge([]string{"node-1", "node-2", "node-3"})
+
 	cfg := ClusterConfig{
-		NodeID: "node-1",
-		Ring:   r,
-		Store:  store,
+		NodeID:            "node-1",
+		Ring:              r,
+		Store:             store,
+		ReplicationFactor: 3,
+		QuorumSize:       1,
+		Members:          members,
 	}
 
 	c := New(cfg)
@@ -197,11 +212,17 @@ func TestCluster_GetReplicas(t *testing.T) {
 	r.AddNode("node-2")
 	r.AddNode("node-3")
 
+	// Initialize members and mark all as alive
+	members := NewMemberList("node-1")
+	members.Merge([]string{"node-1", "node-2", "node-3"})
+
 	cfg := ClusterConfig{
 		NodeID:            "node-1",
 		Ring:              r,
 		Store:             store,
 		ReplicationFactor: 3,
+		QuorumSize:       1,
+		Members:          members,
 	}
 
 	c := New(cfg)

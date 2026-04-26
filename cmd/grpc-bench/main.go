@@ -121,11 +121,11 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 }
 
 func main() {
-	workers := 30
+	workers := 50
 	batchSize := 50
 	writeDur := 10 * time.Second
 	readDur := 10 * time.Second
 
-	// Cluster benchmark (3 nodes: node1=9002, node2=9004, node3=9006)
-	runBenchmark("3-NODE CLUSTER", []string{"localhost:9002", "localhost:9004", "localhost:9006"}, workers, batchSize, writeDur, readDur)
+	// Cluster benchmark - 3 nodes, each gRPC port = HTTP port + 2
+	runBenchmark("SINGLE NODE", []string{"localhost:9002,localhost:9003,localhost:9004", "localhost:9003", "localhost:9004"}, workers, batchSize, writeDur, readDur)
 }

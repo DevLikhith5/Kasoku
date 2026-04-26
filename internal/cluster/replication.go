@@ -50,26 +50,66 @@ func (vc *versionCounter) next() uint64 {
 }
 
 func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) error {
-	replicas := n.ring.GetNodes(key, n.cfg.N)
+	// Get preferred (original) nodes from ring - needed to identify fallbacks for hints
+	preferred := n.ring.GetNodes(key, n.cfg.N)
+	if len(preferred) == 0 {
+		return ErrNoNodesAvailable
+	}
+
+	// Get actual replicas (includes fallback nodes if some preferred are down)
+	aliveSet := n.cluster.snapshotAliveSet()
+	replicas := n.cluster.getReplicasForKey(key, aliveSet)
 	if len(replicas) == 0 {
 		return ErrNoNodesAvailable
 	}
 
 	// Generate vector clock for this write
 	vc := n.getOrCreateVectorClock(key)
-vc = vc.Increment(n.cfg.NodeID)
+	vc = vc.Increment(n.cfg.NodeID)
 
 	// FAST PATH: W=1 local-first - write locally only for max throughput
-	// No async replication in critical path - avoids stalls under load
 	if n.cfg.W == 1 {
 		return n.engine.PutWithVectorClock(key, value, vc)
 	}
 
 	// SLOW PATH: W>1 - wait for quorum
 	results := make(chan replicaResult, len(replicas))
-
-	// Adaptive timeout
 	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
+
+	// Build map: which preferred nodes are actually in the replica set?
+	preferredInSet := make(map[string]bool)
+	for _, p := range preferred {
+		for _, r := range replicas {
+			if p == r {
+				preferredInSet[p] = true
+				break
+			}
+		}
+	}
+
+	// Determine fallback mapping: fallback node -> dead target node
+	fallbackToTarget := make(map[string]string)
+	usedPreferred := make(map[string]bool)
+	for _, p := range preferred {
+		for _, r := range replicas {
+			if p == r {
+				usedPreferred[p] = true
+				break
+			}
+		}
+	}
+	for _, r := range replicas {
+		if !preferredInSet[r] {
+			// This is a fallback - find the dead preferred node
+			for _, p := range preferred {
+				if !usedPreferred[p] {
+					fallbackToTarget[r] = p
+					usedPreferred[p] = true
+					break
+				}
+			}
+		}
+	}
 
 	for _, nodeID := range replicas {
 		go func(nid string) {
@@ -80,11 +120,12 @@ vc = vc.Increment(n.cfg.NodeID)
 			if nid == n.cfg.NodeID {
 				err = n.engine.PutWithVectorClock(key, value, vc)
 			} else {
-				err = n.remoteReplicateWithVC(rCtx, nid, key, value, false, vc)
+				targetNode := fallbackToTarget[nid] // empty if primary, set if fallback
+				err = n.remoteReplicateWithVC(rCtx, nid, key, value, false, vc, targetNode)
 			}
 			n.timeoutTracker.Record(nid, time.Since(start))
 
-			if err != nil {
+			if err != nil && preferredInSet[nid] {
 				_ = n.hints.Store(key, value, nid)
 			}
 			results <- replicaResult{nodeID: nid, err: err}
@@ -101,15 +142,10 @@ vc = vc.Increment(n.cfg.NodeID)
 			failures++
 			n.logger.Debug("replica write failed", "node", res.nodeID, "error", res.err)
 		}
-		
-		// DEFINITIVE STALL KILLER: Return as soon as quorum is reached.
-		// The remaining goroutines will still send their result to the buffered channel
-		// and won't leak or block the coordinator.
+
 		if acks >= n.cfg.W {
 			return nil
 		}
-		
-		// If we can't reach quorum anymore, exit early too
 		if failures > len(replicas)-n.cfg.W {
 			break
 		}
@@ -377,20 +413,26 @@ func (n *Node) remoteReplicate(ctx context.Context,
 }
 
 // remoteReplicateWithVC sends replication request with vector clock
+// targetNode is the original intended replica (for hinted handoff on fallback nodes)
 func (n *Node) remoteReplicateWithVC(ctx context.Context,
-	nodeID, key string, value []byte, tombstone bool, vc storage.VectorClock) error {
+	nodeID, key string, value []byte, tombstone bool, vc storage.VectorClock, targetNodes ...string) error {
 	addr, ok := n.cluster.nodeAddrMap[nodeID]
 	if !ok {
 		addr = nodeID
 	}
 
 	vcMap := map[string]uint64(vc)
-	body, err := json.Marshal(map[string]any{
+	bodyMap := map[string]any{
 		"key":          key,
 		"value":        value,
 		"tombstone":    tombstone,
 		"vector_clock": vcMap,
-	})
+	}
+	// Include hint: original target node(s) for this replica
+	if len(targetNodes) > 0 && targetNodes[0] != "" {
+		bodyMap["target_node"] = targetNodes[0]
+	}
+	body, err := json.Marshal(bodyMap)
 	if err != nil {
 		return fmt.Errorf("marshal replicate request: %w", err)
 	}
