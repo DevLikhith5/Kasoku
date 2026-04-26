@@ -14,9 +14,14 @@ High-performance distributed key-value store implementing Amazon Dynamo paper wi
 ## Quick Start
 
 ```bash
-cd docs
-./setup.sh single   # Start single node
-./run-benchmarks.sh
+# Build server
+go build -o kasoku cmd/server/main.go
+
+# Single node gRPC benchmark
+./scripts/bench-grpc.sh single
+
+# 3-node cluster gRPC benchmark
+./scripts/bench-grpc.sh cluster
 ```
 
 ## Performance
