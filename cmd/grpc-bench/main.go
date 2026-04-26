@@ -20,6 +20,22 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 
 	fmt.Printf("\n=== %s gRPC ===\n", name)
 
+	// Warmup phase - establish connections
+	fmt.Println("Warming up...")
+	var warmupWg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		warmupWg.Add(1)
+		addr := addrs[w % len(addrs)]
+		go func() {
+			defer warmupWg.Done()
+			client, _ := pool.Get(addr)
+			_ = client
+		}()
+	}
+	warmupWg.Wait()
+	time.Sleep(2 * time.Second)
+	fmt.Println("Warmup complete, starting benchmark...")
+
 	var wg sync.WaitGroup
 
 	// === WRITE PHASE ===
