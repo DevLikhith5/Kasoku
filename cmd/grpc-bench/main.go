@@ -127,5 +127,5 @@ func main() {
 	readDur := 10 * time.Second
 
 	// Cluster benchmark - 3 nodes, each gRPC port = HTTP port + 2
-	runBenchmark("SINGLE NODE", []string{"localhost:9002,localhost:9003,localhost:9004", "localhost:9003", "localhost:9004"}, workers, batchSize, writeDur, readDur)
+	runBenchmark("SINGLE NODE", []string{"localhost:9002", "localhost:9003", "localhost:9004"}, workers, batchSize, writeDur, readDur)
 }
