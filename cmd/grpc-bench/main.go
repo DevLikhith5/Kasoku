@@ -121,10 +121,5 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 }
 
 func main() {
-	workers := 50
-	batchSize := 50
-	writeDur := 10 * time.Second
-	readDur := 10 * time.Second
-
-	runBenchmark("SINGLE NODE", []string{"localhost:9002"}, workers, batchSize, writeDur, readDur)
+	runBenchmark("SINGLE NODE", []string{"localhost:9002"}, 50, 50, 10*time.Second, 10*time.Second)
 }

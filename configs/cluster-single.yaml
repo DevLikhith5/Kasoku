@@ -1,0 +1,34 @@
+# Single Node Configuration
+data_dir: ./data/node1
+port: 9000
+http_port: 9000
+log_level: error
+
+lsm:
+    levels: 5
+    level_ratio: 10
+    l0_base_size: 67108864
+
+compaction:
+    threshold: 1000
+    max_concurrent: 1
+    l0_size_threshold: 10737418240
+
+memory:
+    memtable_size: 67108864
+    bloom_fp_rate: 0.01
+    block_cache_size: 134217728
+
+wal:
+    sync: false
+    sync_interval: 500ms
+
+cluster:
+    enabled: true
+    node_id: node-1
+    node_addr: http://localhost:9000
+    peers: []
+    replication_factor: 1
+    quorum_size: 1
+    vnodes: 10
+    rpc_timeout_ms: 500
