@@ -17,6 +17,8 @@ type HashMapEngine struct {
 }
 
 func (h *HashMapEngine) PutEntry(entry Entry) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.data[entry.Key] = entry
 	return nil
 }

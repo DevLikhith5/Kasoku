@@ -159,7 +159,7 @@ func New(cfg ClusterConfig) *Cluster {
 			c.members.MarkAlive(peer)
 		}
 	}
-	c.ringCache = &RingCache{buckets: make([]ringCacheBucket, 1024)}
+	c.ringCache = &RingCache{buckets: make([]ringCacheBucket, 1021)}
 
 	// Register this node's address
 	c.nodeAddrMap[cfg.NodeID] = cfg.NodeAddr
