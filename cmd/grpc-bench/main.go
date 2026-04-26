@@ -137,5 +137,5 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 }
 
 func main() {
-	runBenchmark("SINGLE NODE", []string{"localhost:9002"}, 30, 30, 5*time.Second, 5*time.Second)
+	runBenchmark("3-NODE CLUSTER", []string{"localhost:9002", "localhost:9003", "localhost:9004"}, 30, 30, 5*time.Second, 5*time.Second)
 }
