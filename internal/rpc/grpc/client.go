@@ -47,7 +47,7 @@ func (c *ReplicatedClient) Close() error {
 }
 
 func (c *ReplicatedClient) ReplicatedPut(ctx context.Context, key string, value []byte) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	_, err := c.client.Put(ctx, &api.PutRequest{
 		Key:   key,
@@ -57,7 +57,7 @@ func (c *ReplicatedClient) ReplicatedPut(ctx context.Context, key string, value 
 }
 
 func (c *ReplicatedClient) ReplicatedPutBinary(ctx context.Context, key string, value []byte) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	_, err := c.client.Put(ctx, &api.PutRequest{
 		Key:   key,
@@ -67,7 +67,7 @@ func (c *ReplicatedClient) ReplicatedPutBinary(ctx context.Context, key string, 
 }
 
 func (c *ReplicatedClient) ReplicatedGet(ctx context.Context, key string) ([]byte, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	resp, err := c.client.Get(ctx, &api.GetRequest{Key: key})
 	if err != nil {
@@ -86,14 +86,14 @@ func (c *ReplicatedClient) ReplicatedGet(ctx context.Context, key string) ([]byt
 }
 
 func (c *ReplicatedClient) ReplicatedDelete(ctx context.Context, key string) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	_, err := c.client.Delete(ctx, &api.DeleteRequest{Key: key})
 	return err
 }
 
 func (c *ReplicatedClient) BatchReplicatedPut(ctx context.Context, entries []BatchWriteEntry) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req := &api.BatchPutRequest{
 		Entries: make([]*api.Entry, len(entries)),
