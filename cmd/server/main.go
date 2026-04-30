@@ -111,14 +111,8 @@ func main() {
 		)
 
 		// Create consistent hashing ring
+		// NOTE: NewDistributed() will add this node to the ring
 		r := ring.New(cfg.Cluster.VNodes)
-
-		// IMPORTANT: Use nodeAddr as the consistent identity in the ring so that
-		// ring lookup results (peer URLs) can be compared directly to s.nodeID
-		// in the handler. Previously, nodeID was "node-1" but peers were added
-		// as "http://localhost:9001" — causing replicas[0] == s.nodeID to never
-		// match, leading to infinite proxy loops and crashes.
-		r.AddNode(nodeAddr) // Add self using nodeAddr as identity
 
 		// get gRPC port for cluster config
 		clusterGRPCPort := cfg.GRPCPort
@@ -165,18 +159,22 @@ func main() {
 	httpHandler := handler.WithLogging(logger)(handler.WithRecovery(logger)(mux))
 
 	// Background metrics scraping
+	metricsStop := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			stats := store.Stats()
-			m.SetStorageKeys(stats.KeyCount)
-			m.SetStorageBytes(stats.MemBytes, stats.DiskBytes)
+		for {
+			select {
+			case <-ticker.C:
+				stats := store.Stats()
+				m.SetStorageKeys(stats.KeyCount)
+				m.SetStorageBytes(stats.MemBytes, stats.DiskBytes)
 
-			if cfg.Cluster.Enabled {
-				// We only have ring nodes exposed in main via cfg.Cluster
-				// In a full integration, you'd pull from HintStore/PhiMap here.
-				m.SetClusterNodes(len(cfg.Cluster.Peers) + 1)
+				if cfg.Cluster.Enabled {
+					m.SetClusterNodes(len(cfg.Cluster.Peers) + 1)
+				}
+			case <-metricsStop:
+				return
 			}
 		}
 	}()
@@ -249,6 +247,7 @@ func main() {
 	}()
 
 	// Graceful shutdown
+	done := make(chan struct{})
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -264,16 +263,20 @@ func main() {
 
 		grpcServer.GracefulStop()
 
+		close(metricsStop)
+
 		if err := store.Close(); err != nil {
 			logger.Error("store close error", "error", err)
 		}
+
+		close(done)
 	}()
 
-		if err := httpErr; err != nil && err != http.ErrServerClosed {
-			logger.Error("server error", "error", err)
-			fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		}
-		
-	// Wait forever (servers run in goroutines)
-	select {}
+	// Block until shutdown completes or a server error occurs
+	if err := httpErr; err != nil && err != http.ErrServerClosed {
+		logger.Error("server error", "error", err)
+		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
+	}
+
+	<-done
 }

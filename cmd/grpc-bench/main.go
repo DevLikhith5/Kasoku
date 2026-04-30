@@ -20,12 +20,11 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 
 	fmt.Printf("\n=== %s gRPC ===\n", name)
 
-	// Warmup phase - establish connections
 	fmt.Println("Warming up...")
 	var warmupWg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		warmupWg.Add(1)
-		addr := addrs[w % len(addrs)]
+		addr := addrs[w%len(addrs)]
 		go func() {
 			defer warmupWg.Done()
 			client, _ := pool.Get(addr)
@@ -43,7 +42,7 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
-		addr := addrs[w % len(addrs)]
+		addr := addrs[w%len(addrs)]
 		go func(workerID int, addr string) {
 			defer wg.Done()
 
@@ -92,7 +91,7 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
-		addr := addrs[w % len(addrs)]
+		addr := addrs[w%len(addrs)]
 		go func(workerID int, addr string) {
 			defer wg.Done()
 
@@ -137,5 +136,6 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 }
 
 func main() {
+	// Cluster: 3 nodes on localhost:9002, 9003, 9004
 	runBenchmark("3-NODE CLUSTER", []string{"localhost:9002", "localhost:9003", "localhost:9004"}, 30, 30, 5*time.Second, 5*time.Second)
 }

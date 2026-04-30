@@ -118,7 +118,7 @@ export function SettingsPanel({ apiBase }: { apiBase: string }) {
                   key: `node_${n.node_id}`,
                   label: n.node_id,
                   value: n.alive 
-                    ? `Keys: ${n.stats?.key_count ?? 0}, Disk: ${(n.stats?.disk_bytes ?? 0 / 1024 / 1024).toFixed(1)}MB`
+                    ? `Keys: ${n.stats?.key_count ?? 0}, Disk: ${((n.stats?.disk_bytes ?? 0) / 1024 / 1024).toFixed(1)}MB`
                     : `OFFLINE: ${n.error || 'unreachable'}`,
                 })),
               })

@@ -166,8 +166,8 @@ func (s *Server) replicatedBatchPut(ctx context.Context, entries []storage.Entry
 
 		wg.Wait()
 
-		if successCount < quorumSize-1 {
-			resultCh <- batchResult{err: fmt.Errorf("quorum not reached: got %d, need %d", successCount, quorumSize-1)}
+		if successCount < quorumSize {
+			resultCh <- batchResult{err: fmt.Errorf("quorum not reached: got %d, need %d", successCount, quorumSize)}
 		} else {
 			resultCh <- batchResult{success: successCount}
 		}
