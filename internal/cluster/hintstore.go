@@ -105,25 +105,54 @@ func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, val
 	hs.mu.Unlock()
 
 	delivered := make(map[*Hint]bool)
+	toRemove := make([]*Hint, 0)
+
+	// Use a mutex per hint to prevent concurrent delivery of same hint
+	var deliveryMu sync.Mutex
 
 	for _, h := range hints {
 		if h.Attempts.Load() >= 10 {
 			continue
 		}
 
+		// Try to atomically claim this hint delivery
+		deliveryMu.Lock()
+		// Double-check after acquiring lock (another goroutine may have delivered)
+		hs.mu.RLock()
+		var alreadyDelivered bool
+		if _, alreadyDelivered = delivered[h]; alreadyDelivered {
+			hs.mu.RUnlock()
+			deliveryMu.Unlock()
+			continue
+		}
+		hs.mu.RUnlock()
+		if alreadyDelivered {
+			deliveryMu.Unlock()
+			continue
+		}
+
 		err := deliver(h.TargetNode, h.Key, h.Value)
 		if err == nil {
 			delivered[h] = true
+			toRemove = append(toRemove, h)
 		} else {
 			h.Attempts.Add(1)
 		}
+		deliveryMu.Unlock()
 	}
 
-	if len(delivered) > 0 {
+	if len(toRemove) > 0 {
 		hs.mu.Lock()
 		newHints := make([]*Hint, 0, len(hs.hints))
 		for _, h := range hs.hints {
-			if !delivered[h] {
+			shouldRemove := false
+			for _, rh := range toRemove {
+				if h == rh {
+					shouldRemove = true
+					break
+				}
+			}
+			if !shouldRemove {
 				newHints = append(newHints, h)
 			}
 		}

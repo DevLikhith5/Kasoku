@@ -155,12 +155,17 @@ func (ml *MemberList) GetRandomPeers(count int) []string {
 		return nil
 	}
 
+	// Safety check - cap count to available peers
+	if count > len(alive) {
+		count = len(alive)
+	}
+
 	if len(alive) <= count {
 		return alive
 	}
 
 	result := make([]string, count)
-	for i := range result {
+	for i := 0; i < count; i++ {
 		idx := rand.Intn(len(alive))
 		result[i] = alive[idx]
 		alive = append(alive[:idx], alive[idx+1:]...)
