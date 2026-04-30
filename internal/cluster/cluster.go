@@ -59,6 +59,7 @@ type Cluster struct {
 	gossipProtocol       *GossipProtocol
 	merkleAntiEntropy   *MerkleAntiEntropy
 	hintStore           *HintStore
+	stopCh              chan struct{}
 }
 
 // GetClient returns RPC client for a node address
@@ -148,6 +149,7 @@ func New(cfg ClusterConfig) *Cluster {
 		grpcClients:       make(map[string]*grpcrpc.ReplicatedClient),
 		grpcPool:          grpcrpc.NewPool(),
 		nodeAddrMap:       make(map[string]string),
+		stopCh:            make(chan struct{}),
 	}
 
 	if cfg.Members != nil {
@@ -199,9 +201,14 @@ func New(cfg ClusterConfig) *Cluster {
 func (c *Cluster) backgroundRefreshAliveSet() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	for range ticker.C {
-		snapshot := c.members.AliveSet()
-		c.aliveSnapshot.Store(&snapshot)
+	for {
+		select {
+		case <-ticker.C:
+			snapshot := c.members.AliveSet()
+			c.aliveSnapshot.Store(&snapshot)
+		case <-c.stopCh:
+			return
+		}
 	}
 }
 
@@ -921,6 +928,7 @@ func (c *Cluster) StartBackgroundWorkers(ctx context.Context) {
 
 // StopBackgroundWorkers stops all background workers
 func (c *Cluster) StopBackgroundWorkers() {
+	close(c.stopCh)
 	if c.backgroundReplicator != nil {
 		c.backgroundReplicator.Stop()
 	}

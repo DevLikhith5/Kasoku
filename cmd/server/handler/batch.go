@@ -151,7 +151,7 @@ func (s *Server) replicatedBatchPut(ctx context.Context, entries []storage.Entry
 					rpcEntries[i] = rpc.BatchWriteEntry{Key: e.Key, Value: e.Value}
 				}
 
-				replCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				replCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 				defer cancel()
 
 				if _, err := c.BatchReplicatedPut(replCtx, rpcEntries); err != nil {
