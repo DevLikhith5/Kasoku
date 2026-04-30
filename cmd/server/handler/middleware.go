@@ -23,12 +23,16 @@ func WithLogging(logger *slog.Logger) func(http.Handler) http.Handler {
 			start := time.Now()
 			rr := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 			next.ServeHTTP(rr, r)
-			logger.Info("http request",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"status", rr.statusCode,
-				"duration_ms", time.Since(start).Milliseconds(),
-			)
+			duration := time.Since(start)
+			// Only log slow requests or errors to avoid benchmark overhead
+			if duration > 100*time.Millisecond || rr.statusCode >= 400 {
+				logger.Info("http request",
+					"method", r.Method,
+					"path", r.URL.Path,
+					"status", rr.statusCode,
+					"duration_ms", duration.Milliseconds(),
+				)
+			}
 		})
 	}
 }
