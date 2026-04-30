@@ -1045,8 +1045,11 @@ func (c *Cluster) deliverHints() {
 func convertToGRPCAddr(httpAddr string, grpcPort int) string {
 	// Extract host from http://localhost:9000
 	host := httpAddr
-	if idx := len("http://"); idx < len(host) {
-		host = httpAddr[idx:]
+	if len(host) > 7 && host[:7] == "http://" {
+		host = host[7:]
+	}
+	if len(host) > 8 && host[:8] == "https://" {
+		host = host[8:]
 	}
 	// Remove any trailing path
 	if idx := findByte(host, '/'); idx > 0 {

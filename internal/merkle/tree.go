@@ -43,7 +43,9 @@ func buildLeaf(keys []string, getValue func(string) []byte) *Node {
 	h := sha256.New()
 	for _, k := range keys {
 		h.Write([]byte(k))
-		h.Write(getValue(k))
+		if getValue != nil {
+			h.Write(getValue(k))
+		}
 	}
 	var hash [32]byte
 	copy(hash[:], h.Sum(nil))
