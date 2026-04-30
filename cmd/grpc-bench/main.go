@@ -136,6 +136,6 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 }
 
 func main() {
-	// Single node: localhost:9002
-	runBenchmark("SINGLE NODE", []string{"localhost:9002"}, 30, 30, 5*time.Second, 5*time.Second)
+	// Single node: localhost:9100 (gRPC port from cluster-node1.yaml)
+	runBenchmark("SINGLE NODE", []string{"localhost:9100"}, 30, 30, 5*time.Second, 5*time.Second)
 }

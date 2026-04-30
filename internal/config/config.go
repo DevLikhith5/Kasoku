@@ -19,8 +19,8 @@ type Config struct {
 	// HTTP port (if different from gRPC)
 	HTTPPort int `yaml:"http_port" env:"KASOKU_HTTP_PORT" default:"9001"`
 
-	// gRPC port (if different from port)
-	GRPCPort int `yaml:"grpc_port" env:"KASOKU_GRPC_PORT" default:"9002"`
+	// gRPC port (if different from port, defaults to Port+2)
+	GRPCPort int `yaml:"grpc_port" env:"KASOKU_GRPC_PORT" default:"0"`
 
 	// TLS settings
 	TLS TLSConfig `yaml:"tls"`
