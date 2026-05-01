@@ -21,7 +21,7 @@ memory:
     memtable_size: 536870912
     max_memtable_bytes: 2147483648
     bloom_fp_rate: 0.005
-    block_cache_size: 2147483648
+    block_cache_size: 268435456
 
 wal:
     sync: false

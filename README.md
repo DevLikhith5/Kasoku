@@ -155,19 +155,37 @@ Total: 4209022 ops/sec
 
 ### Latest Results
 
-| Workload | Description | Ops/sec | Read p50 | Read p99 |
-|----------|-------------|---------|----------|----------|
-| **A** | 50% read, 50% write | **4.2M** | 34ms | 185ms |
-| **B** | 95% read, 5% write | **2.2M** | 121ms | 235ms |
-| **C** | 100% read | **6.9M** ⚡ | 30ms | 124ms |
+#### W1-R1 (Eventual Consistency) - Fastest
+
+| Workload | Description | Ops/sec | Writes | Reads | W-p99 | R-p99 | R-p50 |
+|----------|-------------|---------|--------|-------|-------|-------|-------|
+| **A** | 50% read, 50% write | **4,459,224** | 2,705,821 | 6,213,817 | 130ms | 156ms | 31ms |
+| **B** | 95% read, 5% write | **1,994,254** | 2,366,944 | 1,901,246 | 224ms | 254ms | 127ms |
+| **C** | 100% read | **6,316,517** | 0 | 6,317,154 | N/A | 140ms | 32ms |
+| **D** | 95% read, 5% insert | **5,822,149** | 2,111,085 | 6,757,330 | 385ms | 136ms | 30ms |
+| **E** | Range scans | **1,310,310** | 1,194,534 | 1,339,366 | 119ms | 71ms | 20ms |
+| **F** | Read-modify-write | **3,713,527** | 2,087,008 | 5,341,850 | 499ms | 177ms | 38ms |
+
+#### W2-R2 (Strong Consistency) - Recommended for Production
+
+| Workload | Description | Ops/sec | Writes | Reads | W-p99 | R-p99 | R-p50 |
+|----------|-------------|---------|--------|-------|-------|-------|-------|
+| **A** | 50% read, 50% write | **3,670,372** | 2,892,210 | 4,449,659 | 127ms | 237ms | 42ms |
+| **B** | 95% read, 5% write | **1,632,912** | 1,759,425 | 1,601,146 | 407ms | 457ms | 145ms |
+| **C** | 100% read | **6,385,702** | 0 | 6,386,000 | N/A | 136ms | 32ms |
+| **D** | 95% read, 5% insert | **1,787,752** | 2,074,581 | 1,715,000 | 327ms | 348ms | 138ms |
+| **E** | Range scans | **2,621,940** | 1,222,693 | 2,993,065 | 66ms | 45ms | 7ms |
+| **F** | Read-modify-write | **1,706,326** | 1,789,730 | 1,623,017 | 574ms | 511ms | 139ms |
 
 ### Comparison with Industry
 
-| DB | Read-Only | Mixed | Notes |
-|----|-----------|-------|-------|
-| Redis | 2-4M | 1-2M | In-memory |
-| RocksDB | 1-2M | 1M | Embedded |
-| **Kasoku** | **6.9M** | **4.2M** | Distributed |
+| DB | Read-Only | Mixed (50/50) | Write-Heavy | Notes |
+|----|-----------|---------------|-------------|-------|
+| Redis | 2-4M | 1-2M | 1M | Single-threaded, in-memory |
+| RocksDB | 1-2M | 1M | 1M | Embedded LSM engine |
+| Cassandra | 1-3M | 1-2M | 1-2M | Distributed, tunable |
+| **Kasoku** (W1-R1) | **6.3M** | **4.5M** | **2.7M** | Distributed, W=1/R=1 |
+| **Kasoku** (W2-R2) | **6.4M** | **3.7M** | **2.9M** | Distributed, W=2/R=2 |
 
 ## License
 
