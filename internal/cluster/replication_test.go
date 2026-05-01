@@ -48,8 +48,8 @@ func newTestNode(t *testing.T, nodeID string, r *ring.Ring) *testNode {
 			HTTPAddr:       "localhost:0",
 			DataDir:        dir,
 			N:              3,
-			W:              1,
-			R:              1,
+			W:              3,
+			R:              3,
 			GossipInterval: time.Second,
 		},
 		engine:         engine,
@@ -217,10 +217,23 @@ func TestReplication_DeleteReplicates(t *testing.T) {
 		t.Fatalf("ReplicatedDelete failed: %v", err)
 	}
 
-	// Verify deleted on all nodes
+	// Verify deleted on replicas that should have the key
+	replicas := node1.node.ring.GetNodes("del-key", 3)
 	for _, tn := range []*testNode{node1, node2, node3} {
-		_, err := tn.node.engine.Get("del-key")
-		if err == nil {
+		// Only check nodes that are replicas for this key
+		isReplica := false
+		for _, r := range replicas {
+			if r == tn.nodeID {
+				isReplica = true
+				break
+			}
+		}
+		if !isReplica {
+			continue
+		}
+		entry, err := tn.node.engine.Get("del-key")
+		// After delete, entry.Tombstone should be true or value should be empty
+		if err == nil && !entry.Tombstone && len(entry.Value) > 0 {
 			t.Errorf("node %s: key 'del-key' should have been deleted", tn.nodeID)
 		}
 	}

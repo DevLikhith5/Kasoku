@@ -178,12 +178,16 @@ func New(cfg ClusterConfig) *Cluster {
 		peerNodeID := extractNodeID(peer)
 		c.nodeAddrMap[peerNodeID] = peer
 
-		// Create gRPC client for this peer using pool
+		// Create gRPC client for this peer using pool (non-blocking)
 		grpcAddr := convertToGRPCAddr(peer, grpcPort)
-		client, err := c.grpcPool.Get(grpcAddr)
-		if err == nil {
-			c.grpcClients[peer] = client
-		}
+		go func(addr string) {
+			client, err := c.grpcPool.Get(addr)
+			if err == nil {
+				c.mu.Lock()
+				c.grpcClients[peer] = client
+				c.mu.Unlock()
+			}
+		}(grpcAddr)
 	}
 	// Initialize alive set snapshot
 	initialAlive := c.members.AliveSet()
