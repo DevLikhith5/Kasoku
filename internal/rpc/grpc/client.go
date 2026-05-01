@@ -159,8 +159,8 @@ func NewPool() *Pool {
 	return &Pool{
 		clients:  make(map[string][]*ReplicatedClient),
 		idx:      make(map[string]int),
-		minConns: 4,
-		maxConns: 16,
+		minConns: 8,
+		maxConns: 32,
 	}
 }
 
