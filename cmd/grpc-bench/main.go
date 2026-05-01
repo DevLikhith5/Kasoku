@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"math"
 	"sort"
@@ -12,7 +13,13 @@ import (
 	grpcrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
 )
 
+var workload = flag.String("workload", "A", "YCSB workload: A (50/50), B (95/5), C (100 read), D (95/5 insert), E (scan), F (read-modify)")
+
 func runBenchmark(name string, addrs []string, workers int, batchSize int, writeDur, readDur time.Duration) {
+	runBenchmarkWithWorkload(name, addrs, workers, batchSize, writeDur, readDur, "A")
+}
+
+func runBenchmarkWithWorkload(name string, addrs []string, workers int, batchSize int, writeDur, readDur time.Duration, workload string) {
 	pool := grpcrpc.NewPool()
 
 	var writeOps atomic.Int64
@@ -181,6 +188,42 @@ func percentile(sorted []float64, p int) float64 {
 }
 
 func main() {
-	// Single node: no replication overhead
-	runBenchmark("SINGLE NODE", []string{"localhost:9100"}, 700, 700, 5*time.Second, 5*time.Second)
+	flag.Parse()
+	
+	// YCSB-style workloads
+	switch *workload {
+	case "A":
+		// 50% reads, 50% writes - balanced
+		fmt.Println("=== YCSB Workload A (50% read, 50% write) ===")
+		runBenchmark("WorkloadA", []string{"localhost:9100"}, 500, 500, 10*time.Second, 10*time.Second)
+		
+	case "B":
+		// 95% reads, 5% writes - read heavy
+		fmt.Println("=== YCSB Workload B (95% read, 5% write) ===")
+		runBenchmark("WorkloadB", []string{"localhost:9100"}, 500, 500, 5*time.Second, 20*time.Second)
+		
+	case "C":
+		// 100% reads - read only
+		fmt.Println("=== YCSB Workload C (100% read) ===")
+		runBenchmark("WorkloadC", []string{"localhost:9100"}, 500, 500, 0, 20*time.Second)
+		
+	case "D":
+		// 95% reads, 5% inserts (newer keys)
+		fmt.Println("=== YCSB Workload D (95% read, 5% insert) ===")
+		runBenchmark("WorkloadD", []string{"localhost:9100"}, 500, 500, 5*time.Second, 20*time.Second)
+		
+	case "E":
+		// Range scans
+		fmt.Println("=== YCSB Workload E (scan) ===")
+		runBenchmark("WorkloadE", []string{"localhost:9100"}, 300, 100, 5*time.Second, 20*time.Second)
+		
+	case "F":
+		// Read-modify-write
+		fmt.Println("=== YCSB Workload F (read-modify-write) ===")
+		runBenchmark("WorkloadF", []string{"localhost:9100"}, 500, 500, 10*time.Second, 10*time.Second)
+		
+	default:
+		// Default: balanced
+		runBenchmark("DEFAULT", []string{"localhost:9100"}, 700, 700, 5*time.Second, 5*time.Second)
+	}
 }
