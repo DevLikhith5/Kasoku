@@ -9,6 +9,7 @@ import (
 	"github.com/DevLikhith5/kasoku/api"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 type BatchWriteEntry struct {
@@ -30,6 +31,11 @@ func NewReplicatedClient(addr string) (*ReplicatedClient, error) {
 	conn, err := grpc.DialContext(ctx, addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithReturnConnectionError(),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(1024*1024*32), grpc.MaxCallSendMsgSize(1024*1024*32)),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:    10 * time.Second,
+			Timeout: 5 * time.Second,
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to %s: %w", addr, err)
@@ -159,8 +165,8 @@ func NewPool() *Pool {
 	return &Pool{
 		clients:  make(map[string][]*ReplicatedClient),
 		idx:      make(map[string]int),
-		minConns: 8,
-		maxConns: 32,
+		minConns: 16,
+		maxConns: 64,
 	}
 }
 

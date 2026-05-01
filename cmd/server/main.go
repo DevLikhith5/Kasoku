@@ -28,7 +28,7 @@ import (
 func main() {
 	// Reduce GC frequency for high-throughput workloads
 	if os.Getenv("GOGC") == "" {
-		os.Setenv("GOGC", "200")
+		os.Setenv("GOGC", "300")
 	}
 
 	// Parse command line flags
@@ -217,7 +217,11 @@ func main() {
 	grpcAddr := fmt.Sprintf(":%d", grpcPort)
 	logger.Info("starting gRPC server", "addr", grpcAddr, "node_id", cfg.Cluster.NodeID)
 
-	grpcOpts := []grpc.ServerOption{}
+	grpcOpts := []grpc.ServerOption{
+		grpc.MaxConcurrentStreams(1000),
+		grpc.ReadBufferSize(1024 * 1024),
+		grpc.WriteBufferSize(1024 * 1024),
+	}
 	if cfg.TLS.Enabled {
 		cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
 		if err != nil {
