@@ -1,9 +1,9 @@
 module github.com/DevLikhith5/kasoku
 
-go 1.23
+go 1.25.0
 
 require (
-	github.com/fatih/color v1.19.0
+	github.com/fatih/color v1.18.0
 	github.com/golang/snappy v1.0.0
 	github.com/klauspost/compress v1.18.5
 	github.com/manifoldco/promptui v0.9.0
