@@ -1,4 +1,4 @@
-# Single Node gRPC Configuration
+# Single Node gRPC Configuration - Optimized
 data_dir: ./data/node-1
 port: 9000
 http_port: 9000
@@ -7,27 +7,27 @@ grpc: true
 log_level: error
 
 lsm:
-    levels: 5
+    levels: 6
     level_ratio: 10
-    l0_base_size: 67108864
-    key_cache_size: 1000000
+    l0_base_size: 134217728
+    key_cache_size: 2000000
 
 compaction:
-    threshold: 1000
-    max_concurrent: 1
-    l0_size_threshold: 10737418240
+    threshold: 2000
+    max_concurrent: 2
+    l0_size_threshold: 21474836480
 
 memory:
-    memtable_size: 268435456
-    max_memtable_bytes: 536870912
-    bloom_fp_rate: 0.01
-    block_cache_size: 536870912
+    memtable_size: 536870912
+    max_memtable_bytes: 2147483648
+    bloom_fp_rate: 0.005
+    block_cache_size: 2147483648
 
 wal:
     sync: false
-    sync_interval: 200ms
-    checkpoint_bytes: 134217728
-    max_file_size: 67108864
+    sync_interval: 100ms
+    checkpoint_bytes: 268435456
+    max_file_size: 134217728
 
 cluster:
     enabled: false
