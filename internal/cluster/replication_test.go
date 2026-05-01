@@ -69,6 +69,7 @@ func newTestNode(t *testing.T, nodeID string, r *ring.Ring) *testNode {
 		ReplicationFactor: 3,
 		QuorumSize:        1,
 		RPCTimeout:        5 * time.Second,
+		Peers:             []string{"node-1", "node-2", "node-3"},
 	})
 
 	httpSrv := server.New(n)

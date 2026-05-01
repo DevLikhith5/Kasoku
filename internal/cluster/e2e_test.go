@@ -82,6 +82,7 @@ func TestCluster_E2E_ConsistentHashing(t *testing.T) {
 		ReplicationFactor: 3,
 		QuorumSize:        2,
 		Logger:            logger,
+		Peers:             []string{"node-1", "node-2", "node-3", "node-4", "node-5"},
 	}
 
 	c := New(cfg)
