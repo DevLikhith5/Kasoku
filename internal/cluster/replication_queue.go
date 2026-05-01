@@ -43,7 +43,7 @@ type ReplicationEntry struct {
 
 type PeerStats struct {
 	Address  string
-	Pending  int
+	Pending  atomic.Int64
 	Success  atomic.Int64
 	Failures atomic.Int64
 	LastSync atomic.Int64
@@ -198,7 +198,7 @@ func (r *BackgroundReplicator) flushToPeers(ctx context.Context) {
 			defer wg.Done()
 
 			peerStats := r.getPeerStats(peerAddr)
-			peerStats.Pending += len(entries)
+			peerStats.Pending.Add(int64(len(entries)))
 
 			rpcEntries := make([]rpc.BatchWriteEntry, len(entries))
 			for i, e := range entries {
@@ -225,7 +225,7 @@ func (r *BackgroundReplicator) flushToPeers(ctx context.Context) {
 				peerStats.Success.Add(1)
 				peerStats.LastSync.Store(time.Now().UnixMilli())
 			}
-			peerStats.Pending -= len(entries)
+			peerStats.Pending.Add(-int64(len(entries)))
 		}(addr, peerEntries)
 	}
 
@@ -267,7 +267,7 @@ func (r *BackgroundReplicator) GetStats() map[string]interface{} {
 	r.mu.Lock()
 	for addr, stats := range r.peerStats {
 		peerStatsMap[addr] = map[string]interface{}{
-			"pending":   stats.Pending,
+			"pending":   stats.Pending.Load(),
 			"success":   stats.Success.Load(),
 			"failures":  stats.Failures.Load(),
 			"last_sync": stats.LastSync.Load(),

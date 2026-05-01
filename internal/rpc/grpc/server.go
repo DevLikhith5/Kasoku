@@ -141,6 +141,7 @@ func (s *Server) BatchPut(ctx context.Context, req *api.BatchPutRequest) (*api.B
 		}
 		if err := s.cluster.ReplicatedBatchPut(ctx, entriesMap); err != nil {
 			s.logger.Error("gRPC batch replicate failed", "error", err)
+			return &api.BatchPutResponse{Count: int32(count), Error: err.Error()}, nil
 		}
 	}
 

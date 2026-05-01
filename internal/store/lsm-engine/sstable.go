@@ -463,6 +463,14 @@ func (bc *BlockCache) Put(key string, data []byte) {
 	s.mu.Lock()
 	if _, ok := s.cache[key]; ok {
 		s.cache[key] = data
+		// Move key to end of LRU list
+		for i, k := range s.keys {
+			if k == key {
+				s.keys = append(s.keys[:i], s.keys[i+1:]...)
+				s.keys = append(s.keys, key)
+				break
+			}
+		}
 		s.mu.Unlock()
 		return
 	}

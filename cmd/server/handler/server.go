@@ -61,6 +61,7 @@ type RateLimiter struct {
 	rate      int
 	burst     int
 	enabled   bool
+	stopCh    chan struct{}
 }
 
 func NewRateLimiter(rate, burst int, enabled bool) *RateLimiter {
@@ -69,6 +70,7 @@ func NewRateLimiter(rate, burst int, enabled bool) *RateLimiter {
 		rate:    rate,
 		burst:   burst,
 		enabled: enabled,
+		stopCh:  make(chan struct{}),
 	}
 	if enabled {
 		for i := 0; i < burst; i++ {
@@ -82,11 +84,22 @@ func NewRateLimiter(rate, burst int, enabled bool) *RateLimiter {
 func (rl *RateLimiter) refill() {
 	ticker := time.NewTicker(time.Second / time.Duration(rl.rate))
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
 		select {
-		case rl.tokens <- struct{}{}:
-		default:
+		case <-ticker.C:
+			select {
+			case rl.tokens <- struct{}{}:
+			default:
+			}
+		case <-rl.stopCh:
+			return
 		}
+	}
+}
+
+func (rl *RateLimiter) Stop() {
+	if rl.enabled {
+		close(rl.stopCh)
 	}
 }
 

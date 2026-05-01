@@ -48,7 +48,7 @@ type Node struct {
 	phiDetectors   *PhiDetectorMap
 	cluster        *Cluster
 	httpSrv        *server.Server
-	httpServer     *http.Server // Bug 6/7 fix: stored so Stop() can shut it down
+	httpServer     *http.Server // stored so Stop() can shut it down
 	versionCounter versionCounter
 	timeoutTracker *AdaptiveTimeout
 	logger         *slog.Logger
@@ -58,7 +58,8 @@ type Node struct {
 	mu             sync.RWMutex
 	vectorClocks   map[string]storage.VectorClock // per-key vector clocks
 	vcMu           sync.RWMutex
-	repSemaphore  *Semaphore // Limits concurrent outgoing replications
+	repSemaphore   *Semaphore // Limits concurrent outgoing replications
+	httpClient     *http.Client // persistent client for Merkle/gossip requests
 }
 
 func NewNode(cfg NodeConfig) (*Node, error) {
@@ -96,7 +97,15 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 		timeoutTracker: NewAdaptiveTimeout(),
 		logger:         slog.Default(),
 		done:           make(chan struct{}),
-		repSemaphore:  NewSemaphore(1000), // Max 1000 concurrent outgoing replications
+		repSemaphore:   NewSemaphore(1000), // Max 1000 concurrent outgoing replications
+		httpClient: &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 50,
+				IdleConnTimeout:     30 * time.Second,
+			},
+			Timeout: 10 * time.Second,
+		},
 	}
 
 	// Build the cluster layer (replication logic)
@@ -358,17 +367,7 @@ func (n *Node) fetchRemoteMerkle(peerID string) (*merkle.Node, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	getClient := func() *http.Client {
-		return &http.Client{
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 50,
-				IdleConnTimeout:     30 * time.Second,
-			},
-			Timeout: 10 * time.Second,
-		}
-	}
-	resp, err := getClient().Do(req)
+	resp, err := n.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("merkle request failed: %w", err)
 	}

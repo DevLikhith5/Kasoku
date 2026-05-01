@@ -59,6 +59,7 @@ type Cluster struct {
 	gossipProtocol       *GossipProtocol
 	merkleAntiEntropy   *MerkleAntiEntropy
 	hintStore           *HintStore
+	stopCh              chan struct{}
 }
 
 // GetClient returns RPC client for a node address
@@ -148,6 +149,7 @@ func New(cfg ClusterConfig) *Cluster {
 		grpcClients:       make(map[string]*grpcrpc.ReplicatedClient),
 		grpcPool:          grpcrpc.NewPool(),
 		nodeAddrMap:       make(map[string]string),
+		stopCh:            make(chan struct{}),
 	}
 
 	if cfg.Members != nil {
@@ -176,12 +178,16 @@ func New(cfg ClusterConfig) *Cluster {
 		peerNodeID := extractNodeID(peer)
 		c.nodeAddrMap[peerNodeID] = peer
 
-		// Create gRPC client for this peer using pool
+		// Create gRPC client for this peer using pool (non-blocking)
 		grpcAddr := convertToGRPCAddr(peer, grpcPort)
-		client, err := c.grpcPool.Get(grpcAddr)
-		if err == nil {
-			c.grpcClients[peer] = client
-		}
+		go func(addr string) {
+			client, err := c.grpcPool.Get(addr)
+			if err == nil {
+				c.mu.Lock()
+				c.grpcClients[peer] = client
+				c.mu.Unlock()
+			}
+		}(grpcAddr)
 	}
 	// Initialize alive set snapshot
 	initialAlive := c.members.AliveSet()
@@ -199,9 +205,14 @@ func New(cfg ClusterConfig) *Cluster {
 func (c *Cluster) backgroundRefreshAliveSet() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	for range ticker.C {
-		snapshot := c.members.AliveSet()
-		c.aliveSnapshot.Store(&snapshot)
+	for {
+		select {
+		case <-ticker.C:
+			snapshot := c.members.AliveSet()
+			c.aliveSnapshot.Store(&snapshot)
+		case <-c.stopCh:
+			return
+		}
 	}
 }
 
@@ -921,6 +932,7 @@ func (c *Cluster) StartBackgroundWorkers(ctx context.Context) {
 
 // StopBackgroundWorkers stops all background workers
 func (c *Cluster) StopBackgroundWorkers() {
+	close(c.stopCh)
 	if c.backgroundReplicator != nil {
 		c.backgroundReplicator.Stop()
 	}
@@ -1037,8 +1049,11 @@ func (c *Cluster) deliverHints() {
 func convertToGRPCAddr(httpAddr string, grpcPort int) string {
 	// Extract host from http://localhost:9000
 	host := httpAddr
-	if idx := len("http://"); idx < len(host) {
-		host = httpAddr[idx:]
+	if len(host) > 7 && host[:7] == "http://" {
+		host = host[7:]
+	}
+	if len(host) > 8 && host[:8] == "https://" {
+		host = host[8:]
 	}
 	// Remove any trailing path
 	if idx := findByte(host, '/'); idx > 0 {

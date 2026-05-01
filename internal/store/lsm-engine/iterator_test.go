@@ -234,39 +234,48 @@ func TestBlockCache_Basic(t *testing.T) {
 	})
 
 	t.Run("lru eviction", func(t *testing.T) {
-		cache := NewBlockCache(2)
-		cache.Put("key1", []byte("v1"))
-		cache.Put("key2", []byte("v2"))
+		// Use keys that go to same shard (k11, k28, k64, k77, k86 all go to shard 0)
+		// Per-shard capacity = maxBlocks/16+1 = 32/16+1 = 3
+		// Need 4+ keys to trigger eviction
+		cache := NewBlockCache(32)
+		cache.Put("k11", []byte("v1"))
+		cache.Put("k28", []byte("v2"))
+		cache.Put("k64", []byte("v3"))
 
-		// Add third key - should evict key1
-		cache.Put("key3", []byte("v3"))
+		// Add 4th key - should evict k11
+		cache.Put("k77", []byte("v4"))
 
-		_, ok := cache.Get("key1")
+		_, ok := cache.Get("k11")
 		assert.False(t, ok) // evicted
 
-		_, ok = cache.Get("key2")
+		_, ok = cache.Get("k28")
 		assert.True(t, ok)
 
-		_, ok = cache.Get("key3")
+		_, ok = cache.Get("k64")
+		assert.True(t, ok)
+
+		_, ok = cache.Get("k77")
 		assert.True(t, ok)
 	})
 
 	t.Run("update moves to end", func(t *testing.T) {
-		cache := NewBlockCache(2)
-		cache.Put("key1", []byte("v1"))
-		cache.Put("key2", []byte("v2"))
+		// Use keys that go to same shard (k11, k28 go to shard 0)
+		cache := NewBlockCache(32)
+		cache.Put("k11", []byte("v1"))
+		cache.Put("k28", []byte("v2"))
 
-		// Update key1
-		cache.Put("key1", []byte("v1-updated"))
+		// Update k11 - should move to end of LRU
+		cache.Put("k11", []byte("v1-updated"))
 
-		// Add key3 - should evict key2 (least recently used)
-		cache.Put("key3", []byte("v3"))
+		// Add k64 and k77 - should evict k28 (least recently used)
+		cache.Put("k64", []byte("v3"))
+		cache.Put("k77", []byte("v4"))
 
-		val, ok := cache.Get("key1")
+		val, ok := cache.Get("k11")
 		assert.True(t, ok)
 		assert.Equal(t, []byte("v1-updated"), val)
 
-		_, ok = cache.Get("key2")
+		_, ok = cache.Get("k28")
 		assert.False(t, ok) // evicted
 	})
 }
