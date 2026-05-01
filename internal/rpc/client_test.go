@@ -21,8 +21,8 @@ func TestClient_NewClient(t *testing.T) {
 	if client.httpClient == nil {
 		t.Fatal("expected non-nil http client")
 	}
-	if client.httpClient.Timeout != 10*time.Second {
-		t.Errorf("expected 10s timeout, got %v", client.httpClient.Timeout)
+	if client.httpClient.Timeout != 2*time.Second {
+		t.Errorf("expected 2s timeout, got %v", client.httpClient.Timeout)
 	}
 }
 
