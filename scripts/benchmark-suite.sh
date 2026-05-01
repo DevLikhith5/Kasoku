@@ -68,10 +68,10 @@ extract_metrics() {
   local total_ops=$(echo "$output" | grep "Total:" | awk '{print $2}')
   local write_ops=$(echo "$output" | grep "Writes:" | awk '{print $4}')
   local read_ops=$(echo "$output" | grep "Reads:" | awk '{print $4}')
-  local write_p50=$(echo "$output" | grep "Write latency" | awk '{print $4}' | tr -d ',')
-  local write_p99=$(echo "$output" | grep "Write latency" | awk '{print $6}' | tr -d ',')
-  local read_p50=$(echo "$output" | grep "Read latency" | awk '{print $4}' | tr -d ',')
-  local read_p99=$(echo "$output" | grep "Read latency" | awk '{print $6}' | tr -d ',')
+  local write_p50=$(echo "$output" | grep "Write latency" | grep -o 'p50=[^,]*' | cut -d= -f2 || echo "N/A")
+  local write_p99=$(echo "$output" | grep "Write latency" | grep -o 'p99=[^,]*' | cut -d= -f2 || echo "N/A")
+  local read_p50=$(echo "$output" | grep "Read latency" | grep -o 'p50=[^,]*' | cut -d= -f2 || echo "N/A")
+  local read_p99=$(echo "$output" | grep "Read latency" | grep -o 'p99=[^,]*' | cut -d= -f2 || echo "N/A")
 
   echo "$workload,$quorum,$total_ops,$write_ops,$read_ops,$write_p50,$write_p99,$read_p50,$read_p99"
 }

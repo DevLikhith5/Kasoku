@@ -156,16 +156,26 @@ func runBenchmarkWithWorkload(name string, addrs []string, workers int, batchSiz
 	sort.Float64s(writeLatencies)
 	sort.Float64s(readLatencies)
 	fmt.Println("\n=== Latency Percentiles ===")
-	fmt.Printf("Write latency (ms): p50=%.2f, p95=%.2f, p99=%.2f, max=%.2f\n", 
-		percentile(writeLatencies, 50), 
-		percentile(writeLatencies, 95), 
-		percentile(writeLatencies, 99),
-		percentile(writeLatencies, 100))
-	fmt.Printf("Read latency (ms):  p50=%.2f, p95=%.2f, p99=%.2f, max=%.2f\n", 
-		percentile(readLatencies, 50), 
-		percentile(readLatencies, 95), 
-		percentile(readLatencies, 99),
-		percentile(readLatencies, 100))
+	if len(writeLatencies) > 0 {
+		fmt.Printf("Write latency (ms): p50=%.2f, p95=%.2f, p99=%.2f, max=%.2f (samples=%d)\n", 
+			percentile(writeLatencies, 50), 
+			percentile(writeLatencies, 95), 
+			percentile(writeLatencies, 99),
+			percentile(writeLatencies, 100),
+			len(writeLatencies))
+	} else {
+		fmt.Println("Write latency (ms): N/A (no writes in this workload)")
+	}
+	if len(readLatencies) > 0 {
+		fmt.Printf("Read latency (ms):  p50=%.2f, p95=%.2f, p99=%.2f, max=%.2f (samples=%d)\n", 
+			percentile(readLatencies, 50), 
+			percentile(readLatencies, 95), 
+			percentile(readLatencies, 99),
+			percentile(readLatencies, 100),
+			len(readLatencies))
+	} else {
+		fmt.Println("Read latency (ms):  N/A (no reads in this workload)")
+	}
 
 	totalTime := writeTime + readTime
 	fmt.Printf("Total: %.0f ops/sec\n", float64(writeOps.Load()+readOps.Load())/totalTime.Seconds())
