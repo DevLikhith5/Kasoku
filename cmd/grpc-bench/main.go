@@ -137,6 +137,6 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 
 func main() {
 	// Single node: localhost:9002 (gRPC port from grpc-single.yaml)
-	// Increased workers and batch size for higher throughput
-	runBenchmark("SINGLE NODE", []string{"localhost:9002"}, 50, 50, 5*time.Second, 5*time.Second)
+	// Further increased for max throughput
+	runBenchmark("SINGLE NODE", []string{"localhost:9002"}, 100, 100, 5*time.Second, 5*time.Second)
 }

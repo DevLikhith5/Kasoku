@@ -14,8 +14,8 @@ import (
 
 const (
 	DefaultMaxQueueSize  = 50000
-	DefaultFlushInterval = 20 * time.Millisecond
-	DefaultMaxBatchSize  = 1000
+	DefaultFlushInterval = 10 * time.Millisecond
+	DefaultMaxBatchSize  = 2000
 )
 
 var ErrQueueFull = errors.New("replication queue full")
