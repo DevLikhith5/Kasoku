@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +19,10 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 	var readOps atomic.Int64
 	var writeErrors atomic.Int64
 	var readErrors atomic.Int64
+	
+	var writeLatencies []float64
+	var readLatencies []float64
+	var latencyMu sync.Mutex
 
 	fmt.Printf("\n=== %s gRPC ===\n", name)
 
@@ -65,7 +71,12 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 					}
 				}
 				batchNum++
+				start := time.Now()
 				_, err := client.BatchReplicatedPut(ctx, entries)
+				latency := time.Since(start).Seconds() * 1000 // ms
+				latencyMu.Lock()
+				writeLatencies = append(writeLatencies, latency)
+				latencyMu.Unlock()
 				if err != nil {
 					writeErrors.Add(1)
 					continue
@@ -110,7 +121,12 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 				for j := 0; j < batchSize; j++ {
 					keys[j] = fmt.Sprintf("%s%d", keyBase, j%10)
 				}
+				start := time.Now()
 				_, err := client.BatchReplicatedGet(ctx, keys)
+				latency := time.Since(start).Seconds() * 1000 // ms
+				latencyMu.Lock()
+				readLatencies = append(readLatencies, latency)
+				latencyMu.Unlock()
 				if err != nil {
 					readErrors.Add(1)
 					continue
@@ -129,10 +145,39 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 		fmt.Printf("Read errors: %d\n", readErrors.Load())
 	}
 
+	// Print latency percentiles
+	sort.Float64s(writeLatencies)
+	sort.Float64s(readLatencies)
+	fmt.Println("\n=== Latency Percentiles ===")
+	fmt.Printf("Write latency (ms): p50=%.2f, p95=%.2f, p99=%.2f, max=%.2f\n", 
+		percentile(writeLatencies, 50), 
+		percentile(writeLatencies, 95), 
+		percentile(writeLatencies, 99),
+		percentile(writeLatencies, 100))
+	fmt.Printf("Read latency (ms):  p50=%.2f, p95=%.2f, p99=%.2f, max=%.2f\n", 
+		percentile(readLatencies, 50), 
+		percentile(readLatencies, 95), 
+		percentile(readLatencies, 99),
+		percentile(readLatencies, 100))
+
 	totalTime := writeTime + readTime
 	fmt.Printf("Total: %.0f ops/sec\n", float64(writeOps.Load()+readOps.Load())/totalTime.Seconds())
 
 	pool.Close()
+}
+
+func percentile(sorted []float64, p int) float64 {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := int(math.Ceil(float64(len(sorted))*float64(p)/100)) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
 }
 
 func main() {
