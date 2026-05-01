@@ -136,6 +136,6 @@ func runBenchmark(name string, addrs []string, workers int, batchSize int, write
 }
 
 func main() {
-	// 3-node cluster: max throughput
-	runBenchmark("3-NODE CLUSTER", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 700, 700, 5*time.Second, 5*time.Second)
+	// Single node: no replication overhead
+	runBenchmark("SINGLE NODE", []string{"localhost:9100"}, 700, 700, 5*time.Second, 5*time.Second)
 }

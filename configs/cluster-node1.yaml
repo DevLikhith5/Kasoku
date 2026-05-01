@@ -13,15 +13,15 @@ lsm:
     key_cache_size: 1000000
 
 compaction:
-    threshold: 1000
-    max_concurrent: 1
-    l0_size_threshold: 10737418240
+    threshold: 2000
+    max_concurrent: 2
+    l0_size_threshold: 21474836480
 
 memory:
-    memtable_size: 268435456
+    memtable_size: 536870912
     max_memtable_bytes: 2147483648
-    bloom_fp_rate: 0.01
-    block_cache_size: 536870912
+    bloom_fp_rate: 0.005
+    block_cache_size: 2147483648
 
 wal:
     sync: false
