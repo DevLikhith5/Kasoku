@@ -13,6 +13,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show all handler files
+        run: |
+          echo "=== All Go files in cmd/server/handler ==="
+          find cmd/server/handler -name "*.go" -type f
+          echo "=== Git tracked files ==="
+          git ls-files cmd/server/handler/
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -20,9 +29,7 @@ jobs:
           go-version: "1.24"
 
       - name: Install dependencies
-        run: |
-          go mod download
-          go mod tidy
+        run: go mod download
 
       - name: Build
         run: go build -v ./...
