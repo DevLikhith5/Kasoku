@@ -171,16 +171,17 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 		return storage.Entry{}, ErrNoNodesAvailable
 	}
 
-	// FAST PATH: R=1 local-first - read from local, no RPC needed
+	// FAST PATH: R=1 local-first - read from local first
 	if n.cfg.R == 1 {
 		entry, err := n.engine.Get(key)
-		if err == nil || errors.Is(err, storage.ErrKeyNotFound) {
-			return entry, err
+		if err == nil {
+			return entry, nil // Found locally
 		}
-		// If local read fails, try peers in background
+		// Key not found locally - fall through to try remote replicas
+		// This handles the case where quorum=1 but write went to a different node
 	}
 
-	// SLOW PATH: R>1 - wait for quorum
+	// Try replicas to find the key
 	results := make(chan replicaResult, len(replicas))
 
 	timeout := n.timeoutTracker.TimeoutForReplicas(replicas)
@@ -207,7 +208,7 @@ func (n *Node) replicatedGetEntry(ctx context.Context, key string) (storage.Entr
 	failures := 0
 	for i := 0; i < len(replicas); i++ {
 		res := <-results
-		if res.err == nil || errors.Is(res.err, storage.ErrKeyNotFound) {
+		if res.err == nil && !res.entry.Tombstone {
 			responses = append(responses, res)
 			if len(responses) >= n.cfg.R {
 				// Got R responses — find highest version
