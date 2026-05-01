@@ -13,6 +13,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Show commit
+        run: git log -1 --oneline
+
+      - name: Show kvctl files
+        run: git ls-tree -r HEAD --name-only | grep kvctl
 
       - name: Setup Go
         uses: actions/setup-go@v5
