@@ -1,9 +1,9 @@
 module github.com/DevLikhith5/kasoku
 
-go 1.25.0
+go 1.23
 
 require (
-	github.com/fatih/color v1.18.0
+	github.com/fatih/color v1.17.0
 	github.com/golang/snappy v1.0.0
 	github.com/klauspost/compress v1.18.5
 	github.com/manifoldco/promptui v0.9.0
@@ -16,7 +16,7 @@ require (
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.24.0
 	go.opentelemetry.io/otel/sdk v1.24.0
 	go.opentelemetry.io/otel/trace v1.24.0
-	golang.org/x/sys v0.43.0
+	golang.org/x/sys v0.40.0
 	google.golang.org/grpc v1.69.0-dev
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
