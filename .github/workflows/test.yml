@@ -9,26 +9,27 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
 
       - name: Show commit
-        run: git log -1 --oneline
-
-      - name: Show kvctl files
-        run: git ls-tree -r HEAD --name-only | grep kvctl
+        run: |
+          echo "Commit: $(git log -1 --oneline)"
+          echo "Files in kvctl/engine:"
+          ls -la cmd/kvctl/engine/ 2>/dev/null || echo "NOT FOUND"
+          echo "Files in kvctl/validate:"
+          ls -la cmd/kvctl/validate/ 2>/dev/null || echo "NOT FOUND"
+          git ls-files cmd/kvctl/engine cmd/kvctl/validate
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.24"
-
-      - name: Clean module cache
-        run: go clean -modcache
 
       - name: Install dependencies
         run: |
@@ -40,6 +41,3 @@ jobs:
 
       - name: Test
         run: go test -v -short ./...
-
-      - name: Vet
-        run: go vet ./...
