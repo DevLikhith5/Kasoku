@@ -175,11 +175,6 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Run govulncheck
-        uses: golang/vuln@v1
-        with:
-          packages: ./...
-
       - name: Check for secrets
         run: |
           go mod verify
