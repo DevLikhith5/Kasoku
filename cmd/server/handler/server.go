@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"net/http/pprof"
 	"time"
 
 	"log/slog"
@@ -199,6 +200,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// Node info endpoint
 	mux.HandleFunc("/api/v1/node", s.handleNodeInfo)
+	mux.HandleFunc("/api/v1/stats", s.handleStats)
 
 	// Cluster endpoints
 	if s.cluster != nil {
@@ -224,6 +226,13 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// Metrics endpoint
 	mux.Handle("/metrics", promhttp.Handler())
+
+	// pprof endpoints for debugging
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	// Flush endpoint
 	mux.HandleFunc("/api/v1/flush", s.handleFlush)

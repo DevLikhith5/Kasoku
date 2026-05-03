@@ -18,6 +18,7 @@ import (
 	"github.com/DevLikhith5/kasoku/internal/cluster"
 	"github.com/DevLikhith5/kasoku/internal/config"
 	"github.com/DevLikhith5/kasoku/internal/ring"
+	"github.com/DevLikhith5/kasoku/internal/tracing"
 	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
 	rpcgrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
 	"google.golang.org/grpc"
@@ -28,7 +29,7 @@ import (
 func main() {
 	// Reduce GC frequency for high-throughput workloads
 	if os.Getenv("GOGC") == "" {
-		os.Setenv("GOGC", "200")
+		os.Setenv("GOGC", "300")
 	}
 
 	// Parse command line flags
@@ -52,6 +53,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid config: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Apply flag overrides
 	if *nodeIDFlag != "" {
 		cfg.Cluster.NodeID = *nodeIDFlag
@@ -72,6 +79,21 @@ func main() {
 		Level:     slog.LevelInfo,
 		AddSource: true,
 	}))
+
+	// Initialize distributed tracing (only if enabled in config)
+	if os.Getenv("KASOKU_TRACING") == "true" {
+		tracerShutdown, err := tracing.Init("kasoku-server")
+		if err != nil {
+			logger.Warn("tracing init failed", "error", err)
+		} else {
+			defer func() {
+				if err := tracerShutdown(context.Background()); err != nil {
+					logger.Error("tracing shutdown error", "error", err)
+				}
+			}()
+			logger.Info("distributed tracing initialized")
+		}
+	}
 
 	// Initialize storage engine (LSM Engine)
 	store, err := lsmengine.NewLSMEngineWithConfig(cfg.DataDir, lsmengine.LSMConfig{
@@ -217,7 +239,11 @@ func main() {
 	grpcAddr := fmt.Sprintf(":%d", grpcPort)
 	logger.Info("starting gRPC server", "addr", grpcAddr, "node_id", cfg.Cluster.NodeID)
 
-	grpcOpts := []grpc.ServerOption{}
+	grpcOpts := []grpc.ServerOption{
+		grpc.MaxConcurrentStreams(1000),
+		grpc.ReadBufferSize(1024 * 1024),
+		grpc.WriteBufferSize(1024 * 1024),
+	}
 	if cfg.TLS.Enabled {
 		cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)
 		if err != nil {

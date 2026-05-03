@@ -36,7 +36,7 @@ func (z *WAL) DecodeMsg(dc *msgp.Reader) (err error) {
 }
 
 // EncodeMsg implements msgp.Encodable
-func (z WAL) EncodeMsg(en *msgp.Writer) (err error) {
+func (z *WAL) EncodeMsg(en *msgp.Writer) (err error) {
 	// map header, size 0
 	_ = z
 	err = en.Append(0x80)
@@ -47,7 +47,7 @@ func (z WAL) EncodeMsg(en *msgp.Writer) (err error) {
 }
 
 // MarshalMsg implements msgp.Marshaler
-func (z WAL) MarshalMsg(b []byte) (o []byte, err error) {
+func (z *WAL) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// map header, size 0
 	_ = z
@@ -86,7 +86,7 @@ func (z *WAL) UnmarshalMsg(bts []byte) (o []byte, err error) {
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
-func (z WAL) Msgsize() (s int) {
+func (z *WAL) Msgsize() (s int) {
 	s = 1
 	return
 }

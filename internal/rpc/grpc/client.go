@@ -7,8 +7,11 @@ import (
 	"time"
 
 	"github.com/DevLikhith5/kasoku/api"
+	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 )
 
 type BatchWriteEntry struct {
@@ -30,6 +33,11 @@ func NewReplicatedClient(addr string) (*ReplicatedClient, error) {
 	conn, err := grpc.DialContext(ctx, addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithReturnConnectionError(),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(1024*1024*32), grpc.MaxCallSendMsgSize(1024*1024*32)),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:    10 * time.Second,
+			Timeout: 5 * time.Second,
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to %s: %w", addr, err)
@@ -46,7 +54,22 @@ func (c *ReplicatedClient) Close() error {
 	return c.conn.Close()
 }
 
+var propagator = propagation.NewCompositeTextMapPropagator(
+	propagation.TraceContext{},
+	propagation.Baggage{},
+)
+
+func injectTraceContext(ctx context.Context) context.Context {
+	md := propagation.MapCarrier{}
+	propagator.Inject(ctx, md)
+	if len(md) > 0 {
+		ctx = metadata.NewOutgoingContext(ctx, metadata.New(md))
+	}
+	return ctx
+}
+
 func (c *ReplicatedClient) ReplicatedPut(ctx context.Context, key string, value []byte) error {
+	ctx = injectTraceContext(ctx)
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	_, err := c.client.Put(ctx, &api.PutRequest{
@@ -159,8 +182,8 @@ func NewPool() *Pool {
 	return &Pool{
 		clients:  make(map[string][]*ReplicatedClient),
 		idx:      make(map[string]int),
-		minConns: 4,
-		maxConns: 16,
+		minConns: 32,
+		maxConns: 128,
 	}
 }
 
