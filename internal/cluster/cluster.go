@@ -13,6 +13,8 @@ import (
 	"github.com/DevLikhith5/kasoku/internal/rpc"
 	grpcrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
+	"github.com/DevLikhith5/kasoku/internal/tracing"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -279,15 +281,22 @@ func (c *Cluster) snapshotAliveSet() map[string]bool {
 // ReplicatedPut writes a key-value pair to the cluster with replication
 // The coordinator pattern: this node coordinates the write to all replicas
 func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) error {
+	ctx, span := tracing.StartSpan(ctx, "cluster.ReplicatedPut",
+		attribute.String("key", key),
+		attribute.Int("value_size", len(value)))
+	defer span.End()
+
 	aliveSet := c.snapshotAliveSet()
 	c.mu.RLock()
 	replicas := c.getReplicasForKey(key, aliveSet)
 	c.mu.RUnlock()
 
 	if len(replicas) == 0 {
+		span.SetAttributes(attribute.String("error", "no_nodes"))
 		return ErrNoNodesAvailable
 	}
 
+	span.SetAttributes(attribute.String("replicas", fmt.Sprintf("%v", replicas)))
 	c.logger.Debug("replicated put", "key", key, "replicas", replicas)
 
 	// Check if current node is in replica set

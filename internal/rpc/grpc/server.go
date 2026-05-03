@@ -10,8 +10,10 @@ import (
 
 	"github.com/DevLikhith5/kasoku/api"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
+	"github.com/DevLikhith5/kasoku/internal/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
@@ -79,31 +81,57 @@ func (s *Server) SetCluster(c ClusterInterface) {
 }
 
 func (s *Server) Put(ctx context.Context, req *api.PutRequest) (*api.PutResponse, error) {
+	ctx, span := tracing.StartSpan(ctx, "gRPC.Put",
+		attribute.String("key", req.Key),
+		attribute.Int("value_size", len(req.Value)))
+	defer span.End()
+
 	start := time.Now()
 
 	if err := s.store.Put(req.Key, req.Value); err != nil {
+		span.RecordError(err)
+		span.SetAttributes(attribute.Bool("success", false))
 		s.logger.Error("gRPC put failed", "key", req.Key, "error", err, "duration_ms", time.Since(start).Milliseconds())
 		return &api.PutResponse{Success: false, Error: err.Error()}, nil
 	}
 
 	if s.cluster != nil && s.cluster.IsDistributed() {
-		if err := s.cluster.ReplicatedPut(ctx, req.Key, req.Value); err != nil {
+		replCtx, replSpan := tracing.StartSpan(ctx, "replication.put",
+			attribute.String("key", req.Key))
+		if err := s.cluster.ReplicatedPut(replCtx, req.Key, req.Value); err != nil {
+			tracing.RecordError(replSpan, err)
+			replSpan.SetAttributes(attribute.Bool("success", false))
 			s.logger.Error("gRPC replicated put failed", "key", req.Key, "error", err)
+			replSpan.End()
 			return &api.PutResponse{Success: false, Error: err.Error()}, nil
 		}
+		replSpan.SetAttributes(attribute.Bool("success", true))
+		replSpan.End()
 	}
 
+	span.SetAttributes(attribute.Bool("success", true))
 	return &api.PutResponse{Success: true}, nil
 }
 
 func (s *Server) Get(ctx context.Context, req *api.GetRequest) (*api.GetResponse, error) {
+	ctx, span := tracing.StartSpan(ctx, "gRPC.Get",
+		attribute.String("key", req.Key))
+	defer span.End()
+
 	entry, err := s.store.Get(req.Key)
 	if err != nil {
 		if errors.Is(err, storage.ErrKeyNotFound) {
+			span.SetAttributes(attribute.Bool("found", false))
 			return &api.GetResponse{}, nil
 		}
+		span.RecordError(err)
 		return &api.GetResponse{Error: err.Error()}, nil
 	}
+
+	span.SetAttributes(
+		attribute.Bool("found", true),
+		attribute.Int("value_size", len(entry.Value)),
+	)
 
 	return &api.GetResponse{
 		Entry: &api.Entry{
@@ -117,6 +145,10 @@ func (s *Server) Get(ctx context.Context, req *api.GetRequest) (*api.GetResponse
 }
 
 func (s *Server) BatchPut(ctx context.Context, req *api.BatchPutRequest) (*api.BatchPutResponse, error) {
+	ctx, span := tracing.StartSpan(ctx, "gRPC.BatchPut",
+		attribute.Int("entry_count", len(req.Entries)))
+	defer span.End()
+
 	entries := make([]storage.Entry, len(req.Entries))
 	for i, e := range req.Entries {
 		entries[i] = storage.Entry{
@@ -127,24 +159,30 @@ func (s *Server) BatchPut(ctx context.Context, req *api.BatchPutRequest) (*api.B
 
 	err := s.store.BatchPut(entries)
 	if err != nil {
+		span.RecordError(err)
 		s.logger.Error("gRPC batch put failed", "error", err)
 		return &api.BatchPutResponse{Count: 0, Error: err.Error()}, nil
 	}
 
 	count := len(entries)
 
-	// Use background replicator for async batch replication
 	if s.cluster != nil && s.cluster.IsDistributed() {
+		replCtx, replSpan := tracing.StartSpan(ctx, "replication.batch",
+			attribute.Int("entry_count", count))
 		entriesMap := make(map[string][]byte)
 		for _, e := range req.Entries {
 			entriesMap[e.Key] = e.Value
 		}
-		if err := s.cluster.ReplicatedBatchPut(ctx, entriesMap); err != nil {
+		if err := s.cluster.ReplicatedBatchPut(replCtx, entriesMap); err != nil {
+			tracing.RecordError(replSpan, err)
+			replSpan.End()
 			s.logger.Error("gRPC batch replicate failed", "error", err)
 			return &api.BatchPutResponse{Count: int32(count), Error: err.Error()}, nil
 		}
+		replSpan.End()
 	}
 
+	span.SetAttributes(attribute.Int("count", count))
 	return &api.BatchPutResponse{Count: int32(count)}, nil
 }
 

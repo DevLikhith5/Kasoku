@@ -205,32 +205,32 @@ func main() {
 	case "A":
 		// 50% reads, 50% writes - balanced
 		fmt.Println("=== YCSB Workload A (50% read, 50% write) ===")
-		runBenchmark("WorkloadA", []string{"localhost:9100"}, 500, 500, 10*time.Second, 10*time.Second)
+		runBenchmark("WorkloadA", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 500, 500, 10*time.Second, 10*time.Second)
 		
-	case "B":
+case "B":
 		// 95% reads, 5% writes - read heavy
 		fmt.Println("=== YCSB Workload B (95% read, 5% write) ===")
-		runBenchmark("WorkloadB", []string{"localhost:9100"}, 500, 500, 5*time.Second, 20*time.Second)
-		
+		runBenchmark("WorkloadB", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 500, 500, 5*time.Second, 20*time.Second)
+
 	case "C":
 		// 100% reads - read only
 		fmt.Println("=== YCSB Workload C (100% read) ===")
-		runBenchmark("WorkloadC", []string{"localhost:9100"}, 500, 500, 0, 20*time.Second)
-		
+		runBenchmark("WorkloadC", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 500, 500, 0, 20*time.Second)
+
 	case "D":
 		// 95% reads, 5% inserts (newer keys)
 		fmt.Println("=== YCSB Workload D (95% read, 5% insert) ===")
-		runBenchmark("WorkloadD", []string{"localhost:9100"}, 500, 500, 5*time.Second, 20*time.Second)
-		
+		runBenchmark("WorkloadD", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 500, 500, 5*time.Second, 20*time.Second)
+
 	case "E":
 		// Range scans
 		fmt.Println("=== YCSB Workload E (scan) ===")
-		runBenchmark("WorkloadE", []string{"localhost:9100"}, 300, 100, 5*time.Second, 20*time.Second)
-		
+		runBenchmark("WorkloadE", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 300, 100, 5*time.Second, 20*time.Second)
+
 	case "F":
 		// Read-modify-write
 		fmt.Println("=== YCSB Workload F (read-modify-write) ===")
-		runBenchmark("WorkloadF", []string{"localhost:9100"}, 500, 500, 10*time.Second, 10*time.Second)
+		runBenchmark("WorkloadF", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 500, 500, 10*time.Second, 10*time.Second)
 		
 	default:
 		// Default: balanced

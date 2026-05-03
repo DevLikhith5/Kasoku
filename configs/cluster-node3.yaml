@@ -1,34 +1,28 @@
 # Kasoku Cluster Node 3 Configuration
-
 data_dir: ./data/node3
 port: 9002
 http_port: 9002
 grpc_port: 9102
 log_level: error
-
 lsm:
     levels: 5
     level_ratio: 10
     l0_base_size: 67108864
     key_cache_size: 1000000
-
 compaction:
     threshold: 1000
     max_concurrent: 1
     l0_size_threshold: 10737418240
-
 memory:
     memtable_size: 134217728
     max_memtable_bytes: 268435456
     bloom_fp_rate: 0.01
     block_cache_size: 67108864
-
 wal:
     sync: false
     sync_interval: 100ms
     checkpoint_bytes: 67108864
     max_file_size: 67108864
-
 cluster:
     enabled: true
     node_id: node-3
@@ -38,7 +32,7 @@ cluster:
         - http://localhost:9001
         - http://localhost:9002
     replication_factor: 3
-    quorum_size: 1
-    read_quorum: 1
+    quorum_size: 2
+    read_quorum: 2
     vnodes: 150
     rpc_timeout_ms: 500
