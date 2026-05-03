@@ -7,9 +7,11 @@ import (
 	"time"
 
 	"github.com/DevLikhith5/kasoku/api"
+	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 )
 
 type BatchWriteEntry struct {
@@ -52,7 +54,22 @@ func (c *ReplicatedClient) Close() error {
 	return c.conn.Close()
 }
 
+var propagator = propagation.NewCompositeTextMapPropagator(
+	propagation.TraceContext{},
+	propagation.Baggage{},
+)
+
+func injectTraceContext(ctx context.Context) context.Context {
+	md := propagation.MapCarrier{}
+	propagator.Inject(ctx, md)
+	if len(md) > 0 {
+		ctx = metadata.NewOutgoingContext(ctx, metadata.New(md))
+	}
+	return ctx
+}
+
 func (c *ReplicatedClient) ReplicatedPut(ctx context.Context, key string, value []byte) error {
+	ctx = injectTraceContext(ctx)
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	_, err := c.client.Put(ctx, &api.PutRequest{
