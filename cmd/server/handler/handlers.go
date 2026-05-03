@@ -274,6 +274,22 @@ func (s *Server) handleNodeInfo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	stats := s.store.Stats()
+
+	s.writeJSON(w, http.StatusOK, APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"keyspace": map[string]interface{}{
+				"keys":        stats.KeyCount,
+				"memory_bytes": stats.MemBytes,
+				"disk_bytes":  stats.DiskBytes,
+			},
+			"bloom_filter_fp_rate": stats.BloomFPRate,
+		},
+	})
+}
+
 func (s *Server) handleRing(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeError(w, http.StatusMethodNotAllowed, "method not allowed")

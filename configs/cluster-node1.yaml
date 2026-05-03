@@ -18,10 +18,10 @@ compaction:
     l0_size_threshold: 21474836480
 
 memory:
-    memtable_size: 536870912
-    max_memtable_bytes: 2147483648
-    bloom_fp_rate: 0.005
-    block_cache_size: 268435456
+    memtable_size: 134217728
+    max_memtable_bytes: 268435456
+    bloom_fp_rate: 0.01
+    block_cache_size: 67108864
 
 wal:
     sync: false
@@ -38,7 +38,7 @@ cluster:
         - http://localhost:9001
         - http://localhost:9002
     replication_factor: 3
-    quorum_size: 2
-    read_quorum: 2
+    quorum_size: 1
+    read_quorum: 1
     vnodes: 150
     rpc_timeout_ms: 500

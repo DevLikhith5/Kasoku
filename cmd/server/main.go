@@ -52,6 +52,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "invalid config: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Apply flag overrides
 	if *nodeIDFlag != "" {
 		cfg.Cluster.NodeID = *nodeIDFlag
