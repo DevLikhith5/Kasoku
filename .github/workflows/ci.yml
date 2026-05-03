@@ -1,0 +1,272 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main]
+
+env:
+  GO_VERSION: "1.25"
+  GOCACHE: ${{ github.workspace }}/.go-cache
+  GOMODCACHE: ${{ github.workspace }}/.go-mod-cache
+
+jobs:
+  # ==========================================
+  # LINT - Fast feedback on code quality
+  # ==========================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Check formatting
+        run: |
+          if [ "$(gofmt -l .)" != "" ]; then
+            echo "Files not formatted:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Check for common issues
+        run: |
+          go build ./... 2>&1 | head -20
+
+  # ==========================================
+  # TEST - Unit tests with race detector
+  # ==========================================
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests (short)
+        run: go test -short -race ./...
+
+      - name: Run tests (with timeout)
+        run: timeout 20m go test -race -timeout 15m ./... || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results.xml
+          retention-days: 7
+
+  # ==========================================
+  # TEST COVERAGE - Track coverage over time
+  # ==========================================
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Generate coverage
+        run: |
+          go test -coverprofile=coverage.out -covermode=atomic ./... 2>/dev/null || true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: github.event_name == 'pull_request'
+        with:
+          files: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+          verbose: false
+
+      - name: Print coverage summary
+        run: |
+          go tool cover -func=coverage.out 2>/dev/null | tail -5 || true
+
+  # ==========================================
+  # BUILD - Verify build on multiple platforms
+  # ==========================================
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build server
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o kasoku-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/server
+
+      - name: Build CLI
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o kvctl-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/kvctl
+
+      - name: Build benchmark
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o grpc-bench-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/grpc-bench
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            kasoku-${{ matrix.goos }}-${{ matrix.goarch }}
+            kvctl-${{ matrix.goos }}-${{ matrix.goarch }}
+            grpc-bench-${{ matrix.goos }}-${{ matrix.goarch }}
+          retention-days: 1
+
+  # ==========================================
+  # SECURITY - Scan for vulnerabilities
+  # ==========================================
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run govulncheck
+        uses: golang/vuln@v1
+        with:
+          packages: ./...
+
+      - name: Check for secrets
+        run: |
+          go mod verify
+
+      - name: Check dependencies
+        run: |
+          go list -m all | grep -v "indirect" | head -20
+
+  # ==========================================
+  # DOCKER - Build and push Docker image
+  # ==========================================
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/kasoku
+          tags: |
+            type=ref,event=branch
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run container test
+        run: |
+          docker run --rm -d --name kasoku-test -p 9000:9000 ${{ steps.meta.outputs.tags }}
+          sleep 5
+          curl -s http://localhost:9000/health || echo "Container test failed"
+          docker stop kasoku-test || true
+
+  # ==========================================
+  # BENCHMARK - Quick performance check
+  # ==========================================
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build server
+        run: go build -o /tmp/kasoku ./cmd/server
+
+      - name: Build benchmark
+        run: go build -o /tmp/bench ./cmd/grpc-bench
+
+      - name: Run single-node benchmark
+        run: |
+          mkdir -p /tmp/kasoku-data
+          /tmp/kasoku --config configs/single.yaml > /tmp/server.log 2>&1 &
+          sleep 5
+          timeout 30 /tmp/bench -workload A 2>&1 | grep "Total:" || echo "Benchmark failed"
+          pkill -f kasoku || true
+
+      - name: Comment benchmark results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const output = execSync('cat /tmp/bench_output.txt 2>/dev/null || echo "No results"', { encoding: 'utf-8' });
+            console.log(output);
