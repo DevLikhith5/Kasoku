@@ -217,6 +217,83 @@ Under W1-R1, a read contacts a single replica (the first in the preference list)
 | **Kasoku** (W1-R1) | **6.3M** | **4.5M** | **2.7M** | Distributed, W=1/R=1 |
 | **Kasoku** (W2-R2) | **6.4M** | **3.7M** | **2.9M** | Distributed, W=2/R=2 |
 
+## Distributed Tracing
+
+Kasoku includes built-in OpenTelemetry tracing for observability across the distributed cluster.
+
+### Enable Tracing
+
+```bash
+# Enable with stdout export (prints to console)
+KASOKU_TRACING=true ./kasoku --config config.yaml
+
+# Enable with OTLP export (send to Jaeger/Zipkin)
+KASOKU_TRACING=true KASOKU_TRACING_EXPORTER=otlp KASOKU_OTLP_ENDPOINT=localhost:4317 ./kasoku --config config.yaml
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `KASOKU_TRACING` | Enable tracing (`true`/`false`) | `false` |
+| `KASOKU_TRACING_EXPORTER` | Export format (`stdout`, `otlp`) | `stdout` |
+| `KASOKU_OTLP_ENDPOINT` | OTLP collector address | `localhost:4317` |
+| `KASOKU_OTLP_INSECURE` | Use insecure gRPC | `false` |
+
+### Traced Operations
+
+- **gRPC Handlers**: Put, Get, BatchPut, MultiGet, Delete
+- **Cluster Replication**: ReplicatedPut, ReplicatedBatchPut
+- **Storage Engine**: LSM Put/Get/Batch operations
+- **Cross-node**: Trace context propagates across cluster nodes
+
+### View Traces
+
+**Console (stdout):**
+```bash
+KASOKU_TRACING=true go run cmd/server/main.go
+# Spans print as JSON to stdout
+```
+
+**Jaeger:**
+```bash
+# Start Jaeger
+docker run -d --name jaeger -p 16686:16686 -p 4317:4317 jaegertracing/all-in-one
+
+# Run server with tracing
+KASOKU_TRACING=true KASOKU_TRACING_EXPORTER=otlp ./kasoku --config config.yaml
+
+# Open http://localhost:16686
+```
+
+**Zipkin:**
+```bash
+# Start Zipkin
+docker run -d --name zipkin -p 9411:9411 openzipkin/zipkin
+
+# Run with OTLP (requires zipkin-collector)
+KASOKU_TRACING=true KASOKU_TRACING_EXPORTER=otlp KASOKU_OTLP_ENDPOINT=localhost:9411 ./kasoku
+```
+
+### Trace Example Output
+
+```json
+{
+  "Span": {
+    "TraceId": "a1b2c3d4e5f6...",
+    "SpanId": "1234567890ab",
+    "ParentSpanId": "",
+    "Name": "gRPC.BatchPut",
+    "StartTime": "2026-05-03T12:00:00.000Z",
+    "EndTime": "2026-05-03T12:00:00.015Z",
+    "Attributes": {
+      "entry_count": "100",
+      "success": "true"
+    }
+  }
+}
+```
+
 ## License
 
 Proprietary - see [docs/LICENSE](docs/LICENSE)
