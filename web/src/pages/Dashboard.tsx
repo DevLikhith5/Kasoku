@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Database, Network, BarChart3, Settings, Book } from 'lucide-react'
+import { Database, Network, BarChart3, Settings, Book, Activity } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { KVOperations } from '../components/dashboard/KVOperations'
 import { ClusterStatus } from '../components/dashboard/ClusterStatus'
 import { MetricsView } from '../components/dashboard/MetricsView'
 import { SettingsPanel } from '../components/dashboard/SettingsPanel'
+import { ObservabilityPanel } from '../components/dashboard/ObservabilityPanel'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
@@ -19,6 +20,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'operations', label: 'Key-Value Store', icon: Database },
   { id: 'cluster', label: 'Cluster', icon: Network },
   { id: 'metrics', label: 'Metrics', icon: BarChart3 },
+  { id: 'observability', label: 'Observability', icon: Activity },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
 
@@ -92,6 +94,7 @@ export function Dashboard() {
             {activeNav === 'operations' && <KVOperations apiBase={API_BASE} />}
             {activeNav === 'cluster' && <ClusterStatus apiBase={API_BASE} />}
             {activeNav === 'metrics' && <MetricsView apiBase={API_BASE} />}
+            {activeNav === 'observability' && <ObservabilityPanel apiBase={API_BASE} />}
             {activeNav === 'settings' && <SettingsPanel apiBase={API_BASE} />}
           </motion.div>
         </AnimatePresence>
