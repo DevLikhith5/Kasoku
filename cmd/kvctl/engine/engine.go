@@ -7,7 +7,7 @@ import (
 
 	"github.com/DevLikhith5/kasoku/internal/config"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
-	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
+	"github.com/DevLikhith5/kasoku/internal/store/lsm"
 )
 
 type KVEngine interface {
@@ -54,14 +54,14 @@ func GetEngine() (KVEngine, error) {
 	}
 
 	// Fallback to local LSMEngine
-	var lsme *lsmengine.LSMEngine
+	var lsme *lsm.LSMEngine
 	var err error
 	if walSyncMs > 0 {
-		lsme, err = lsmengine.NewLSMEngineWithConfig(cfg.DataDir, lsmengine.LSMConfig{
+		lsme, err = lsm.NewLSMEngineWithConfig(cfg.DataDir, lsm.LSMConfig{
 			WALSyncInterval: time.Duration(walSyncMs) * time.Millisecond,
 		})
 	} else {
-		lsme, err = lsmengine.NewLSMEngine(cfg.DataDir)
+		lsme, err = lsm.NewLSMEngine(cfg.DataDir)
 	}
 
 	if err != nil {

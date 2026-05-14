@@ -16,7 +16,7 @@ import (
 	"github.com/DevLikhith5/kasoku/internal/rpc"
 	"github.com/DevLikhith5/kasoku/internal/server"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
-	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
+	"github.com/DevLikhith5/kasoku/internal/store/lsm"
 )
 
 type NodeConfig struct {
@@ -41,7 +41,7 @@ func DefaultNodeConfig() NodeConfig {
 
 type Node struct {
 	cfg            NodeConfig
-	engine         *lsmengine.LSMEngine
+	engine         *lsm.LSMEngine
 	ring           *ring.Ring
 	members        *MemberList
 	hints          *HintStore
@@ -77,7 +77,7 @@ func NewNode(cfg NodeConfig) (*Node, error) {
 	}
 
 	// Open LSM storage engine
-	engine, err := lsmengine.NewLSMEngineWithConfig(cfg.DataDir, lsmengine.LSMConfig{
+	engine, err := lsm.NewLSMEngineWithConfig(cfg.DataDir, lsm.LSMConfig{
 		NodeID: cfg.NodeID,
 	})
 	if err != nil {

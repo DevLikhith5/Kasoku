@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
-	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
+	"github.com/DevLikhith5/kasoku/internal/store/lsm"
 )
 
 func TestServerBasicOperations(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	store, err := lsmengine.NewLSMEngineWithConfig(tmpDir, lsmengine.LSMConfig{
+	store, err := lsm.NewLSMEngineWithConfig(tmpDir, lsm.LSMConfig{
 		MemTableSize: 1024 * 1024,
 	})
 	if err != nil {
@@ -22,7 +22,7 @@ func TestServerBasicOperations(t *testing.T) {
 
 	tests := []struct {
 		name string
-		fn   func(t *testing.T, store *lsmengine.LSMEngine)
+		fn   func(t *testing.T, store *lsm.LSMEngine)
 	}{
 		{"Put and Get", testPutGet},
 		{"Delete", testDelete},
@@ -36,7 +36,7 @@ func TestServerBasicOperations(t *testing.T) {
 	}
 }
 
-func testPutGet(t *testing.T, store *lsmengine.LSMEngine) {
+func testPutGet(t *testing.T, store *lsm.LSMEngine) {
 	err := store.Put("key1", []byte("value1"))
 	if err != nil {
 		t.Fatalf("Put failed: %v", err)
@@ -52,7 +52,7 @@ func testPutGet(t *testing.T, store *lsmengine.LSMEngine) {
 	}
 }
 
-func testDelete(t *testing.T, store *lsmengine.LSMEngine) {
+func testDelete(t *testing.T, store *lsm.LSMEngine) {
 	store.Put("key2", []byte("value2"))
 	store.Delete("key2")
 
@@ -62,7 +62,7 @@ func testDelete(t *testing.T, store *lsmengine.LSMEngine) {
 	}
 }
 
-func testConcurrentPut(t *testing.T, store *lsmengine.LSMEngine) {
+func testConcurrentPut(t *testing.T, store *lsm.LSMEngine) {
 	var wg sync.WaitGroup
 	errors := make(chan error, 100)
 

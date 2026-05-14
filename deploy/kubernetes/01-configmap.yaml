@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kasoku-config
+  namespace: kasoku
+data:
+  config.yaml: |
+    data_dir: /data
+    port: 9000
+    http_port: 9000
+    log_level: info
+
+    lsm:
+      levels: 5
+      level_ratio: 10
+      l0_base_size: 67108864
+      key_cache_size: 1000000
+
+    compaction:
+      threshold: 1000
+      max_concurrent: 2
+      l0_size_threshold: 10737418240
+
+    memory:
+      memtable_size: 268435456
+      max_memtable_bytes: 1073741824
+      bloom_fp_rate: 0.01
+      block_cache_size: 536870912
+
+    wal:
+      sync: false
+      sync_interval: 100ms
+      checkpoint_bytes: 67108864
+      max_file_size: 67108864
+
+    cluster:
+      enabled: true
+      replication_factor: 3
+      quorum_size: 1
+      read_quorum: 1
+      vnodes: 150
+      rpc_timeout_ms: 500

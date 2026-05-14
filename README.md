@@ -6,7 +6,25 @@ High-performance distributed key-value store implementing Amazon Dynamo paper wi
 
 See `docs/ARCHITECTURE.md` for a complete deep dive into the system design, the LSM-tree storage engine, consistent hashing, and cluster replication mechanics.
 
-## Quick Start
+## uick Start (1-Click Docker)
+
+The easiest way to run Kasoku is via Docker, just like Postgres or Redis.
+
+### Standalone Node (Local Development)
+```bash
+docker-compose up -d
+```
+Your database is now running in the background on port `9000`!
+
+### 3-Node Distributed Cluster
+```bash
+docker-compose -f docker-compose.cluster.yml up -d
+```
+This spins up a fully connected 3-node cluster on ports `9001`, `9002`, and `9003`.
+
+---
+
+## Manual Build (Go)
 
 ```bash
 # 1. Build the server
@@ -64,13 +82,13 @@ go build -o kasoku-server ./cmd/server/
 
 # Single Node
 KASOKU_DATA_DIR=./data/bench KASOKU_CONFIG=./configs/bench-realistic.yaml ./kasoku-server &
-go run ./cmd/grpc-bench/main.go -nodes=localhost:9100 -workers=20 -batch=1 -seed=2000000 -reads=95 -dur=60
+go run ./cmd/bench/main.go -nodes=localhost:9100 -workers=20 -batch=1 -seed=2000000 -reads=95 -dur=60
 
 # 3-Node Cluster
 KASOKU_DATA_DIR=./data/n1 KASOKU_CONFIG=./configs/bench-cluster-node1.yaml ./kasoku-server &
 KASOKU_DATA_DIR=./data/n2 KASOKU_CONFIG=./configs/bench-cluster-node2.yaml ./kasoku-server &
 KASOKU_DATA_DIR=./data/n3 KASOKU_CONFIG=./configs/bench-cluster-node3.yaml ./kasoku-server &
-go run ./cmd/grpc-bench/main.go -nodes=localhost:9002,localhost:9012,localhost:9022 -workers=20 -batch=1 -seed=2000000 -reads=95 -dur=60
+go run ./cmd/bench/main.go -nodes=localhost:9002,localhost:9012,localhost:9022 -workers=20 -batch=1 -seed=2000000 -reads=95 -dur=60
 ```
 
 ### Industry Comparison

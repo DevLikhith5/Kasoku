@@ -19,7 +19,7 @@ import (
 	"github.com/DevLikhith5/kasoku/internal/config"
 	"github.com/DevLikhith5/kasoku/internal/ring"
 	"github.com/DevLikhith5/kasoku/internal/tracing"
-	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
+	"github.com/DevLikhith5/kasoku/internal/store/lsm"
 	rpcgrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -96,7 +96,7 @@ func main() {
 	}
 
 	// Initialize storage engine (LSM Engine)
-	store, err := lsmengine.NewLSMEngineWithConfig(cfg.DataDir, lsmengine.LSMConfig{
+	store, err := lsm.NewLSMEngineWithConfig(cfg.DataDir, lsm.LSMConfig{
 		MemTableSize:        cfg.Memory.MemTableSize,
 		MaxMemtableBytes:    cfg.Memory.MaxMemtableBytes,
 		WALSyncInterval:     cfg.WAL.SyncInterval,
@@ -114,7 +114,7 @@ func main() {
 	}
 
 	// Initialize block cache from config
-	lsmengine.InitBlockCache(cfg.Memory.BlockCacheSize)
+	lsm.InitBlockCache(cfg.Memory.BlockCacheSize)
 	logger.Info("block cache initialized", "size_bytes", cfg.Memory.BlockCacheSize)
 
 	// Initialize metrics

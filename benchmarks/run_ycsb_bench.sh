@@ -56,7 +56,7 @@ sleep 3
 # YCSB Workload B: 95% read / 5% write (most common production pattern)
 echo ""
 echo -e "${BOLD}━━━ YCSB Workload B (95% Read / 5% Write) ━━━${RESET}"
-go run ./cmd/grpc-bench/main.go \
+go run ./cmd/bench/main.go \
     -nodes=localhost:9100 \
     -workers=$WORKERS \
     -batch=$BATCH \
@@ -77,7 +77,7 @@ sleep 3
 # YCSB Workload A: 50% read / 50% write
 echo ""
 echo -e "${BOLD}━━━ YCSB Workload A (50% Read / 50% Write) ━━━${RESET}"
-go run ./cmd/grpc-bench/main.go \
+go run ./cmd/bench/main.go \
     -nodes=localhost:9100 \
     -workers=$WORKERS \
     -batch=$BATCH \
@@ -112,7 +112,7 @@ echo -e "${GREEN}✓ All 3 nodes running${RESET}"
 # YCSB Workload B: 95/5
 echo ""
 echo -e "${BOLD}━━━ CLUSTER: YCSB Workload B (95% Read / 5% Write) ━━━${RESET}"
-go run ./cmd/grpc-bench/main.go \
+go run ./cmd/bench/main.go \
     -nodes=localhost:9002,localhost:9012,localhost:9022 \
     -workers=$WORKERS \
     -batch=$BATCH \
@@ -137,7 +137,7 @@ sleep 5
 # YCSB Workload A: 50/50
 echo ""
 echo -e "${BOLD}━━━ CLUSTER: YCSB Workload A (50% Read / 50% Write) ━━━${RESET}"
-go run ./cmd/grpc-bench/main.go \
+go run ./cmd/bench/main.go \
     -nodes=localhost:9002,localhost:9012,localhost:9022 \
     -workers=$WORKERS \
     -batch=$BATCH \

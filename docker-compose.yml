@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  kasoku:
+    build: .
+    container_name: kasoku
+    ports:
+      - "9000:9000"
+    environment:
+      # Node Configuration
+      - KASOKU_NODE_ID=node-1
+      - KASOKU_HTTP_PORT=9000
+      - KASOKU_DATA_DIR=/data
+      
+      # Cluster Configuration (Disabled for standalone)
+      - KASOKU_CLUSTER_ENABLED=false
+      
+      # Resource Management
+      - GOMAXPROCS=4
+      - GOMEMLIMIT=2GiB
+    volumes:
+      - kasoku-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+volumes:
+  kasoku-data:

@@ -13,7 +13,7 @@ import (
 
 	"github.com/DevLikhith5/kasoku/internal/ring"
 	"github.com/DevLikhith5/kasoku/internal/server"
-	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
+	"github.com/DevLikhith5/kasoku/internal/store/lsm"
 )
 
 // newTestClusterNode creates a 3-node quorum benchmark node (W=1, R=1).
@@ -23,7 +23,7 @@ func newTestClusterNode(b *testing.B, nodeID string, r *ring.Ring) *testNode {
 
 	dir := b.TempDir()
 
-	engine, err := lsmengine.NewLSMEngineWithConfig(dir, lsmengine.LSMConfig{
+	engine, err := lsm.NewLSMEngineWithConfig(dir, lsm.LSMConfig{
 		WALSyncInterval: 100 * time.Millisecond,
 		KeyCacheSize:    1000000,
 		MemTableSize:   256 * 1024 * 1024,

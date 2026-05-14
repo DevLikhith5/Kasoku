@@ -17,7 +17,7 @@ import (
 	"github.com/DevLikhith5/kasoku/internal/ring"
 	"github.com/DevLikhith5/kasoku/internal/rpc"
 	"github.com/DevLikhith5/kasoku/internal/server"
-	lsmengine "github.com/DevLikhith5/kasoku/internal/store/lsm-engine"
+	"github.com/DevLikhith5/kasoku/internal/store/lsm"
 )
 
 type testNode struct {
@@ -32,7 +32,7 @@ func newTestNode(t *testing.T, nodeID string, r *ring.Ring) *testNode {
 
 	dir := t.TempDir()
 
-	engine, err := lsmengine.NewLSMEngine(dir)
+	engine, err := lsm.NewLSMEngine(dir)
 	if err != nil {
 		t.Fatalf("failed to create LSM engine: %v", err)
 	}
