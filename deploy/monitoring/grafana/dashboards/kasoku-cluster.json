@@ -1,0 +1,92 @@
+{
+  "title": "Kasoku Cluster & Replication",
+  "uid": "kasoku-cluster",
+  "refresh": "5s",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "tags": ["kasoku", "cluster"],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Active Nodes",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "kasoku_cluster_nodes_active", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"steps": [{"color": "red", "value": 0}, {"color": "yellow", "value": 2}, {"color": "green", "value": 3}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Pending Hints",
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "kasoku_cluster_pending_hints", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Read Repairs",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "rate(kasoku_read_repair_total[1m])", "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "Conflicts",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "rate(kasoku_replication_conflicts_total[1m])", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Replication Write Latency",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum(rate(kasoku_replication_write_latency_seconds_bucket[5m])) by (le, phase))", "legendFormat": "{{phase}} p99", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Replication Read Latency",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum(rate(kasoku_replication_read_latency_seconds_bucket[5m])) by (le, phase))", "legendFormat": "{{phase}} p99", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Sloppy Quorum & Hint Retries",
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "rate(kasoku_sloppy_quorum_fallbacks_total[5m])", "legendFormat": "sloppy quorum", "refId": "A"},
+        {"expr": "rate(kasoku_hint_handoff_retries_total[5m])", "legendFormat": "hint retries", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Phi Suspicion per Node",
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "kasoku_cluster_phi_suspicion", "legendFormat": "{{node_id}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Anti-Entropy Syncs",
+      "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "rate(kasoku_anti_entropy_sync_total[5m])", "legendFormat": "syncs/sec", "refId": "A"},
+        {"expr": "histogram_quantile(0.95, sum(rate(kasoku_anti_entropy_keys_synced_bucket[5m])) by (le))", "legendFormat": "keys p95", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Merkle Tree Build Time",
+      "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(kasoku_merkle_tree_build_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    }
+  ]
+}

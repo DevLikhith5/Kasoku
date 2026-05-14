@@ -14,7 +14,7 @@ import (
 
 	kasokuapi "github.com/DevLikhith5/kasoku/api"
 	"github.com/DevLikhith5/kasoku/cmd/server/handler"
-	"github.com/DevLikhith5/kasoku/cmd/server/metrics"
+	"github.com/DevLikhith5/kasoku/internal/metrics"
 	"github.com/DevLikhith5/kasoku/internal/cluster"
 	"github.com/DevLikhith5/kasoku/internal/config"
 	"github.com/DevLikhith5/kasoku/internal/ring"
@@ -95,6 +95,9 @@ func main() {
 		}
 	}
 
+	// Initialize metrics
+	m := metrics.New()
+
 	// Initialize storage engine (LSM Engine)
 	store, err := lsm.NewLSMEngineWithConfig(cfg.DataDir, lsm.LSMConfig{
 		MemTableSize:        cfg.Memory.MemTableSize,
@@ -106,6 +109,7 @@ func main() {
 		L0SizeThreshold:     cfg.Compaction.L0SizeThreshold,
 		BloomFPRate:         cfg.Memory.BloomFPRate,
 		LevelRatio:          cfg.LSM.LevelRatio,
+		Metrics:             m,
 	})
 	if err != nil {
 		logger.Error("failed to create storage engine", "error", err)
@@ -116,9 +120,6 @@ func main() {
 	// Initialize block cache from config
 	lsm.InitBlockCache(cfg.Memory.BlockCacheSize)
 	logger.Info("block cache initialized", "size_bytes", cfg.Memory.BlockCacheSize)
-
-	// Initialize metrics
-	m := metrics.New()
 
 	// Create HTTP server
 	var server *handler.Server
@@ -155,6 +156,7 @@ func main() {
 			RPCTimeout:        time.Duration(cfg.Cluster.RPCTimeoutMs) * time.Millisecond,
 			Logger:            logger,
 			Peers:             cfg.Cluster.Peers,
+			Metrics:           m,
 		}
 
 		server = handler.NewDistributed(store, nodeAddr, nodeAddr, logger, m, &clusterCfg)
@@ -177,8 +179,12 @@ func main() {
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
 
-	// Apply middleware
-	httpHandler := handler.WithLogging(logger)(handler.WithRecovery(logger)(mux))
+	// Apply middleware (tracing -> recovery -> logging)
+	httpHandler := handler.WithLogging(logger)(
+		handler.WithRecovery(logger)(
+			handler.WithTracing()(mux),
+		),
+	)
 
 	// Background metrics scraping
 	metricsStop := make(chan struct{})
@@ -191,9 +197,25 @@ func main() {
 				stats := store.Stats()
 				m.SetStorageKeys(stats.KeyCount)
 				m.SetStorageBytes(stats.MemBytes, stats.DiskBytes)
+				m.RecordUptime(cfg.Cluster.NodeID)
 
-				if cfg.Cluster.Enabled {
+				// Report LSM level SSTable counts
+				store.RecordLevelMetrics()
+
+				if cfg.Cluster.Enabled && server != nil && server.Cluster() != nil {
+					c := server.Cluster()
 					m.SetClusterNodes(len(cfg.Cluster.Peers) + 1)
+
+					// Report pending hints
+					if hints := c.GetHintsForNode(""); hints != nil {
+						m.SetPendingHints(len(hints))
+					}
+
+					// Report phi suspicion for all known peers
+					for _, peer := range cfg.Cluster.Peers {
+						// Phi is not directly exposed; we skip for now
+						_ = peer
+					}
 				}
 			case <-metricsStop:
 				return

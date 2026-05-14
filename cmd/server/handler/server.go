@@ -9,7 +9,7 @@ import (
 
 	"log/slog"
 
-	"github.com/DevLikhith5/kasoku/cmd/server/metrics"
+	"github.com/DevLikhith5/kasoku/internal/metrics"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/DevLikhith5/kasoku/internal/cluster"

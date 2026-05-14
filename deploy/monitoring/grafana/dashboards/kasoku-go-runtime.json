@@ -1,0 +1,74 @@
+{
+  "title": "Kasoku Go Runtime",
+  "uid": "kasoku-go-runtime",
+  "refresh": "5s",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "tags": ["kasoku", "runtime"],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Goroutines",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "go_goroutines", "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "Heap Alloc",
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "go_memstats_heap_alloc_bytes", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "type": "stat",
+      "title": "GC CPU Fraction",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "go_memstats_gc_cpu_fraction", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}}
+    },
+    {
+      "type": "stat",
+      "title": "Threads",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "go_threads", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Goroutines Over Time",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "go_goroutines", "refId": "A"}],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Heap Usage",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "go_memstats_heap_alloc_bytes", "legendFormat": "alloc", "refId": "A"},
+        {"expr": "go_memstats_heap_sys_bytes", "legendFormat": "sys", "refId": "B"},
+        {"expr": "go_memstats_heap_idle_bytes", "legendFormat": "idle", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"lineWidth": 2, "fillOpacity": 10}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "GC Duration",
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "rate(go_gc_duration_seconds_sum[5m]) / rate(go_gc_duration_seconds_count[5m])", "legendFormat": "avg", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory by Type",
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "go_memstats_stack_inuse_bytes", "legendFormat": "stack", "refId": "A"},
+        {"expr": "go_memstats_mspan_inuse_bytes", "legendFormat": "mspan", "refId": "B"},
+        {"expr": "go_memstats_mcache_inuse_bytes", "legendFormat": "mcache", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"lineWidth": 2}}}
+    }
+  ]
+}

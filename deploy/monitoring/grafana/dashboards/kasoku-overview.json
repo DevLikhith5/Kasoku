@@ -1,0 +1,114 @@
+{
+  "title": "Kasoku Overview",
+  "uid": "kasoku-overview",
+  "refresh": "5s",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "tags": ["kasoku", "overview"],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Requests/sec",
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "targets": [{"expr": "sum(rate(kasoku_requests_total[1m]))", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Active Keys",
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+      "targets": [{"expr": "kasoku_storage_engine_keys_total", "refId": "A"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "continuous-GrYlRd"}}}
+    },
+    {
+      "type": "stat",
+      "title": "Cluster Nodes",
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+      "targets": [{"expr": "kasoku_cluster_nodes_active", "refId": "A"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "red", "value": 0}, {"color": "yellow", "value": 2}, {"color": "green", "value": 3}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Pending Hints",
+      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
+      "targets": [{"expr": "kasoku_cluster_pending_hints", "refId": "A"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Disk Usage",
+      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4},
+      "targets": [{"expr": "kasoku_storage_engine_bytes{type=\"disk\"}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "type": "stat",
+      "title": "MemTable Size",
+      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
+      "targets": [{"expr": "kasoku_storage_engine_bytes{type=\"memory\"}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Request Rate by Operation",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "sum by (operation) (rate(kasoku_requests_total[1m]))", "legendFormat": "{{operation}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"lineWidth": 2, "fillOpacity": 10}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "p99 Request Latency",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum(rate(kasoku_request_duration_seconds_bucket{operation=\"get\"}[5m])) by (le))", "legendFormat": "GET p99", "refId": "A"},
+        {"expr": "histogram_quantile(0.99, sum(rate(kasoku_request_duration_seconds_bucket{operation=\"put\"}[5m])) by (le))", "legendFormat": "PUT p99", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, sum(rate(kasoku_request_duration_seconds_bucket{operation=\"delete\"}[5m])) by (le))", "legendFormat": "DELETE p99", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Error Rate",
+      "gridPos": {"x": 0, "y": 12, "w": 8, "h": 6},
+      "targets": [{"expr": "sum(rate(kasoku_requests_total{status=\"error\"}[5m])) / sum(rate(kasoku_requests_total[5m]))", "legendFormat": "error rate", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "custom": {"lineWidth": 2, "fillOpacity": 10}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Replication Write Latency",
+      "gridPos": {"x": 8, "y": 12, "w": 8, "h": 6},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(kasoku_replication_write_latency_seconds_bucket[5m])) by (le, phase))", "legendFormat": "{{phase}} p95", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Sloppy Quorum & Conflicts",
+      "gridPos": {"x": 16, "y": 12, "w": 8, "h": 6},
+      "targets": [
+        {"expr": "rate(kasoku_sloppy_quorum_fallbacks_total[5m])", "legendFormat": "sloppy quorum", "refId": "A"},
+        {"expr": "rate(kasoku_replication_conflicts_total[5m])", "legendFormat": "conflicts", "refId": "B"},
+        {"expr": "rate(kasoku_read_repair_total[5m])", "legendFormat": "read repair", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Go Runtime",
+      "gridPos": {"x": 0, "y": 18, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "go_goroutines", "legendFormat": "goroutines", "refId": "A"},
+        {"expr": "go_memstats_heap_alloc_bytes", "legendFormat": "heap alloc", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Node Uptime",
+      "gridPos": {"x": 12, "y": 18, "w": 12, "h": 8},
+      "targets": [{"expr": "kasoku_node_uptime_seconds", "legendFormat": "{{node_id}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "title": "Kasoku LSM Engine",
+  "uid": "kasoku-lsm",
+  "refresh": "5s",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "tags": ["kasoku", "lsm"],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Active Keys",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "kasoku_storage_engine_keys_total", "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "MemTable Bytes",
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "kasoku_storage_engine_bytes{type=\"memory\"}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "type": "stat",
+      "title": "Disk Bytes",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "kasoku_storage_engine_bytes{type=\"disk\"}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "type": "stat",
+      "title": "SSTable Count",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "sum(kasoku_lsm_level_sstables)", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "GET Latency by Phase",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum(rate(kasoku_lsm_get_latency_seconds_bucket[5m])) by (le, phase))", "legendFormat": "{{phase}} p99", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "PUT / Scan Latency",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum(rate(kasoku_lsm_put_latency_seconds_bucket[5m])) by (le))", "legendFormat": "PUT p99", "refId": "A"},
+        {"expr": "histogram_quantile(0.99, sum(rate(kasoku_lsm_scan_latency_seconds_bucket[5m])) by (le))", "legendFormat": "SCAN p99", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Flush Duration",
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(kasoku_lsm_flush_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Compaction Duration by Level",
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(kasoku_lsm_compaction_duration_seconds_bucket[5m])) by (le, level))", "legendFormat": "L{{level}} p95", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "SSTables per Level",
+      "gridPos": {"x": 0, "y": 20, "w": 24, "h": 8},
+      "targets": [
+        {"expr": "kasoku_lsm_level_sstables", "legendFormat": "L{{level}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 2, "fillOpacity": 10}}}
+    }
+  ]
+}

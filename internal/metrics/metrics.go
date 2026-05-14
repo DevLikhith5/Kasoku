@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -144,15 +145,22 @@ var (
 			Buckets: []float64{0.001, 0.01, 0.05, 0.1, 0.5, 1},
 		},
 	)
+	lsmLevelCount = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kasoku_lsm_level_sstables",
+			Help: "Number of SSTables per LSM level.",
+		},
+		[]string{"level"},
+	)
 
-	// HTTP handler stage timing - NO logging, just metrics
+	// HTTP handler stage timing
 	httpHandlerLatency = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "kasoku_http_handler_latency_seconds",
 			Help:    "HTTP handler stage timing without logging overhead.",
 			Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25},
 		},
-		[]string{"operation", "stage"}, // put/http_parse, put/store, get/store, batch/store
+		[]string{"operation", "stage"},
 	)
 
 	// Anti-entropy metrics
@@ -175,6 +183,15 @@ var (
 			Help:    "Time to build Merkle tree for anti-entropy.",
 			Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 5},
 		},
+	)
+
+	// Node health metrics
+	nodeUptime = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kasoku_node_uptime_seconds",
+			Help: "Time since node start in seconds.",
+		},
+		[]string{"node_id"},
 	)
 )
 
@@ -239,7 +256,7 @@ func (t *TimingTracker) GetStats(phases map[string][]int64) map[string]PhaseStat
 		if len(values) == 0 {
 			continue
 		}
-		var sum, p50, p95, p99, max int64
+		var sum, max int64
 		for _, v := range values {
 			sum += v
 			if v > max {
@@ -248,32 +265,30 @@ func (t *TimingTracker) GetStats(phases map[string][]int64) map[string]PhaseStat
 		}
 		avg := sum / int64(len(values))
 
-		// Simple percentile estimation
+		// FIX: Sort before computing percentiles
 		sorted := make([]int64, len(values))
 		copy(sorted, values)
-		// Using built-in sort would be better but this avoids import
-		p50Idx := int(float64(len(sorted)) * 0.50)
-		p95Idx := int(float64(len(sorted)) * 0.95)
-		p99Idx := int(float64(len(sorted)) * 0.99)
-		if p50Idx >= len(sorted) {
-			p50Idx = len(sorted) - 1
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+		p50Idx := int(float64(len(sorted)-1) * 0.50)
+		p95Idx := int(float64(len(sorted)-1) * 0.95)
+		p99Idx := int(float64(len(sorted)-1) * 0.99)
+		if p50Idx < 0 {
+			p50Idx = 0
 		}
-		if p95Idx >= len(sorted) {
-			p95Idx = len(sorted) - 1
+		if p95Idx < 0 {
+			p95Idx = 0
 		}
-		if p99Idx >= len(sorted) {
-			p99Idx = len(sorted) - 1
+		if p99Idx < 0 {
+			p99Idx = 0
 		}
-		p50 = sorted[p50Idx]
-		p95 = sorted[p95Idx]
-		p99 = sorted[p99Idx]
 
 		stats[phase] = PhaseStats{
 			Count: int64(len(values)),
 			AvgNs: avg,
-			P50Ns: p50,
-			P95Ns: p95,
-			P99Ns: p99,
+			P50Ns: sorted[p50Idx],
+			P95Ns: sorted[p95Idx],
+			P99Ns: sorted[p99Idx],
 			MaxNs: max,
 		}
 	}
@@ -290,16 +305,22 @@ func (t *TimingTracker) GetPutStats() map[string]PhaseStats {
 
 type Metrics struct {
 	timingTracker *TimingTracker
+	startTime     time.Time
 }
 
 func New() *Metrics {
 	return &Metrics{
 		timingTracker: NewTimingTracker(),
+		startTime:     time.Now(),
 	}
 }
 
 func (m *Metrics) TimingTracker() *TimingTracker {
 	return m.timingTracker
+}
+
+func (m *Metrics) RecordUptime(nodeID string) {
+	nodeUptime.WithLabelValues(nodeID).Set(time.Since(m.startTime).Seconds())
 }
 
 // RecordHandlerStage records timing for HTTP handler stages without logging
@@ -346,8 +367,7 @@ func (m *Metrics) RecordDeleteEnd(start time.Time, success bool) {
 	requestDuration.WithLabelValues("delete").Observe(time.Since(start).Seconds())
 }
 
-// Snapshot ensures compatibility with handlers expecting the old method,
-// though it won't be actively used over /metrics endpoint
+// Snapshot ensures compatibility with handlers expecting the old method
 type Snapshot struct {
 	GetTotal    int64
 	PutTotal    int64
@@ -393,4 +413,64 @@ func (m *Metrics) RecordBatchPut(count int) {
 
 func (m *Metrics) RecordBatchGet(count int) {
 	requestsTotal.WithLabelValues("batch_get", "success").Add(float64(count))
+}
+
+// LSM Engine Metrics
+func (m *Metrics) RecordLSMPut(duration time.Duration) {
+	lsmPutLatency.Observe(duration.Seconds())
+}
+
+func (m *Metrics) RecordLSMGet(phase string, duration time.Duration) {
+	lsmGetLatency.WithLabelValues(phase).Observe(duration.Seconds())
+}
+
+func (m *Metrics) RecordLSMScan(duration time.Duration) {
+	lsmScanLatency.Observe(duration.Seconds())
+}
+
+func (m *Metrics) RecordLSMFlush(duration time.Duration) {
+	lsmFlushDuration.Observe(duration.Seconds())
+}
+
+func (m *Metrics) RecordLSMCompaction(level string, duration time.Duration) {
+	lsmCompactionDuration.WithLabelValues(level).Observe(duration.Seconds())
+}
+
+func (m *Metrics) SetLSMLevelSSTables(level string, count int) {
+	lsmLevelCount.WithLabelValues(level).Set(float64(count))
+}
+
+// Replication Metrics
+func (m *Metrics) RecordReplicationWriteLatency(phase string, duration time.Duration) {
+	replicationWriteLatency.WithLabelValues(phase).Observe(duration.Seconds())
+}
+
+func (m *Metrics) RecordReplicationReadLatency(phase string, duration time.Duration) {
+	replicationReadLatency.WithLabelValues(phase).Observe(duration.Seconds())
+}
+
+func (m *Metrics) IncReplicationConflicts() {
+	replicationConflicts.Inc()
+}
+
+func (m *Metrics) IncSloppyQuorumFallbacks() {
+	sloppyQuorumFallbacks.Inc()
+}
+
+func (m *Metrics) IncHintedHandoffRetries() {
+	hintedHandoffRetries.Inc()
+}
+
+func (m *Metrics) IncReadRepair() {
+	readRepairCount.Inc()
+}
+
+// Anti-Entropy Metrics
+func (m *Metrics) RecordAntiEntropySync(keysSynced int) {
+	antiEntropySyncCount.Inc()
+	antiEntropySyncKeys.Observe(float64(keysSynced))
+}
+
+func (m *Metrics) RecordMerkleTreeBuild(duration time.Duration) {
+	merkleTreeBuildTime.Observe(duration.Seconds())
 }

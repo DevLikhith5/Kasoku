@@ -184,13 +184,27 @@ Run manually:
              (parsed['kasoku_http_handler_latency_seconds_count{operation="put",stage="store"}'] || 1)) * 1000 : 0
           const storeLatency = storeLatencyGet > 0 ? storeLatencyGet : storeLatencyPut
 
+          const lsmPutLatency = parsed['kasoku_lsm_put_latency_seconds_sum'] ?
+            (parsed['kasoku_lsm_put_latency_seconds_sum'] / (parsed['kasoku_lsm_put_latency_seconds_count'] || 1)) * 1000 : 0
+          const lsmGetLatency = parsed['kasoku_lsm_get_latency_seconds_sum{operation="get",phase="total"}'] ?
+            (parsed['kasoku_lsm_get_latency_seconds_sum{operation="get",phase="total"}'] / (parsed['kasoku_lsm_get_latency_seconds_count{operation="get",phase="total"}'] || 1)) * 1000 : 0
+          const sstables = parsed['kasoku_lsm_level_sstables{level="0"}'] || 0
+          const conflicts = parsed['kasoku_replication_conflicts_total'] || 0
+          const readRepairs = parsed['kasoku_read_repair_total'] || 0
+
           const cards: MetricCardData[] = [
             { label: 'Keys', value: keyCount.toLocaleString() },
             { label: 'Disk Used', value: diskBytes > 1024 * 1024 ? `${(diskBytes / (1024 * 1024)).toFixed(1)} MB` : `${(diskBytes / 1024).toFixed(0)} KB` },
             { label: 'MemTable', value: memBytes > 1024 * 1024 ? `${(memBytes / (1024 * 1024)).toFixed(1)} MB` : `${memBytes} B` },
             { label: 'GET Latency', value: getLatency > 0 ? `${getLatency.toFixed(2)} ms` : 'N/A' },
             { label: 'PUT Latency', value: putLatency > 0 ? `${putLatency.toFixed(2)} ms` : 'N/A' },
+            { label: 'LSM PUT', value: lsmPutLatency > 0 ? `${lsmPutLatency.toFixed(3)} ms` : 'N/A' },
+            { label: 'LSM GET', value: lsmGetLatency > 0 ? `${lsmGetLatency.toFixed(3)} ms` : 'N/A' },
+            { label: 'L0 SSTables', value: String(sstables) },
             { label: 'Cluster Nodes', value: String(activeNodes) },
+            { label: 'Pending Hints', value: String(pendingHints) },
+            { label: 'Conflicts', value: String(conflicts) },
+            { label: 'Read Repairs', value: String(readRepairs) },
             { label: 'Goroutines', value: goroutines.toFixed(0) },
             { label: 'Heap Alloc', value: heapAlloc > 1024 * 1024 ? `${(heapAlloc / (1024 * 1024)).toFixed(1)} MB` : `${(heapAlloc / 1024).toFixed(0)} KB` },
           ]

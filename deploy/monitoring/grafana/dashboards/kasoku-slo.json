@@ -1,0 +1,58 @@
+{
+  "title": "Kasoku SLOs",
+  "uid": "kasoku-slo",
+  "refresh": "5s",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "tags": ["kasoku", "slo"],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Availability (5m)",
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 4},
+      "targets": [{"expr": "1 - (sum(rate(kasoku_requests_total{status=\"error\"}[5m])) / sum(rate(kasoku_requests_total[5m])))", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "thresholds": {"steps": [{"color": "red", "value": 0}, {"color": "yellow", "value": 0.99}, {"color": "green", "value": 0.999}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "GET p99 Latency",
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 4},
+      "targets": [{"expr": "histogram_quantile(0.99, sum(rate(kasoku_request_duration_seconds_bucket{operation=\"get\"}[5m])) by (le))", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.05}, {"color": "red", "value": 0.1}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "PUT p99 Latency",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 4},
+      "targets": [{"expr": "histogram_quantile(0.99, sum(rate(kasoku_request_duration_seconds_bucket{operation=\"put\"}[5m])) by (le))", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.025}, {"color": "red", "value": 0.05}]}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Availability Over Time",
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [{"expr": "1 - (sum(rate(kasoku_requests_total{status=\"error\"}[5m])) / sum(rate(kasoku_requests_total[5m])))", "legendFormat": "availability", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "custom": {"lineWidth": 2, "fillOpacity": 10}, "thresholds": {"steps": [{"color": "red", "value": 0}, {"color": "yellow", "value": 0.99}, {"color": "green", "value": 0.999}]}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency SLO Compliance",
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum(rate(kasoku_request_duration_seconds_bucket{operation=\"get\"}[5m])) by (le))", "legendFormat": "GET p99", "refId": "A"},
+        {"expr": "histogram_quantile(0.99, sum(rate(kasoku_request_duration_seconds_bucket{operation=\"put\"}[5m])) by (le))", "legendFormat": "PUT p99", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Error Budget Burn Rate",
+      "gridPos": {"x": 0, "y": 12, "w": 24, "h": 8},
+      "targets": [
+        {"expr": "sum(rate(kasoku_requests_total{status=\"error\"}[5m])) / sum(rate(kasoku_requests_total[5m]))", "legendFormat": "5m error rate", "refId": "A"},
+        {"expr": "sum(rate(kasoku_requests_total{status=\"error\"}[1h])) / sum(rate(kasoku_requests_total[1h]))", "legendFormat": "1h error rate", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "custom": {"lineWidth": 2}}}
+    }
+  ]
+}

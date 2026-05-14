@@ -3,11 +3,10 @@ apiVersion: 1
 providers:
   - name: 'Kasoku Dashboards'
     orgId: 1
-    folder: 'General'
-    folderUid: ''
+    folder: 'Kasoku'
     type: file
     disableDeletion: false
-    editable: true
     updateIntervalSeconds: 10
+    allowUiUpdates: true
     options:
       path: /var/lib/grafana/dashboards

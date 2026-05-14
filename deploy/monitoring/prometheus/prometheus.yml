@@ -1,11 +1,41 @@
 global:
   scrape_interval: 5s
   evaluation_interval: 5s
+  external_labels:
+    cluster: kasoku
+    replica: '{{.ExternalURL}}'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - /etc/prometheus/alerts.yml
 
 scrape_configs:
   - job_name: "kasoku"
     scrape_interval: 5s
     metrics_path: /metrics
     static_configs:
-      # Use host.docker.internal to reach the Kasoku instance running natively on the Mac host
       - targets: ["host.docker.internal:8080"]
+        labels:
+          env: local
+
+  - job_name: "node-exporter"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          env: local
+
+  - job_name: "prometheus"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "jaeger"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["jaeger:14269"]

@@ -1,0 +1,145 @@
+groups:
+  - name: kasoku-slo
+    interval: 30s
+    rules:
+      # Availability SLO: 99.9% success rate over 5m
+      - alert: KasokuHighErrorRate
+        expr: |
+          sum(rate(kasoku_requests_total{status="error"}[5m]))
+          /
+          sum(rate(kasoku_requests_total[5m])) > 0.01
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kasoku error rate is elevated"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      # Latency SLO: p99 < 100ms for gets
+      - alert: KasokuGetLatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(kasoku_request_duration_seconds_bucket{operation="get"}[5m])) by (le)
+          ) > 0.1
+        for: 3m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kasoku GET latency p99 is high"
+          description: "GET p99 latency is {{ $value }}s, exceeding 100ms SLO."
+
+      # Latency SLO: p99 < 50ms for puts
+      - alert: KasokuPutLatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(kasoku_request_duration_seconds_bucket{operation="put"}[5m])) by (le)
+          ) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kasoku PUT latency p99 is high"
+          description: "PUT p99 latency is {{ $value }}s, exceeding 50ms SLO."
+
+  - name: kasoku-cluster
+    interval: 30s
+    rules:
+      # Node health
+      - alert: KasokuNodeDown
+        expr: up{job="kasoku"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Kasoku node {{ $labels.instance }} is down"
+          description: "Node has been unreachable for more than 1 minute."
+
+      # Cluster quorum risk
+      - alert: KasokuClusterNodeCountLow
+        expr: kasoku_cluster_nodes_active < 2
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Kasoku cluster has fewer than 2 nodes"
+          description: "Only {{ $value }} nodes are active. Quorum may be at risk."
+
+      # Replication lag / hinted handoffs
+      - alert: KasokuHighPendingHints
+        expr: kasoku_cluster_pending_hints > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kasoku has many pending hinted handoffs"
+          description: "{{ $value }} hints are pending delivery."
+
+      # Sloppy quorum usage
+      - alert: KasokuSloppyQuorumActive
+        expr: rate(kasoku_sloppy_quorum_fallbacks_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kasoku is using sloppy quorum fallbacks"
+          description: "Fallback nodes are being used due to node unavailability."
+
+  - name: kasoku-storage
+    interval: 30s
+    rules:
+      # LSM compaction stall
+      - alert: KasokuLSMCompactionSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(kasoku_lsm_compaction_duration_seconds_bucket[10m])) by (le, level)
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "LSM compaction is slow"
+          description: "Level {{ $labels.level }} compaction p95 is {{ $value }}s."
+
+      # Disk usage
+      - alert: KasokuDiskUsageHigh
+        expr: kasoku_storage_engine_bytes{type="disk"} > 10737418240
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kasoku disk usage is high"
+          description: "Disk usage is {{ $value | humanize1024 }}B, exceeding 10GB threshold."
+
+  - name: kasoku-go-runtime
+    interval: 30s
+    rules:
+      # Goroutine leak
+      - alert: KasokuHighGoroutineCount
+        expr: go_goroutines > 5000
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kasoku goroutine count is high"
+          description: "{{ $value }} goroutines are running, possible leak."
+
+      # GC pause
+      - alert: KasokuGCPauseHigh
+        expr: rate(go_gc_duration_seconds_sum[5m]) / rate(go_gc_duration_seconds_count[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kasoku GC pause is high"
+          description: "Average GC pause is {{ $value }}s."

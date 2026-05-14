@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/DevLikhith5/kasoku/internal/metrics"
 	"github.com/DevLikhith5/kasoku/internal/ring"
 	"github.com/DevLikhith5/kasoku/internal/rpc"
 	grpcrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
@@ -55,6 +56,7 @@ type Cluster struct {
 	ringCache         *RingCache
 	aliveSnapshot     atomic.Pointer[map[string]bool]
 	isDistributed     atomic.Bool
+	metrics           *metrics.Metrics
 
 	// Background replication for eventual consistency
 	backgroundReplicator *BackgroundReplicator
@@ -86,7 +88,7 @@ func (c *Cluster) GetReplicationFactor() int {
 
 type ClusterConfig struct {
 	NodeID            string
-	NodeAddr          string // Base URL for this node (e.g., "http://localhost:8080")
+	NodeAddr          string // Base URL for this node (e.g. "http://localhost:8080")
 	GRPCPort         int  // gRPC port for inter-node communication
 	Ring              *ring.Ring
 	Store             storage.StorageEngine
@@ -97,6 +99,7 @@ type ClusterConfig struct {
 	Logger            *slog.Logger
 	Peers             []string
 	Members           *MemberList // for sloppy quorum - check node liveness
+	Metrics           *metrics.Metrics
 }
 
 func New(cfg ClusterConfig) *Cluster {
@@ -152,6 +155,7 @@ func New(cfg ClusterConfig) *Cluster {
 		grpcPool:          grpcrpc.NewPool(),
 		nodeAddrMap:       make(map[string]string),
 		stopCh:            make(chan struct{}),
+		metrics:           cfg.Metrics,
 	}
 
 	if cfg.Members != nil {
@@ -310,9 +314,16 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 
 	// Write locally with WAL for durability
 	if isReplica {
+		localStart := time.Now()
 		if err := c.store.Put(key, value); err != nil {
 			c.logger.Error("local write failed", "key", key, "error", err)
+			if c.metrics != nil {
+				c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
+			}
 			return fmt.Errorf("local write failed: %w", err)
+		}
+		if c.metrics != nil {
+			c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
 		}
 	}
 
@@ -365,6 +376,9 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 		// Try gRPC first, fall back to HTTP
 		if grpcClient, ok := c.grpcClients[replicaAddr]; ok {
 			if err := grpcClient.ReplicatedPutBinary(timeoutCtx, key, value); err == nil {
+				if c.metrics != nil {
+					c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
+				}
 				mu.Lock()
 				successCount++
 				mu.Unlock()
@@ -378,7 +392,14 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 				"replica", replicaAddr,
 				"error", err,
 				"timing.replica_ms", time.Since(replicaStart).Milliseconds())
+			if c.metrics != nil {
+				c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
+			}
 			return
+		}
+
+		if c.metrics != nil {
+			c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
 		}
 
 mu.Lock()
@@ -387,7 +408,11 @@ mu.Lock()
 		}(replica)
 	}
 
+	quorumStart := time.Now()
 	wg.Wait()
+	if c.metrics != nil {
+		c.metrics.RecordReplicationWriteLatency("quorum_wait", time.Since(quorumStart))
+	}
 
 	if successCount < c.quorumSize {
 		return fmt.Errorf("%w: got %d acks, need %d", ErrQuorumNotReached, successCount, c.quorumSize)
@@ -429,6 +454,10 @@ func (c *Cluster) asyncReplicate(replicas []string, key string, value []byte) {
 // For eventual consistency, write to nearest node - async replication happens in background
 // This achieves maximum throughput without waiting for quorum
 func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]byte) error {
+	ctx, span := tracing.StartSpan(ctx, "cluster.ReplicatedBatchPut",
+		attribute.Int("entry_count", len(entries)))
+	defer span.End()
+
 	if len(entries) == 0 {
 		return nil
 	}
@@ -537,12 +566,17 @@ func (c *Cluster) _ReplicatedBatchPutOLD(ctx context.Context, entries map[string
 // ReplicatedGet reads a key from the cluster
 // Reads from the primary node (coordinator pattern)
 func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error) {
+	ctx, span := tracing.StartSpan(ctx, "cluster.ReplicatedGet",
+		attribute.String("key", key))
+	defer span.End()
+
 	aliveSet := c.snapshotAliveSet()
 	c.mu.RLock()
 	replicas := c.getReplicasForKey(key, aliveSet)
 	c.mu.RUnlock()
 
 	if len(replicas) == 0 {
+		span.SetAttributes(attribute.String("error", "no_nodes"))
 		return nil, ErrNoNodesAvailable
 	}
 
@@ -550,7 +584,11 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 
 	// If this node is the primary, read locally
 	if primary == c.nodeID {
+		localStart := time.Now()
 		entry, err := c.store.Get(key)
+		if c.metrics != nil {
+			c.metrics.RecordReplicationReadLatency("local", time.Since(localStart))
+		}
 		if err != nil {
 			if errors.Is(err, storage.ErrKeyNotFound) {
 				return nil, storage.ErrKeyNotFound
@@ -569,7 +607,11 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 		return nil, fmt.Errorf("no client for primary node: %s", primary)
 	}
 
+	networkStart := time.Now()
 	value, found, err := client.ReplicatedGet(timeoutCtx, key)
+	if c.metrics != nil {
+		c.metrics.RecordReplicationReadLatency("network", time.Since(networkStart))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -583,6 +625,10 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 // ReplicatedBatchGet coordinates high-throughput bulk reads from the cluster.
 // Dynamo R=1 optimized: Smart routing - local reads fast, remote reads parallelized
 func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[string]storage.Entry, error) {
+	ctx, span := tracing.StartSpan(ctx, "cluster.ReplicatedBatchGet",
+		attribute.Int("key_count", len(keys)))
+	defer span.End()
+
 	if len(keys) == 0 {
 		return nil, nil
 	}
@@ -665,12 +711,17 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 }
 
 func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
+	ctx, span := tracing.StartSpan(ctx, "cluster.ReplicatedDelete",
+		attribute.String("key", key))
+	defer span.End()
+
 	aliveSet := c.snapshotAliveSet()
 	c.mu.RLock()
 	replicas := c.getReplicasForKey(key, aliveSet)
 	c.mu.RUnlock()
 
 	if len(replicas) == 0 {
+		span.SetAttributes(attribute.String("error", "no_nodes"))
 		return ErrNoNodesAvailable
 	}
 
@@ -782,6 +833,11 @@ func (c *Cluster) getReplicasForKey(key string, aliveSet map[string]bool) []stri
 	if len(healthy) >= c.replicationFactor {
 		c.ringCache.Put(key, healthy)
 		return healthy
+	}
+
+	// Sloppy quorum: using fallback nodes
+	if c.metrics != nil {
+		c.metrics.IncSloppyQuorumFallbacks()
 	}
 
 	allNodes := c.ring.GetAllNodesSorted()
@@ -1044,11 +1100,17 @@ func (c *Cluster) deliverHints() {
 
 		for _, hint := range hints {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			deliveryStart := time.Now()
 			err := client.ReplicatedPutBinary(ctx, hint.Key, hint.Value)
 			cancel()
 
 			if err == nil {
 				c.RemoveHint(hint.Key, addr)
+			} else if c.metrics != nil {
+				c.metrics.IncHintedHandoffRetries()
+			}
+			if c.metrics != nil {
+				c.metrics.RecordReplicationWriteLatency("hint_delivery", time.Since(deliveryStart))
 			}
 		}
 	}

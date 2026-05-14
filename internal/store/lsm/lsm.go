@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/DevLikhith5/kasoku/internal/metrics"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
@@ -47,6 +49,7 @@ type LSMConfig struct {
 	KeyCacheSize        int     // number of entries in key cache
 	NodeID              string  // node identifier for vector clock
 	MaxImmutable       int     // max immutable memtables in queue (prevent memory leak)
+	Metrics             *metrics.Metrics // optional metrics recorder
 }
 
 const (
@@ -162,6 +165,13 @@ func (e *LSMEngine) Put(key string, value []byte) error {
 		return storage.ErrValueTooLarge
 	}
 
+	start := time.Now()
+	defer func() {
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordLSMPut(time.Since(start))
+		}
+	}()
+
 	entry := storage.Entry{
 		Key:         key,
 		Value:       value,
@@ -210,6 +220,13 @@ func (e *LSMEngine) BatchPut(pairs []storage.Entry) error {
 	if e.closed.Load() {
 		return storage.ErrEngineClosed
 	}
+
+	start := time.Now()
+	defer func() {
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordLSMPut(time.Since(start))
+		}
+	}()
 
 	// Single WAL write for the whole batch
 	if err := e.wal.BatchAppend(pairs); err != nil {
@@ -383,20 +400,41 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 		return storage.Entry{}, storage.ErrEngineClosed
 	}
 
+	start := time.Now()
+	defer func() {
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordLSMGet("total", time.Since(start))
+		}
+	}()
+
 	// 1. Check active memtable (lock-free - memtable is concurrent-safe)
+	memStart := time.Now()
 	if entry, ok := e.active.Get(key); ok {
 		if entry.Tombstone {
 			e.cache.Put(key, storage.Entry{}, false)
+			if e.config.Metrics != nil {
+				e.config.Metrics.RecordLSMGet("memtable", time.Since(memStart))
+			}
 			return storage.Entry{}, storage.ErrKeyNotFound
 		}
 		e.cache.Put(key, entry, true)
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordLSMGet("memtable", time.Since(memStart))
+		}
 		return entry, nil
 	}
 
 	// 2. Check key cache
+	cacheStart := time.Now()
 	if item, ok := e.cache.Get(key); ok {
 		if item.found {
+			if e.config.Metrics != nil {
+				e.config.Metrics.RecordLSMGet("cache", time.Since(cacheStart))
+			}
 			return item.entry, nil
+		}
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordLSMGet("cache", time.Since(cacheStart))
 		}
 		return storage.Entry{}, storage.ErrKeyNotFound
 	}
@@ -411,9 +449,15 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 		if entry, ok := immunes[i].Get(key); ok {
 			if entry.Tombstone {
 				e.cache.Put(key, storage.Entry{}, false)
+				if e.config.Metrics != nil {
+					e.config.Metrics.RecordLSMGet("memtable", time.Since(memStart))
+				}
 				return storage.Entry{}, storage.ErrKeyNotFound
 			}
 			e.cache.Put(key, entry, true)
+			if e.config.Metrics != nil {
+				e.config.Metrics.RecordLSMGet("memtable", time.Since(memStart))
+			}
 			return entry, nil
 		}
 	}
@@ -427,6 +471,7 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 	e.mu.RUnlock()
 
 	// 5. Check SSTables (lock-free iteration)
+	sstStart := time.Now()
 	for _, level := range levelSnapshot {
 		for _, sst := range level {
 			if !sst.filter.MightContain([]byte(key)) {
@@ -438,20 +483,32 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 				continue
 			}
 			if err != nil {
+				if e.config.Metrics != nil {
+					e.config.Metrics.RecordLSMGet("sstable", time.Since(sstStart))
+				}
 				return storage.Entry{}, err
 			}
 
 			if entry.Tombstone {
 				e.cache.Put(key, storage.Entry{}, false)
+				if e.config.Metrics != nil {
+					e.config.Metrics.RecordLSMGet("sstable", time.Since(sstStart))
+				}
 				return storage.Entry{}, storage.ErrKeyNotFound
 			}
 
 			e.cache.Put(key, entry, true)
+			if e.config.Metrics != nil {
+				e.config.Metrics.RecordLSMGet("sstable", time.Since(sstStart))
+			}
 			return entry, nil
 		}
 	}
 
 	e.cache.Put(key, storage.Entry{}, false)
+	if e.config.Metrics != nil {
+		e.config.Metrics.RecordLSMGet("sstable", time.Since(sstStart))
+	}
 	return storage.Entry{}, storage.ErrKeyNotFound
 }
 
@@ -723,6 +780,13 @@ func (e *LSMEngine) compactLoop() {
 }
 
 func (e *LSMEngine) compactLevel(level int) {
+	start := time.Now()
+	defer func() {
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordLSMCompaction(strconv.Itoa(level), time.Since(start))
+		}
+	}()
+
 	e.mu.Lock()
 	if level >= len(e.levels) || len(e.levels[level]) < e.maxFilesForLevel(level) {
 		e.mu.Unlock()
@@ -835,6 +899,13 @@ func (e *LSMEngine) Flush() error {
 }
 
 func (e *LSMEngine) flushMemTable() error {
+	start := time.Now()
+	defer func() {
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordLSMFlush(time.Since(start))
+		}
+	}()
+
 	// Rotate active memtable to immutable queue first (like Put does)
 	e.mu.Lock()
 	if e.active.Len() > 0 {
@@ -966,6 +1037,13 @@ func (e *LSMEngine) Delete(key string) error {
 		return storage.ErrEngineClosed
 	}
 
+	start := time.Now()
+	defer func() {
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordLSMPut(time.Since(start))
+		}
+	}()
+
 	entry := storage.Entry{
 		Key:         key,
 		Value:       nil,
@@ -999,6 +1077,13 @@ func (e *LSMEngine) Scan(prefix string) ([]storage.Entry, error) {
 	if e.closed.Load() {
 		return nil, storage.ErrEngineClosed
 	}
+
+	start := time.Now()
+	defer func() {
+		if e.config.Metrics != nil {
+			e.config.Metrics.RecordLSMScan(time.Since(start))
+		}
+	}()
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -1212,6 +1297,18 @@ func (e *LSMEngine) countUniqueKeys() int64 {
 	}
 
 	return int64(len(entries))
+}
+
+// RecordLevelMetrics updates Prometheus gauges for SSTable counts per level
+func (e *LSMEngine) RecordLevelMetrics() {
+	if e.config.Metrics == nil {
+		return
+	}
+	e.mu.RLock()
+	for level, ssts := range e.levels {
+		e.config.Metrics.SetLSMLevelSSTables(strconv.Itoa(level), len(ssts))
+	}
+	e.mu.RUnlock()
 }
 
 func (e *LSMEngine) Close() error {

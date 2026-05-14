@@ -46,6 +46,14 @@ spec:
           value: "true"
         - name: QUORUM_SIZE
           value: "1"
+        - name: KASOKU_TRACING
+          value: "true"
+        - name: KASOKU_TRACING_EXPORTER
+          value: "otlp"
+        - name: KASOKU_OTLP_ENDPOINT
+          value: "jaeger-collector.monitoring:4317"
+        - name: KASOKU_OTLP_INSECURE
+          value: "true"
         volumeMounts:
         - name: data
           mountPath: /data
