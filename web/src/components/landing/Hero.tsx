@@ -73,13 +73,13 @@ export function Hero() {
           className="hero-stats"
         >
           <div className="hero-stat">
-            <div className="hero-stat-value">1.83M</div>
+            <div className="hero-stat-value">71.2K</div>
             <div className="hero-stat-label">Peak ops/sec</div>
           </div>
           <div className="hero-stat-divider" />
           <div className="hero-stat">
-            <div className="hero-stat-value">3.6x</div>
-            <div className="hero-stat-label">gRPC speedup</div>
+            <div className="hero-stat-value">2x</div>
+            <div className="hero-stat-label">Linear Scaling</div>
           </div>
           <div className="hero-stat-divider" />
           <div className="hero-stat">

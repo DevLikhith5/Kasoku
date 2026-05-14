@@ -137,8 +137,4 @@ site/
 *.md
 !README.md
 !docs/*.md
-docs/PAPER.md
-docs/DEPLOYMENT.md
-docs/USAGE.md
-.qwen/
 *.docx

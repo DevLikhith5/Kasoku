@@ -481,8 +481,8 @@ This is the same tradeoff as **Redis AOF "everysec"** mode — acceptable for mo
 
 | Configuration         | Time (10K writes) | Throughput     |
 |-----------------------|-------------------|----------------|
-| Sync on Write         | ~37.5 seconds     | ~267 ops/sec   |
-| Sync Every 100ms      | ~48 milliseconds  | ~208,000 ops/sec |
+| Sync on Write         | ~6.6 seconds      | ~1,500 ops/sec |
+| Sync Every 100ms      | ~280 milliseconds | ~35,500 ops/sec|
 
 > **Note:** The 780x speedup comes from batching 100+ writes into a single fsync.
 

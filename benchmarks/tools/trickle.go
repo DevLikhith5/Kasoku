@@ -21,7 +21,7 @@ func main() {
 	var getsReq uint64
 	var putsReq uint64
 
-	fmt.Println("🚀 Spawning benchmark traffic to localhost:9000 (Running endlessly...)")
+	fmt.Println("[INFO] Spawning benchmark traffic to localhost:9000 (Running endlessly...)")
 	fmt.Println("Switch to your browser dashboard to watch the 'Metrics' tab!")
 
 	for i := 0; i < 10; i++ {

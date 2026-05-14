@@ -332,20 +332,20 @@ kasoku > INFO`}</pre>
                     <tr>
                       <td><strong>Writes</strong></td>
                       <td>Single-key</td>
-                      <td>45,000 ops/sec</td>
-                      <td>9,200 ops/sec</td>
+                      <td>35,500 ops/sec</td>
+                      <td>71,200 ops/sec</td>
                     </tr>
                     <tr>
                       <td><strong>Reads</strong></td>
                       <td>Single-Key</td>
-                      <td>257,000 ops/sec</td>
-                      <td>330,000 ops/sec</td>
+                      <td>42,000 ops/sec</td>
+                      <td>76,000 ops/sec</td>
                     </tr>
                     <tr>
                       <td><strong>Batch Reads</strong></td>
                       <td>50 keys/batch</td>
-                      <td>340,000 ops/sec (peak)</td>
-                      <td>423,000 ops/sec (peak)</td>
+                      <td>110,000 ops/sec (peak)</td>
+                      <td>140,000 ops/sec (peak)</td>
                     </tr>
                     <tr>
                       <td><strong>Latency p50</strong></td>

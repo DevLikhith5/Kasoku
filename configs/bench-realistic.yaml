@@ -1,0 +1,42 @@
+# BENCHMARK CONFIG - Realistic cold-read testing
+# Small caches force reads through the full SSTable path:
+# Bloom filter → index search → disk read → decompress → decode
+data_dir: ./data/bench-realistic
+port: 9000
+http_port: 9001
+grpc_port: 9100
+log_level: warn
+
+lsm:
+    levels: 5
+    level_ratio: 10
+    l0_base_size: 67108864
+    key_cache_size: 10000          # 10K (was 1M) — only ~0.5% of 2M keys cached
+
+compaction:
+    threshold: 4
+    max_concurrent: 4
+    l0_size_threshold: 134217728
+
+memory:
+    memtable_size: 16777216        # 16MB (was 64MB) — force faster flushes to SSTables
+    max_memtable_bytes: 33554432   # 32MB
+    bloom_fp_rate: 0.01
+    block_cache_size: 16777216     # 16MB (was 128MB) — only ~8% of 200MB dataset cached
+
+wal:
+    sync: false
+    sync_interval: 1s
+    checkpoint_bytes: 67108864
+    max_file_size: 67108864
+
+cluster:
+    enabled: false
+    node_id: node-1
+    node_addr: http://localhost:9000
+    peers: []
+    replication_factor: 1
+    quorum_size: 1
+    read_quorum: 1
+    vnodes: 150
+    rpc_timeout_ms: 5000

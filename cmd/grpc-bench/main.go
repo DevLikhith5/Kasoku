@@ -4,8 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"math"
+	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,227 +14,197 @@ import (
 	grpcrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
 )
 
-var workload = flag.String("workload", "A", "YCSB workload: A (50/50), B (95/5), C (100 read), D (95/5 insert), E (scan), F (read-modify)")
+var (
+	nodes   = flag.String("nodes", "localhost:9100,localhost:9101,localhost:9102", "gRPC addresses")
+	workers = flag.Int("workers", 30, "Concurrent workers")
+	batch   = flag.Int("batch", 1, "Keys per request (default 1)")
+	seedN   = flag.Int("seed", 500000, "Keys to pre-load")
+	readPct = flag.Int("reads", 80, "Percentage of reads")
+	dur     = flag.Int("dur", 30, "Benchmark duration (seconds)")
+)
 
-func runBenchmark(name string, addrs []string, workers int, batchSize int, writeDur, readDur time.Duration) {
-	runBenchmarkWithWorkload(name, addrs, workers, batchSize, writeDur, readDur, "A")
+type collector struct {
+	mu   sync.Mutex
+	lats []float64
+	ops  int64
+	errs int64
 }
 
-func runBenchmarkWithWorkload(name string, addrs []string, workers int, batchSize int, writeDur, readDur time.Duration, workload string) {
-	pool := grpcrpc.NewPool()
-
-	var writeOps atomic.Int64
-	var readOps atomic.Int64
-	var writeErrors atomic.Int64
-	var readErrors atomic.Int64
-	
-	var writeLatencies []float64
-	var readLatencies []float64
-	var latencyMu sync.Mutex
-
-	fmt.Printf("\n=== %s gRPC ===\n", name)
-
-	fmt.Println("Warming up...")
-	var warmupWg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		warmupWg.Add(1)
-		addr := addrs[w%len(addrs)]
-		go func() {
-			defer warmupWg.Done()
-			client, _ := pool.Get(addr)
-			_ = client
-		}()
-	}
-	warmupWg.Wait()
-	time.Sleep(2 * time.Second)
-	fmt.Println("Warmup complete, starting benchmark...")
-
-	var wg sync.WaitGroup
-
-	// === WRITE PHASE ===
-	writeEndTime := time.Now().Add(writeDur)
-
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		addr := addrs[w%len(addrs)]
-		go func(workerID int, addr string) {
-			defer wg.Done()
-
-			client, err := pool.Get(addr)
-			if err != nil {
-				writeErrors.Add(1)
-				return
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			batchNum := 0
-
-			for time.Now().Before(writeEndTime) {
-				entries := make([]grpcrpc.BatchWriteEntry, batchSize)
-				for j := 0; j < batchSize; j++ {
-					entries[j] = grpcrpc.BatchWriteEntry{
-						Key:   fmt.Sprintf("bench:%s:%d:%d", name, workerID, batchNum),
-						Value: []byte("value"),
-					}
-				}
-				batchNum++
-				start := time.Now()
-				_, err := client.BatchReplicatedPut(ctx, entries)
-				latency := time.Since(start).Seconds() * 1000 // ms
-				latencyMu.Lock()
-				writeLatencies = append(writeLatencies, latency)
-				latencyMu.Unlock()
-				if err != nil {
-					writeErrors.Add(1)
-					continue
-				}
-				writeOps.Add(int64(batchSize))
-			}
-		}(w, addr)
-	}
-
-	writeStart := time.Now()
-	wg.Wait()
-	writeTime := time.Since(writeStart)
-
-	fmt.Printf("Writes: %d in %.2fs = %.0f ops/sec\n", writeOps.Load(), writeTime.Seconds(), float64(writeOps.Load())/writeTime.Seconds())
-	if writeErrors.Load() > 0 {
-		fmt.Printf("Write errors: %d\n", writeErrors.Load())
-	}
-
-	time.Sleep(200 * time.Millisecond)
-
-	// === READ PHASE ===
-	readEndTime := time.Now().Add(readDur)
-
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		addr := addrs[w%len(addrs)]
-		go func(workerID int, addr string) {
-			defer wg.Done()
-
-			client, err := pool.Get(addr)
-			if err != nil {
-				readErrors.Add(1)
-				return
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			keyBase := fmt.Sprintf("bench:%s:0:", name)
-
-			for time.Now().Before(readEndTime) {
-				keys := make([]string, batchSize)
-				for j := 0; j < batchSize; j++ {
-					keys[j] = fmt.Sprintf("%s%d", keyBase, j%10)
-				}
-				start := time.Now()
-				_, err := client.BatchReplicatedGet(ctx, keys)
-				latency := time.Since(start).Seconds() * 1000 // ms
-				latencyMu.Lock()
-				readLatencies = append(readLatencies, latency)
-				latencyMu.Unlock()
-				if err != nil {
-					readErrors.Add(1)
-					continue
-				}
-				readOps.Add(int64(batchSize))
-			}
-		}(w, addr)
-	}
-
-	readStart := time.Now()
-	wg.Wait()
-	readTime := time.Since(readStart)
-
-	fmt.Printf("Reads: %d in %.2fs = %.0f ops/sec\n", readOps.Load(), readTime.Seconds(), float64(readOps.Load())/readTime.Seconds())
-	if readErrors.Load() > 0 {
-		fmt.Printf("Read errors: %d\n", readErrors.Load())
-	}
-
-	// Print latency percentiles
-	sort.Float64s(writeLatencies)
-	sort.Float64s(readLatencies)
-	fmt.Println("\n=== Latency Percentiles ===")
-	if len(writeLatencies) > 0 {
-		fmt.Printf("Write latency (ms): p50=%.2f, p95=%.2f, p99=%.2f, max=%.2f (samples=%d)\n", 
-			percentile(writeLatencies, 50), 
-			percentile(writeLatencies, 95), 
-			percentile(writeLatencies, 99),
-			percentile(writeLatencies, 100),
-			len(writeLatencies))
+func (c *collector) add(t time.Duration, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lats = append(c.lats, float64(t.Microseconds()))
+	if ok {
+		c.ops++
 	} else {
-		fmt.Println("Write latency (ms): N/A (no writes in this workload)")
+		c.errs++
 	}
-	if len(readLatencies) > 0 {
-		fmt.Printf("Read latency (ms):  p50=%.2f, p95=%.2f, p99=%.2f, max=%.2f (samples=%d)\n", 
-			percentile(readLatencies, 50), 
-			percentile(readLatencies, 95), 
-			percentile(readLatencies, 99),
-			percentile(readLatencies, 100),
-			len(readLatencies))
-	} else {
-		fmt.Println("Read latency (ms):  N/A (no reads in this workload)")
-	}
-
-	totalTime := writeTime + readTime
-	fmt.Printf("Total: %.0f ops/sec\n", float64(writeOps.Load()+readOps.Load())/totalTime.Seconds())
-
-	pool.Close()
 }
 
-func percentile(sorted []float64, p int) float64 {
-	if len(sorted) == 0 {
-		return 0
+func (c *collector) report() (int64, int64, float64, float64, float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.lats) == 0 {
+		return 0, 0, 0, 0, 0
 	}
-	idx := int(math.Ceil(float64(len(sorted))*float64(p)/100)) - 1
-	if idx < 0 {
-		idx = 0
-	}
-	if idx >= len(sorted) {
-		idx = len(sorted) - 1
-	}
-	return sorted[idx]
+	sorted := make([]float64, len(c.lats))
+	copy(sorted, c.lats)
+	sort.Float64s(sorted)
+	n := len(sorted)
+	return c.ops, c.errs, sorted[n/2], sorted[n*95/100], sorted[n*99/100]
 }
 
 func main() {
 	flag.Parse()
-	
-	// YCSB-style workloads
-	switch *workload {
-	case "A":
-		// 50% reads, 50% writes - balanced
-		fmt.Println("=== YCSB Workload A (50% read, 50% write) ===")
-		runBenchmark("WorkloadA", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 500, 500, 10*time.Second, 10*time.Second)
-		
-case "B":
-		// 95% reads, 5% writes - read heavy
-		fmt.Println("=== YCSB Workload B (95% read, 5% write) ===")
-		runBenchmark("WorkloadB", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 500, 500, 5*time.Second, 20*time.Second)
+	addrs := strings.Split(*nodes, ",")
+	W, B, N := *workers, *batch, *seedN
+	pool := grpcrpc.NewPool()
 
-	case "C":
-		// 100% reads - read only
-		fmt.Println("=== YCSB Workload C (100% read) ===")
-		runBenchmark("WorkloadC", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 500, 500, 0, 20*time.Second)
+	fmt.Printf(`
+╔══════════════════════════════════════════════════════════════╗
+║     KASOKU - gRPC Benchmark                                  ║
+╠══════════════════════════════════════════════════════════════╣
+║  Nodes: %d  |  Workers: %d  |  Batch: %d keys/request       ║
+║  Pre-load: %d keys  |  Workload: %d%%R/%d%%W  |  Duration: %ds ║
+╚══════════════════════════════════════════════════════════════╝
+`, len(addrs), W, B, N, *readPct, 100-*readPct, *dur)
 
-	case "D":
-		// 95% reads, 5% inserts (newer keys)
-		fmt.Println("=== YCSB Workload D (95% read, 5% insert) ===")
-		runBenchmark("WorkloadD", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 500, 500, 5*time.Second, 20*time.Second)
+	fmt.Printf("\n▸ Phase 1 — Pre-loading %d keys (100-byte values)...\n", N)
+	var preloaded int64
+	var wg sync.WaitGroup
 
-	case "E":
-		// Range scans
-		fmt.Println("=== YCSB Workload E (scan) ===")
-		runBenchmark("WorkloadE", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 300, 100, 5*time.Second, 20*time.Second)
+	loadStart := time.Now()
+	for i := 0; i < W; i++ {
+		wg.Add(1)
+		go func(wid int) {
+			defer wg.Done()
+			c, _ := pool.Get(addrs[wid%len(addrs)])
+			if c == nil { return }
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
 
-	case "F":
-		// Read-modify-write
-		fmt.Println("=== YCSB Workload F (read-modify-write) ===")
-		runBenchmark("WorkloadF", []string{"localhost:9100", "localhost:9101", "localhost:9102"}, 500, 500, 10*time.Second, 10*time.Second)
-		
-	default:
-		// Default: balanced
-		runBenchmark("DEFAULT", []string{"localhost:9100"}, 700, 700, 5*time.Second, 5*time.Second)
+			for {
+				start := atomic.AddInt64(&preloaded, int64(B))
+				if start > int64(N) { break }
+				entries := make([]grpcrpc.BatchWriteEntry, B)
+				for j := 0; j < B && start+int64(j) <= int64(N); j++ {
+					entries[j] = grpcrpc.BatchWriteEntry{
+						Key:   fmt.Sprintf("prod:%d", start+int64(j)-1),
+						Value: []byte(strings.Repeat("X", 100)),
+					}
+				}
+				if len(entries) > 0 {
+					c.BatchReplicatedPut(ctx, entries)
+				}
+			}
+		}(i)
 	}
+	wg.Wait()
+	totalPre := atomic.LoadInt64(&preloaded)
+	fmt.Printf("  Loaded: %d keys in %.1fs (%.0f keys/sec)\n",
+		totalPre, time.Since(loadStart).Seconds(),
+		float64(totalPre)/time.Since(loadStart).Seconds())
+
+	fmt.Printf("\n▸ Phase 2 — Mixed Workload (%d%%R/%d%%W, %ds)\n",
+		*readPct, 100-*readPct, *dur)
+
+	wCollector := &collector{}
+	rCollector := &collector{}
+	stopCh := make(chan struct{})
+	var wg2 sync.WaitGroup
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		startT := time.Now()
+		for {
+			select {
+			case <-ticker.C:
+				elapsed := int(time.Since(startT).Seconds())
+				wo, _, w50, w95, w99 := wCollector.report()
+				ro, _, r50, r95, r99 := rCollector.report()
+				fmt.Printf("  [%3ds] W: %d (p50=%.0fµs p95=%.0fµs p99=%.0fµs)  R: %d (p50=%.0fµs p95=%.0fµs p99=%.0fµs)\n",
+					elapsed, wo, w50, w95, w99, ro, r50, r95, r99)
+			case <-stopCh:
+				return
+			}
+		}
+	}()
+
+	benchStart := time.Now()
+	for i := 0; i < W; i++ {
+		wg2.Add(1)
+		go func(wid int) {
+			defer wg2.Done()
+			c, _ := pool.Get(addrs[wid%len(addrs)])
+			if c == nil { return }
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*dur+10)*time.Second)
+			defer cancel()
+
+			rng := rand.New(rand.NewSource(int64(wid)*time.Now().UnixNano()))
+			hotSize := int64(float64(totalPre) * 0.2)
+
+			for time.Since(benchStart) < time.Duration(*dur)*time.Second {
+				if rng.Intn(100) < *readPct {
+					keys := make([]string, B)
+					for j := 0; j < B; j++ {
+						if rng.Float64() < 0.8 {
+							keys[j] = fmt.Sprintf("prod:%d", rng.Int63n(hotSize))
+						} else {
+							keys[j] = fmt.Sprintf("prod:%d", rng.Int63n(totalPre))
+						}
+					}
+					start := time.Now()
+					_, err := c.BatchReplicatedGet(ctx, keys)
+					rCollector.add(time.Since(start), err == nil)
+				} else {
+					entries := make([]grpcrpc.BatchWriteEntry, B)
+					for j := 0; j < B; j++ {
+						entries[j] = grpcrpc.BatchWriteEntry{
+							Key:   fmt.Sprintf("new:%d:%d", wid, atomic.AddInt64(&preloaded, 1)),
+							Value: []byte(strings.Repeat("Y", 100)),
+						}
+					}
+					start := time.Now()
+					_, err := c.BatchReplicatedPut(ctx, entries)
+					wCollector.add(time.Since(start), err == nil)
+				}
+			}
+		}(i)
+	}
+
+	wg2.Wait()
+	close(stopCh)
+	benchTime := time.Since(benchStart).Seconds()
+
+	wOps, wErrs, w50, w95, w99 := wCollector.report()
+	rOps, rErrs, r50, r95, r99 := rCollector.report()
+
+	wOpsSec := float64(wOps*int64(B)) / benchTime
+	rOpsSec := float64(rOps*int64(B)) / benchTime
+
+	fmt.Printf(`
+╔══════════════════════════════════════════════════════════════╗
+║                    RESULTS                                   ║
+╠══════════════════════════════════════════════════════════════╣
+║  WRITES:  %8d batches = %.0f keys/sec                    ║
+║           p50=%.1fms  p95=%.1fms  p99=%.1fms                  ║
+║                                                              ║
+║  READS:   %8d batches = %.0f keys/sec                    ║
+║           p50=%.1fms  p95=%.1fms  p99=%.1fms                  ║
+╠══════════════════════════════════════════════════════════════╣
+║  COMBINED: %.0f keys/sec (RF=3, W=1, fire-and-forget)         ║
+║  Dataset:  %.0fM keys (~%.0fMB)  |  Duration: %.1fs         ║
+╚══════════════════════════════════════════════════════════════╝
+`,
+		wOps, wOpsSec, w50/1000, w95/1000, w99/1000,
+		rOps, rOpsSec, r50/1000, r95/1000, r99/1000,
+		wOpsSec+rOpsSec,
+		float64(totalPre)/1e6, float64(totalPre)*110/1e6, benchTime)
+
+	if wErrs > 0 || rErrs > 0 {
+		fmt.Printf("  WARN: %d write errors, %d read errors\n", wErrs, rErrs)
+	}
+
+	pool.Close()
 }

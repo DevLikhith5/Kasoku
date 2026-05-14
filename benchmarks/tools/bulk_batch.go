@@ -28,7 +28,7 @@ func main() {
 		Timeout: 5 * time.Second,
 	}
 
-	fmt.Println("🚀 RUNNING KASOKU THROUGHPUT BENCHMARK")
+	fmt.Println("[INFO] RUNNING KASOKU THROUGHPUT BENCHMARK")
 	fmt.Println("Testing optimizations: Batched Replication, Async WAL, Binary RPC")
 	
 	// Benchmark Batches

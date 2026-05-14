@@ -1,6 +1,9 @@
 # Kasoku Architecture
 
-A comprehensive technical guide to Kasoku's distributed key-value store architecture.
+This document explains the internal design of Kasoku. 
+
+> [!NOTE]
+> **Visual Learner?** Check out the [UML & Sequence Diagrams](UML_DIAGRAMS.md) for 9 complete architectural flowcharts.
 
 ## Table of Contents
 
@@ -420,14 +423,7 @@ rate_limit:
 
 ## Performance
 
-### Benchmark Results (3-Node Cluster)
-
-| Protocol | Writes | Reads | Total |
-|----------|--------|-------|-------|
-| HTTP | 146K | 117K | 263K |
-| **gRPC** | 759K | 1.26M | **1.0M** |
-
-**gRPC is 3.8x faster than HTTP**
+For detailed, physically-accurate YCSB benchmark numbers (including strict durability and eventual consistency workloads), please see the main `README.md`.
 
 ### Configuration
 

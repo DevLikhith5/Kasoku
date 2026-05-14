@@ -3,15 +3,15 @@ import { useRef } from 'react'
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
 const httpClusterData = [
-  { name: 'Writes', value: 140000, fill: '#e11d5a', displayValue: '140K' },
-  { name: 'Reads', value: 30000, fill: '#f43f5e', displayValue: '30K' },
-  { name: 'Total', value: 170000, fill: '#fb7185', displayValue: '170K' },
+  { name: 'Writes', value: 1500, fill: '#e11d5a', displayValue: '1.5K' },
+  { name: 'Reads', value: 2000, fill: '#f43f5e', displayValue: '2K' },
+  { name: 'Total', value: 3500, fill: '#fb7185', displayValue: '3.5K' },
 ]
 
 const grpcClusterData = [
-  { name: 'Writes', value: 720000, fill: '#e11d5a', displayValue: '720K' },
-  { name: 'Reads', value: 1150000, fill: '#f43f5e', displayValue: '1.15M' },
-  { name: 'Total', value: 870000, fill: '#fb7185', displayValue: '870K' },
+  { name: 'Writes', value: 35500, fill: '#e11d5a', displayValue: '35.5K' },
+  { name: 'Reads', value: 42000, fill: '#f43f5e', displayValue: '42K' },
+  { name: 'Total', value: 71200, fill: '#fb7185', displayValue: '71.2K' },
 ]
 
 const MIN_BAR_HEIGHT = 4
@@ -129,7 +129,7 @@ export function Benchmarks() {
             transition={{ delay: 0.15 }}
             className="benchmark-card"
           >
-            <h3 className="benchmark-card-title">gRPC <span style={{ color: '#22c55e', fontSize: '0.7em' }}>5x faster</span></h3>
+            <h3 className="benchmark-card-title">gRPC <span style={{ color: '#22c55e', fontSize: '0.7em' }}>20x faster</span></h3>
             <div className="benchmark-chart">
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={grpcClusterData} margin={{ top: 24, right: 8, bottom: 0, left: 0 }}>
@@ -164,12 +164,12 @@ export function Benchmarks() {
           className="benchmark-highlights"
         >
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">870K</span>
+            <span className="benchmark-highlight-value">71.2K</span>
             <span className="benchmark-highlight-label">Cluster ops/sec (gRPC)</span>
           </div>
           <div className="benchmark-highlight">
-            <span className="benchmark-highlight-value">38x</span>
-            <span className="benchmark-highlight-label">Read speedup with gRPC</span>
+            <span className="benchmark-highlight-value">Linear</span>
+            <span className="benchmark-highlight-label">Cluster Scaling</span>
           </div>
           <div className="benchmark-highlight">
             <span className="benchmark-highlight-value">RF=3</span>
