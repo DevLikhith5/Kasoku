@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/DevLikhith5/kasoku/api"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
@@ -29,6 +28,8 @@ type ClusterInterface interface {
 	ReplicatedPut(ctx context.Context, key string, value []byte) error
 	ReplicatedDelete(ctx context.Context, key string) error
 	ReplicatedBatchPut(ctx context.Context, entries map[string][]byte) error
+	ReplicatedGet(ctx context.Context, key string) ([]byte, error)
+	ReplicatedBatchGet(ctx context.Context, keys []string) (map[string]storage.Entry, error)
 	IsDistributed() bool
 }
 
@@ -66,15 +67,6 @@ func (s *Server) Put(ctx context.Context, req *api.PutRequest) (*api.PutResponse
 		attribute.Int("value_size", len(req.Value)))
 	defer span.End()
 
-	start := time.Now()
-
-	if err := s.store.Put(req.Key, req.Value); err != nil {
-		span.RecordError(err)
-		span.SetAttributes(attribute.Bool("success", false))
-		s.logger.Error("gRPC put failed", "key", req.Key, "error", err, "duration_ms", time.Since(start).Milliseconds())
-		return &api.PutResponse{Success: false, Error: err.Error()}, nil
-	}
-
 	if s.cluster != nil && s.cluster.IsDistributed() {
 		replCtx, replSpan := tracing.StartSpan(ctx, "replication.put",
 			attribute.String("key", req.Key))
@@ -87,6 +79,14 @@ func (s *Server) Put(ctx context.Context, req *api.PutRequest) (*api.PutResponse
 		}
 		replSpan.SetAttributes(attribute.Bool("success", true))
 		replSpan.End()
+		span.SetAttributes(attribute.Bool("success", true))
+		return &api.PutResponse{Success: true}, nil
+	}
+
+	if err := s.store.Put(req.Key, req.Value); err != nil {
+		span.RecordError(err)
+		s.logger.Error("gRPC put failed", "key", req.Key, "error", err)
+		return &api.PutResponse{Success: false, Error: err.Error()}, nil
 	}
 
 	span.SetAttributes(attribute.Bool("success", true))
@@ -98,14 +98,30 @@ func (s *Server) Get(ctx context.Context, req *api.GetRequest) (*api.GetResponse
 		attribute.String("key", req.Key))
 	defer span.End()
 
-	entry, err := s.store.Get(req.Key)
-	if err != nil {
-		if errors.Is(err, storage.ErrKeyNotFound) {
-			span.SetAttributes(attribute.Bool("found", false))
-			return &api.GetResponse{}, nil
+	var entry storage.Entry
+	var err error
+
+	if s.cluster != nil && s.cluster.IsDistributed() {
+		value, err := s.cluster.ReplicatedGet(ctx, req.Key)
+		if err != nil {
+			if errors.Is(err, storage.ErrKeyNotFound) {
+				span.SetAttributes(attribute.Bool("found", false))
+				return &api.GetResponse{}, nil
+			}
+			span.RecordError(err)
+			return &api.GetResponse{Error: err.Error()}, nil
 		}
-		span.RecordError(err)
-		return &api.GetResponse{Error: err.Error()}, nil
+		entry = storage.Entry{Key: req.Key, Value: value}
+	} else {
+		entry, err = s.store.Get(req.Key)
+		if err != nil {
+			if errors.Is(err, storage.ErrKeyNotFound) {
+				span.SetAttributes(attribute.Bool("found", false))
+				return &api.GetResponse{}, nil
+			}
+			span.RecordError(err)
+			return &api.GetResponse{Error: err.Error()}, nil
+		}
 	}
 
 	span.SetAttributes(
@@ -129,22 +145,7 @@ func (s *Server) BatchPut(ctx context.Context, req *api.BatchPutRequest) (*api.B
 		attribute.Int("entry_count", len(req.Entries)))
 	defer span.End()
 
-	entries := make([]storage.Entry, len(req.Entries))
-	for i, e := range req.Entries {
-		entries[i] = storage.Entry{
-			Key:   e.Key,
-			Value: e.Value,
-		}
-	}
-
-	err := s.store.BatchPut(entries)
-	if err != nil {
-		span.RecordError(err)
-		s.logger.Error("gRPC batch put failed", "error", err)
-		return &api.BatchPutResponse{Count: 0, Error: err.Error()}, nil
-	}
-
-	count := len(entries)
+	count := len(req.Entries)
 
 	if s.cluster != nil && s.cluster.IsDistributed() {
 		replCtx, replSpan := tracing.StartSpan(ctx, "replication.batch",
@@ -160,6 +161,22 @@ func (s *Server) BatchPut(ctx context.Context, req *api.BatchPutRequest) (*api.B
 			return &api.BatchPutResponse{Count: int32(count), Error: err.Error()}, nil
 		}
 		replSpan.End()
+		span.SetAttributes(attribute.Int("count", count))
+		return &api.BatchPutResponse{Count: int32(count)}, nil
+	}
+
+	entries := make([]storage.Entry, len(req.Entries))
+	for i, e := range req.Entries {
+		entries[i] = storage.Entry{
+			Key:   e.Key,
+			Value: e.Value,
+		}
+	}
+
+	if err := s.store.BatchPut(entries); err != nil {
+		span.RecordError(err)
+		s.logger.Error("gRPC batch put failed", "error", err)
+		return &api.BatchPutResponse{Count: 0, Error: err.Error()}, nil
 	}
 
 	span.SetAttributes(attribute.Int("count", count))
@@ -167,14 +184,15 @@ func (s *Server) BatchPut(ctx context.Context, req *api.BatchPutRequest) (*api.B
 }
 
 func (s *Server) Delete(ctx context.Context, req *api.DeleteRequest) (*api.DeleteResponse, error) {
-	if err := s.store.Delete(req.Key); err != nil {
-		return &api.DeleteResponse{Success: false, Error: err.Error()}, nil
-	}
-
 	if s.cluster != nil && s.cluster.IsDistributed() {
 		if err := s.cluster.ReplicatedDelete(ctx, req.Key); err != nil {
 			return &api.DeleteResponse{Success: false, Error: err.Error()}, nil
 		}
+		return &api.DeleteResponse{Success: true}, nil
+	}
+
+	if err := s.store.Delete(req.Key); err != nil {
+		return &api.DeleteResponse{Success: false, Error: err.Error()}, nil
 	}
 
 	return &api.DeleteResponse{Success: true}, nil
@@ -202,6 +220,23 @@ func (s *Server) Scan(ctx context.Context, req *api.ScanRequest) (*api.ScanRespo
 
 func (s *Server) MultiGet(ctx context.Context, req *api.MultiGetRequest) (*api.MultiGetResponse, error) {
 	result := make(map[string]*api.Entry)
+
+	if s.cluster != nil && s.cluster.IsDistributed() {
+		entries, err := s.cluster.ReplicatedBatchGet(ctx, req.Keys)
+		if err != nil {
+			return &api.MultiGetResponse{Error: err.Error()}, nil
+		}
+		for key, entry := range entries {
+			result[key] = &api.Entry{
+				Key:       entry.Key,
+				Value:     entry.Value,
+				Version:   entry.Version,
+				Timestamp: entry.TimeStamp.UnixNano(),
+				Tombstone: entry.Tombstone,
+			}
+		}
+		return &api.MultiGetResponse{Entries: result}, nil
+	}
 
 	for _, key := range req.Keys {
 		entry, err := s.store.Get(key)
