@@ -1,16 +1,15 @@
-# BENCHMARK CONFIG - 3-Node Cluster - Node 1
-# YCSB-standard: small caches, durable WAL, realistic workload
+# BENCHMARK CONFIG - 3-Node Cluster - Node 1 (Strong Consistency)
+# W=2, R=2 — quorum-based strong consistency (W+R > N)
 data_dir: ./data/bench-node1
 port: 9000
 http_port: 9001
-grpc_port: 9002
+grpc_port: 9100
 log_level: warn
 
 lsm:
     levels: 5
     level_ratio: 10
     l0_base_size: 67108864
-    key_cache_size: 10000
 
 compaction:
     threshold: 4
@@ -18,30 +17,30 @@ compaction:
     l0_size_threshold: 134217728
 
 memory:
-    memtable_size: 16777216
-    max_memtable_bytes: 33554432
+    memtable_size: 67108864      # 64MB
+    max_memtable_bytes: 268435456 # 256MB
     bloom_fp_rate: 0.01
-    block_cache_size: 16777216
+    block_cache_size: 67108864   # 64MB
 
 wal:
     sync: false
-    sync_interval: 1s
+    sync_interval: 100ms
     checkpoint_bytes: 67108864
     max_file_size: 67108864
 
 cluster:
     enabled: true
-    node_id: bench-node-1
-    node_addr: http://localhost:9000
-    grpc_addr: localhost:9002
+    node_id: http://localhost:9001
+    node_addr: http://localhost:9001
+    grpc_addr: localhost:9100
     peers:
-        - http://localhost:9010
-        - http://localhost:9020
+        - http://localhost:9011
+        - http://localhost:9021
     peer_grpc:
-        - localhost:9012
-        - localhost:9022
+        - localhost:9101
+        - localhost:9102
     replication_factor: 3
-    quorum_size: 1
-    read_quorum: 1
+    quorum_size: 2        # W=2 strong consistency
+    read_quorum: 2        # R=2 strong consistency
     vnodes: 150
     rpc_timeout_ms: 5000

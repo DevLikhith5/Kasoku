@@ -35,6 +35,7 @@ type BatchReadEntry struct {
 	Value     []byte `json:"value,omitempty"`
 	Found     bool   `json:"found"`
 	Tombstone bool   `json:"tombstone,omitempty"`
+	Version   uint64 `json:"version,omitempty"`
 }
 
 // BatchReadResponse is the response from the batch replication read endpoint.

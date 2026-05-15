@@ -10,7 +10,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/keepalive"
+
 	"google.golang.org/grpc/metadata"
 )
 
@@ -34,10 +34,6 @@ func NewReplicatedClient(addr string) (*ReplicatedClient, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithReturnConnectionError(),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(1024*1024*32), grpc.MaxCallSendMsgSize(1024*1024*32)),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:    10 * time.Second,
-			Timeout: 5 * time.Second,
-		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to %s: %w", addr, err)
@@ -68,8 +64,15 @@ func injectTraceContext(ctx context.Context) context.Context {
 	return ctx
 }
 
+// replicationContext creates a context with the x-replication header set.
+// The receiving gRPC server checks this header to bypass the cluster layer
+// and write directly to local store, preventing cascading replication loops.
+func replicationContext(ctx context.Context) context.Context {
+	md := metadata.Pairs("x-replication", "true")
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
 func (c *ReplicatedClient) ReplicatedPut(ctx context.Context, key string, value []byte) error {
-	ctx = injectTraceContext(ctx)
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	_, err := c.client.Put(ctx, &api.PutRequest{
@@ -80,6 +83,20 @@ func (c *ReplicatedClient) ReplicatedPut(ctx context.Context, key string, value 
 }
 
 func (c *ReplicatedClient) ReplicatedPutBinary(ctx context.Context, key string, value []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	_, err := c.client.Put(ctx, &api.PutRequest{
+		Key:   key,
+		Value: value,
+	})
+	return err
+}
+
+// ReplicatedPutBinaryInternal is used for inter-node replication.
+// It sets x-replication metadata so the receiving node stores locally
+// without re-entering the cluster coordinator logic.
+func (c *ReplicatedClient) ReplicatedPutBinaryInternal(ctx context.Context, key string, value []byte) error {
+	ctx = replicationContext(ctx)
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	_, err := c.client.Put(ctx, &api.PutRequest{
@@ -116,6 +133,32 @@ func (c *ReplicatedClient) ReplicatedDelete(ctx context.Context, key string) err
 }
 
 func (c *ReplicatedClient) BatchReplicatedPut(ctx context.Context, entries []BatchWriteEntry) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req := &api.BatchPutRequest{
+		Entries: make([]*api.Entry, len(entries)),
+	}
+
+	for i, e := range entries {
+		req.Entries[i] = &api.Entry{
+			Key:   e.Key,
+			Value: e.Value,
+		}
+	}
+
+	resp, err := c.client.BatchPut(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+
+	return int(resp.Count), nil
+}
+
+// BatchReplicatedPutInternal is used for inter-node batch replication.
+// It sets x-replication metadata so the receiving node stores locally
+// without re-entering the cluster coordinator logic.
+func (c *ReplicatedClient) BatchReplicatedPutInternal(ctx context.Context, entries []BatchWriteEntry) (int, error) {
+	ctx = replicationContext(ctx)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req := &api.BatchPutRequest{

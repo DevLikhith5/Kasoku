@@ -89,6 +89,7 @@ func (s *Server) handleInternalBatchGet(w http.ResponseWriter, r *http.Request) 
 				Value:     entry.Value,
 				Found:     true,
 				Tombstone: entry.Tombstone,
+				Version:   entry.Version,
 			})
 		} else {
 			entries = append(entries, rpc.BatchReadEntry{

@@ -98,6 +98,7 @@ type ClusterConfig struct {
 	RPCTimeout        time.Duration
 	Logger            *slog.Logger
 	Peers             []string
+	PeerGRPCAddrs     []string // gRPC addresses for peers (parallel to Peers)
 	Members           *MemberList // for sloppy quorum - check node liveness
 	Metrics           *metrics.Metrics
 }
@@ -179,21 +180,29 @@ func New(cfg ClusterConfig) *Cluster {
 	}
 
 	// Initialize RPC clients for peers (both HTTP and gRPC)
-	for _, peer := range cfg.Peers {
+	for i, peer := range cfg.Peers {
 		c.clients[peer] = rpc.NewClient(peer)
 		peerNodeID := extractNodeID(peer)
 		c.nodeAddrMap[peerNodeID] = peer
 
+		// Determine gRPC address: use explicit PeerGRPCAddrs if available,
+		// otherwise derive from HTTP address using grpcPort
+		var grpcAddr string
+		if i < len(cfg.PeerGRPCAddrs) && cfg.PeerGRPCAddrs[i] != "" {
+			grpcAddr = cfg.PeerGRPCAddrs[i]
+		} else {
+			grpcAddr = convertToGRPCAddr(peer, grpcPort)
+		}
+
 		// Create gRPC client for this peer using pool (non-blocking)
-		grpcAddr := convertToGRPCAddr(peer, grpcPort)
-		go func(addr string) {
+		go func(p string, addr string) {
 			client, err := c.grpcPool.Get(addr)
 			if err == nil {
 				c.mu.Lock()
-				c.grpcClients[peer] = client
+				c.grpcClients[p] = client
 				c.mu.Unlock()
 			}
-		}(grpcAddr)
+		}(peer, grpcAddr)
 	}
 	// Initialize alive set snapshot
 	initialAlive := c.members.AliveSet()
@@ -282,8 +291,9 @@ func (c *Cluster) snapshotAliveSet() map[string]bool {
 	return c.members.AliveSet()
 }
 
-// ReplicatedPut writes a key-value pair to the cluster with replication
-// The coordinator pattern: this node coordinates the write to all replicas
+// ReplicatedPut writes a key-value pair to the cluster with replication.
+// Production-grade: any node can accept writes. Non-coordinators forward to the
+// coordinator, which handles quorum replication.
 func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) error {
 	ctx, span := tracing.StartSpan(ctx, "cluster.ReplicatedPut",
 		attribute.String("key", key),
@@ -301,63 +311,89 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 	}
 
 	span.SetAttributes(attribute.String("replicas", fmt.Sprintf("%v", replicas)))
-	c.logger.Debug("replicated put", "key", key, "replicas", replicas)
 
-	// Check if current node is in replica set
-	isReplica := false
-	for _, replica := range replicas {
-		if replica == c.nodeID {
-			isReplica = true
-			break
-		}
-	}
+	coordinator := replicas[0]
+	isCoordinator := coordinator == c.nodeID
 
-	// Write locally with WAL for durability
-	if isReplica {
-		localStart := time.Now()
-		if err := c.store.Put(key, value); err != nil {
-			c.logger.Error("local write failed", "key", key, "error", err)
+	span.SetAttributes(
+		attribute.String("coordinator", coordinator),
+		attribute.Bool("is_coordinator", isCoordinator),
+	)
+
+	// ── Non-coordinator path: forward to coordinator ─────────────────────────
+	if !isCoordinator {
+		if c.quorumSize <= 1 {
+			// W=1: sloppy quorum — write locally, async forward
+			localStart := time.Now()
+			_ = c.store.Put(key, value)
 			if c.metrics != nil {
 				c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
 			}
-			return fmt.Errorf("local write failed: %w", err)
+			if c.backgroundReplicator != nil {
+				c.backgroundReplicator.Enqueue(key, value, false, 0)
+			}
+			return nil
 		}
+
+		// W>1: synchronous forward to coordinator
+		c.mu.RLock()
+		grpcClient, hasGRPC := c.grpcClients[coordinator]
+		c.mu.RUnlock()
+		if !hasGRPC {
+			return fmt.Errorf("no gRPC client for coordinator %s", coordinator)
+		}
+
+		fwdStart := time.Now()
+		err := grpcClient.ReplicatedPutBinary(ctx, key, value)
+		if c.metrics != nil {
+			c.metrics.RecordReplicationWriteLatency("network", time.Since(fwdStart))
+		}
+		if err != nil {
+			span.RecordError(err)
+			return fmt.Errorf("forward to coordinator %s failed: %w", coordinator, err)
+		}
+		return nil
+	}
+
+	// ── Coordinator path ─────────────────────────────────────────────────────
+
+	// 1. Write locally
+	localStart := time.Now()
+	if err := c.store.Put(key, value); err != nil {
+		c.logger.Error("local write failed", "key", key, "error", err)
 		if c.metrics != nil {
 			c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
 		}
+		return fmt.Errorf("local write failed: %w", err)
+	}
+	if c.metrics != nil {
+		c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
 	}
 
-	// Background replication for W=1 (Dynamo-style eventual consistency)
-	// Write locally + enqueue for async peer sync - no RPC on hot path
-	if c.quorumSize <= 1 && isReplica {
+	// 2. W=1: fire-and-forget background replication
+	if c.quorumSize <= 1 {
 		if c.backgroundReplicator != nil {
 			c.backgroundReplicator.Enqueue(key, value, false, 0)
 		}
 		return nil
 	}
 
-	// Replicate to other nodes (sync path for W>1)
+	// 3. W>1: replicate to W-1 peers
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
 	defer cancel()
 
-	successCount := 0
-	if isReplica {
-		successCount = 1 // local write succeeded
-	}
-
+	successCount := 1
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	for _, replica := range replicas {
-		if replica == c.nodeID {
+	for _, replicaID := range replicas {
+		if replicaID == c.nodeID {
 			continue
 		}
-
 		wg.Add(1)
-		go func(replicaAddr string) {
+		go func(rid string) {
 			defer wg.Done()
 
-			// Check if quorum already reached before starting
 			mu.Lock()
 			if successCount >= c.quorumSize {
 				mu.Unlock()
@@ -365,47 +401,44 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 			}
 			mu.Unlock()
 
-			client, ok := c.getClient(replicaAddr)
-		if !ok {
-			c.logger.Debug("no client for replica", "replica", replicaAddr)
-			return
-		}
+			replicaStart := time.Now()
 
-		replicaStart := time.Now()
+			c.mu.RLock()
+			grpcClient, hasGRPC := c.grpcClients[rid]
+			c.mu.RUnlock()
 
-		// Try gRPC first, fall back to HTTP
-		if grpcClient, ok := c.grpcClients[replicaAddr]; ok {
-			if err := grpcClient.ReplicatedPutBinary(timeoutCtx, key, value); err == nil {
+			if hasGRPC {
+				if err := grpcClient.ReplicatedPutBinaryInternal(timeoutCtx, key, value); err == nil {
+					if c.metrics != nil {
+						c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
+					}
+					mu.Lock()
+					successCount++
+					mu.Unlock()
+					return
+				}
+			}
+
+			// Fall back to HTTP
+			client, ok := c.getClient(replicaID)
+			if !ok {
+				c.logger.Debug("no client for replica", "replica", replicaID)
+				return
+			}
+
+			if err := client.ReplicatedPutBinary(timeoutCtx, key, value); err != nil {
 				if c.metrics != nil {
 					c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
 				}
-				mu.Lock()
-				successCount++
-				mu.Unlock()
 				return
 			}
-		}
-
-// Fall back to HTTP
-		if err := client.ReplicatedPutBinary(timeoutCtx, key, value); err != nil {
-			c.logger.Debug("replication to replica failed",
-				"replica", replicaAddr,
-				"error", err,
-				"timing.replica_ms", time.Since(replicaStart).Milliseconds())
 			if c.metrics != nil {
 				c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
 			}
-			return
-		}
-
-		if c.metrics != nil {
-			c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
-		}
-
-mu.Lock()
+			mu.Lock()
 			successCount++
 			mu.Unlock()
-		}(replica)
+		}(replicaID)
 	}
 
 	quorumStart := time.Now()
@@ -417,7 +450,6 @@ mu.Lock()
 	if successCount < c.quorumSize {
 		return fmt.Errorf("%w: got %d acks, need %d", ErrQuorumNotReached, successCount, c.quorumSize)
 	}
-
 	return nil
 }
 
@@ -437,7 +469,7 @@ func (c *Cluster) asyncReplicate(replicas []string, key string, value []byte) {
 
 			// Try gRPC first
 			if grpcClient, ok := c.grpcClients[replicaAddr]; ok {
-				if err := grpcClient.ReplicatedPutBinary(bkgCtx, key, value); err == nil {
+				if err := grpcClient.ReplicatedPutBinaryInternal(bkgCtx, key, value); err == nil {
 					return
 				}
 			}
@@ -450,9 +482,9 @@ func (c *Cluster) asyncReplicate(replicas []string, key string, value []byte) {
 	}
 }
 
-// Dynamo W=1 optimized: write to local node only (fastest path)
-// For eventual consistency, write to nearest node - async replication happens in background
-// This achieves maximum throughput without waiting for quorum
+// ReplicatedBatchPut writes a batch of entries to the cluster with replication.
+// Production-grade: any node can accept writes. Non-coordinators forward to the
+// coordinator, which then replicates to W-1 replicas.
 func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]byte) error {
 	ctx, span := tracing.StartSpan(ctx, "cluster.ReplicatedBatchPut",
 		attribute.Int("entry_count", len(entries)))
@@ -462,12 +494,86 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 		return nil
 	}
 
-	entriesSlice := make([]storage.Entry, 0, len(entries))
-	for key, value := range entries {
-		entriesSlice = append(entriesSlice, storage.Entry{Key: key, Value: value})
+	// Use the first key as the representative for coordinator determination.
+	var representativeKey string
+	for k := range entries {
+		representativeKey = k
+		break
 	}
 
+	aliveSet := c.snapshotAliveSet()
+	c.mu.RLock()
+	replicas := c.getReplicasForKey(representativeKey, aliveSet)
+	c.mu.RUnlock()
+
+	if len(replicas) == 0 {
+		return ErrNoNodesAvailable
+	}
+
+	coordinator := replicas[0]
+	isCoordinator := coordinator == c.nodeID
+
+	span.SetAttributes(
+		attribute.String("coordinator", coordinator),
+		attribute.Bool("is_coordinator", isCoordinator),
+	)
+
+	// ── Non-coordinator path: forward to coordinator ─────────────────────────
+	if !isCoordinator {
+		// W=1: write locally (sloppy quorum) and fire-and-forget forward
+		if c.quorumSize <= 1 {
+			localStart := time.Now()
+			entriesSlice := make([]storage.Entry, 0, len(entries))
+			for k, v := range entries {
+				entriesSlice = append(entriesSlice, storage.Entry{Key: k, Value: v})
+			}
+			_ = c.store.BatchPut(entriesSlice) // best-effort local write
+			if c.metrics != nil {
+				c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
+			}
+			// Async forward to coordinator for eventual consistency
+			if c.backgroundReplicator != nil {
+				for k, v := range entries {
+					c.backgroundReplicator.Enqueue(k, v, false, 0)
+				}
+			}
+			return nil
+		}
+
+		// W>1: synchronous forward to coordinator
+		c.mu.RLock()
+		grpcClient, hasGRPC := c.grpcClients[coordinator]
+		c.mu.RUnlock()
+
+		if !hasGRPC {
+			return fmt.Errorf("no gRPC client for coordinator %s", coordinator)
+		}
+
+		batch := make([]grpcrpc.BatchWriteEntry, 0, len(entries))
+		for k, v := range entries {
+			batch = append(batch, grpcrpc.BatchWriteEntry{Key: k, Value: v})
+		}
+
+		fwdStart := time.Now()
+		_, err := grpcClient.BatchReplicatedPut(ctx, batch)
+		if c.metrics != nil {
+			c.metrics.RecordReplicationWriteLatency("network", time.Since(fwdStart))
+		}
+		if err != nil {
+			span.RecordError(err)
+			return fmt.Errorf("forward to coordinator %s failed: %w", coordinator, err)
+		}
+		return nil
+	}
+
+	// ── Coordinator path ─────────────────────────────────────────────────────
+
+	// 1. Write locally
 	localStart := time.Now()
+	entriesSlice := make([]storage.Entry, 0, len(entries))
+	for k, v := range entries {
+		entriesSlice = append(entriesSlice, storage.Entry{Key: k, Value: v})
+	}
 	if err := c.store.BatchPut(entriesSlice); err != nil {
 		if c.metrics != nil {
 			c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
@@ -478,119 +584,112 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 		c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
 	}
 
-	// Async batch replication to peers using gRPC batch
-	if c.backgroundReplicator != nil {
-		for key, value := range entries {
-			c.backgroundReplicator.Enqueue(key, value, false, 0)
+	// 2. W=1: fire-and-forget background replication
+	if c.quorumSize <= 1 {
+		if c.backgroundReplicator != nil {
+			for k, v := range entries {
+				c.backgroundReplicator.Enqueue(k, v, false, 0)
+			}
 		}
-	}
-
-	return nil
-}
-
-func (c *Cluster) _ReplicatedBatchPutOLD(ctx context.Context, entries map[string][]byte) error {
-	if len(entries) == 0 {
 		return nil
 	}
 
-	// Snapshot alive set BEFORE acquiring c.mu to avoid nested-lock deadlock.
-	aliveSet := c.snapshotAliveSet()
+	// 3. W>1: replicate to W-1 peers
+	timeoutCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
+	defer cancel()
 
-	// Group entries by the replicas that should receive them
-	nodeBatches := make(map[string][]rpc.BatchWriteEntry)
-
-	c.mu.RLock()
-	for key, value := range entries {
-		replicas := c.getReplicasForKey(key, aliveSet)
-		for _, replicaAddr := range replicas {
-			nodeBatches[replicaAddr] = append(nodeBatches[replicaAddr], rpc.BatchWriteEntry{
-				Key:   key,
-				Value: value,
-			})
+	successCount := 1 // local write
+	replicaIDs := make([]string, 0, len(replicas)-1)
+	for _, r := range replicas {
+		if r != c.nodeID {
+			replicaIDs = append(replicaIDs, r)
 		}
 	}
-	c.mu.RUnlock()
 
-	// Fan out batch RPCs to all involved nodes
-	errCh := make(chan error, len(nodeBatches))
-	successCh := make(chan struct{}, len(nodeBatches))
+	if len(replicaIDs) == 0 {
+		return fmt.Errorf("%w: no peers available", ErrQuorumNotReached)
+	}
 
-	for addr, batch := range nodeBatches {
-		isLocal := addr == c.nodeAddr || addr == c.nodeID
-		if isLocal {
-			// Local batch write - direct store access, no RPC
-			entries := make([]storage.Entry, len(batch))
-			for i, e := range batch {
-				entries[i] = storage.Entry{Key: e.Key, Value: e.Value}
-			}
-			if err := c.store.BatchPut(entries); err != nil {
-				errCh <- fmt.Errorf("local batch write failed: %w", err)
-			} else {
-				successCh <- struct{}{}
-			}
-			continue
-		}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
-		// Remote batch write
-		go func(nodeAddr string, b []rpc.BatchWriteEntry) {
-			client, ok := c.getClient(nodeAddr)
-			if !ok {
-				errCh <- fmt.Errorf("no client for node: %s", nodeAddr)
+	for _, rid := range replicaIDs {
+		wg.Add(1)
+		go func(replicaID string) {
+			defer wg.Done()
+
+			mu.Lock()
+			if successCount >= c.quorumSize {
+				mu.Unlock()
 				return
 			}
+			mu.Unlock()
 
-			if _, err := client.BatchReplicatedPut(ctx, b); err != nil {
-				errCh <- fmt.Errorf("remote batch write to %s failed: %w", nodeAddr, err)
-			} else {
-				successCh <- struct{}{}
+			replicaStart := time.Now()
+
+			// gRPC with x-replication header (peers store locally only)
+			c.mu.RLock()
+			grpcClient, hasGRPC := c.grpcClients[replicaID]
+			c.mu.RUnlock()
+
+			if hasGRPC {
+				batch := make([]grpcrpc.BatchWriteEntry, 0, len(entries))
+				for k, v := range entries {
+					batch = append(batch, grpcrpc.BatchWriteEntry{Key: k, Value: v})
+				}
+				if _, err := grpcClient.BatchReplicatedPutInternal(timeoutCtx, batch); err == nil {
+					if c.metrics != nil {
+						c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
+					}
+					mu.Lock()
+					successCount++
+					mu.Unlock()
+					return
+				}
 			}
-		}(addr, batch)
+
+			// HTTP fallback
+			client, ok := c.getClient(replicaID)
+			if !ok {
+				return
+			}
+			rpcEntries := make([]rpc.BatchWriteEntry, 0, len(entries))
+			for k, v := range entries {
+				rpcEntries = append(rpcEntries, rpc.BatchWriteEntry{Key: k, Value: v})
+			}
+			if _, err := client.BatchReplicatedPut(timeoutCtx, rpcEntries); err != nil {
+				return
+			}
+			if c.metrics != nil {
+				c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
+			}
+			mu.Lock()
+			successCount++
+			mu.Unlock()
+		}(rid)
 	}
 
-	// Wait for Quorum (W value)
-	acks := 0
-	possibleNodes := len(nodeBatches)
-	var lastErr error
+	wg.Wait()
 
-	for acks < c.quorumSize && acks < len(nodeBatches) {
-		select {
-		case <-successCh:
-			acks++
-		case err := <-errCh:
-			lastErr = err
-			possibleNodes--
-			if possibleNodes < c.quorumSize {
-				return fmt.Errorf("quorum write failed (not enough healthy nodes): %w", lastErr)
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	if successCount < c.quorumSize {
+		return fmt.Errorf("%w: got %d acks, need %d", ErrQuorumNotReached, successCount, c.quorumSize)
 	}
-
 	return nil
 }
 
-// ReplicatedGet reads a key from the cluster
-// Reads from the primary node (coordinator pattern)
+
+
+
+// ReplicatedGet reads a key from the cluster with R-quorum consistency.
+// R=1: read from local store (fast path — eventual consistency).
+// R>1: read from R replicas in parallel, return the value with highest version.
 func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error) {
 	ctx, span := tracing.StartSpan(ctx, "cluster.ReplicatedGet",
 		attribute.String("key", key))
 	defer span.End()
 
-	aliveSet := c.snapshotAliveSet()
-	c.mu.RLock()
-	replicas := c.getReplicasForKey(key, aliveSet)
-	c.mu.RUnlock()
-
-	if len(replicas) == 0 {
-		span.SetAttributes(attribute.String("error", "no_nodes"))
-		return nil, ErrNoNodesAvailable
-	}
-
-	primary := replicas[0]
-
-	// If this node is the primary, read locally
-	if primary == c.nodeID {
+	// Fast path: R=1, just read locally
+	if c.readQuorum <= 1 {
 		localStart := time.Now()
 		entry, err := c.store.Get(key)
 		if c.metrics != nil {
@@ -605,32 +704,112 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 		return entry.Value, nil
 	}
 
-	// Otherwise, forward to the primary with timeout
+	// R>1: read from R replicas for strong consistency
+	aliveSet := c.snapshotAliveSet()
+	c.mu.RLock()
+	replicas := c.getReplicasForKey(key, aliveSet)
+	c.mu.RUnlock()
+
+	if len(replicas) == 0 {
+		span.SetAttributes(attribute.String("error", "no_nodes"))
+		return nil, ErrNoNodesAvailable
+	}
+
+	type readResult struct {
+		value   []byte
+		version uint64
+		err     error
+	}
+
+	resCh := make(chan readResult, len(replicas))
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
 	defer cancel()
 
-	client, ok := c.getClient(primary)
-	if !ok {
-		return nil, fmt.Errorf("no client for primary node: %s", primary)
+	// Read from all replicas in parallel
+	for _, replica := range replicas {
+		go func(replicaID string) {
+			if replicaID == c.nodeID {
+				localStart := time.Now()
+				entry, err := c.store.Get(key)
+				if c.metrics != nil {
+					c.metrics.RecordReplicationReadLatency("local", time.Since(localStart))
+				}
+				if err != nil {
+					resCh <- readResult{err: err}
+					return
+				}
+				resCh <- readResult{value: entry.Value, version: entry.Version}
+				return
+			}
+
+			client, ok := c.getClient(replicaID)
+			if !ok {
+				resCh <- readResult{err: fmt.Errorf("no client for %s", replicaID)}
+				return
+			}
+
+			networkStart := time.Now()
+			value, found, err := client.ReplicatedGet(timeoutCtx, key)
+			if c.metrics != nil {
+				c.metrics.RecordReplicationReadLatency("network", time.Since(networkStart))
+			}
+			if err != nil {
+				resCh <- readResult{err: err}
+				return
+			}
+			if !found {
+				resCh <- readResult{err: storage.ErrKeyNotFound}
+				return
+			}
+			resCh <- readResult{value: value}
+		}(replica)
 	}
 
-	networkStart := time.Now()
-	value, found, err := client.ReplicatedGet(timeoutCtx, key)
-	if c.metrics != nil {
-		c.metrics.RecordReplicationReadLatency("network", time.Since(networkStart))
+	// Collect R responses
+	var bestValue []byte
+	var bestVersion uint64
+	successCount := 0
+	notFoundCount := 0
+
+	for i := 0; i < len(replicas) && successCount < c.readQuorum; i++ {
+		select {
+		case res := <-resCh:
+			if res.err != nil {
+				if errors.Is(res.err, storage.ErrKeyNotFound) {
+					notFoundCount++
+				}
+				continue
+			}
+			successCount++
+			if res.version >= bestVersion {
+				bestVersion = res.version
+				bestValue = res.value
+			}
+		case <-timeoutCtx.Done():
+			break
+		}
 	}
-	if err != nil {
-		return nil, err
+
+	if successCount >= c.readQuorum {
+		return bestValue, nil
 	}
-	if !found {
+
+	// All replicas returned not-found
+	if notFoundCount > 0 && successCount == 0 {
 		return nil, storage.ErrKeyNotFound
 	}
 
-	return value, nil
+	// Fallback: try local read
+	entry, err := c.store.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	return entry.Value, nil
 }
 
 // ReplicatedBatchGet coordinates high-throughput bulk reads from the cluster.
-// Dynamo R=1 optimized: Smart routing - local reads fast, remote reads parallelized
+// R=1: read all keys from local store (fast path — no network I/O).
+// R>1: read from R replicas per key and reconcile versions for strong consistency.
 func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[string]storage.Entry, error) {
 	ctx, span := tracing.StartSpan(ctx, "cluster.ReplicatedBatchGet",
 		attribute.Int("key_count", len(keys)))
@@ -640,10 +819,25 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 		return nil, nil
 	}
 
-	aliveSet := c.snapshotAliveSet()
-	results := make(map[string]storage.Entry, len(keys))
+	// Fast path: R=1, read everything locally (eventual consistency)
+	if c.readQuorum <= 1 {
+		localStart := time.Now()
+		results, err := c.store.MultiGet(keys)
+		if c.metrics != nil {
+			c.metrics.RecordReplicationReadLatency("local", time.Since(localStart))
+		}
+		if err != nil {
+			return nil, err
+		}
+		return results, nil
+	}
 
-	// Group keys by target nodes for parallel fetch
+	// R>1: read from up to R replicas per key for strong consistency
+	aliveSet := c.snapshotAliveSet()
+
+	// keyReplicas maps each key -> its first R replica node addresses
+	keyReplicas := make(map[string][]string, len(keys))
+	// nodeBatches maps each node -> keys it should read
 	nodeBatches := make(map[string][]string)
 	c.mu.RLock()
 	for _, k := range keys {
@@ -651,8 +845,15 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 		if len(replicas) == 0 {
 			continue
 		}
-		primary := replicas[0]
-		nodeBatches[primary] = append(nodeBatches[primary], k)
+		// Limit to first R replicas
+		r := c.readQuorum
+		if len(replicas) < r {
+			r = len(replicas)
+		}
+		keyReplicas[k] = replicas[:r]
+		for _, node := range replicas[:r] {
+			nodeBatches[node] = append(nodeBatches[node], k)
+		}
 	}
 	c.mu.RUnlock()
 
@@ -681,7 +882,11 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 				for _, k := range batchKeys {
 					if entry, ok := localResults[k]; ok {
 						res.entries = append(res.entries, rpc.BatchReadEntry{
-							Key: k, Value: entry.Value, Found: true, Tombstone: entry.Tombstone,
+							Key:       k,
+							Value:     entry.Value,
+							Found:     true,
+							Tombstone: entry.Tombstone,
+							Version:   entry.Version,
 						})
 					}
 				}
@@ -709,7 +914,17 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 		}(nodeAddr, batchKeys)
 	}
 
-	// Collect results
+	// Per-key version reconciliation
+	type keyState struct {
+		bestEntry storage.Entry
+		bestVer   uint64
+		found     bool
+	}
+	keyStates := make(map[string]*keyState, len(keys))
+	for _, k := range keys {
+		keyStates[k] = &keyState{}
+	}
+
 	quorumStart := time.Now()
 	for range nodeBatches {
 		res := <-resChan
@@ -717,16 +932,35 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 			continue
 		}
 		for _, entry := range res.entries {
-			if entry.Found {
-				results[entry.Key] = storage.Entry{
-					Key:   entry.Key,
-					Value: entry.Value,
+			if !entry.Found {
+				continue
+			}
+			ks, ok := keyStates[entry.Key]
+			if !ok {
+				continue
+			}
+			if !ks.found || entry.Version >= ks.bestVer {
+				ks.bestVer = entry.Version
+				ks.bestEntry = storage.Entry{
+					Key:       entry.Key,
+					Value:     entry.Value,
+					Tombstone: entry.Tombstone,
+					Version:   entry.Version,
 				}
+				ks.found = true
 			}
 		}
 	}
 	if c.metrics != nil {
 		c.metrics.RecordReplicationReadLatency("quorum_wait", time.Since(quorumStart))
+	}
+
+	// Build final results (only keys that were found)
+	results := make(map[string]storage.Entry, len(keys))
+	for _, k := range keys {
+		if ks := keyStates[k]; ks != nil && ks.found {
+			results[k] = ks.bestEntry
+		}
 	}
 
 	return results, nil

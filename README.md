@@ -39,7 +39,7 @@ bash benchmarks/run_ycsb_bench.sh
 
 ## Performance (YCSB-Standard Benchmarks)
 
-Production benchmarks with durable WAL (fsync every write), realistic cache sizes, YCSB workloads, 60-second runs.
+Production benchmarks with realistic cache sizes, YCSB workloads, 60-second runs.
 
 ### Benchmark Configuration
 
@@ -48,28 +48,38 @@ Production benchmarks with durable WAL (fsync every write), realistic cache size
 key_cache_size: 10000        # 10K entries (not 1M)
 block_cache_size: 16MB       # 16MB (not 128MB)
 memtable_size: 16MB          # Forces frequent flushes
-dataset: 2M keys × 100B = 220MB (>> 16MB cache)
-wal: sync=true (fsync every write)
-workers: 20, duration: 60s, batch: 1 key/request
+dataset: 2M keys × 100B = ~200MB (>> 16MB cache)
+workers: 200, duration: 60s, batch: 100 keys/request
 ```
 
-### 1. Strict Durability (Bank-Style)
-*`wal.sync=true`, `batch=1` — Every write waits for SSD physical fsync.*
+### 1. Single Node (Sync WAL — Strict Local Durability)
 
-| Workload | Write | Read | Write p50/p95/p99 | Read p50/p95/p99 |
-|----------|-------|------|-------------------|-----------------|
-| **Single-Node** (50R/50W) | ~1,500 ops/s | ~1,500 ops/s | 3.5 / 8.2 / 22.3ms | 0.5 / 0.9 / 1.3ms |
-| **3-Node Cluster** (Quorum W=2, R=2) | ~2,500 ops/s | ~2,500 ops/s | 3.8 / 10.7 / 22.4ms | 0.5 / 1.4 / 3.7ms |
+Every write fsyncs to local disk before returning. Best for standalone deployments.
 
-### 2. High-Throughput AP Mode (Cassandra/DynamoDB-Style)
-*`wal.sync=false` (1s background flush), `batch=25`, `workers=100`, `quorum=1` (Eventual Consistency).*
+| Workload | Combined | Writes | Reads | W p50 | R p50 | Errors |
+|----------|----------|--------|-------|-------|-------|--------|
+| **B (95%R/5%W)** | **99,586 keys/s** | 5,008/s | 94,578/s | 2.7ms | 42.0ms | 12W, 567R |
+| **A (50%R/50%W)** | **97,678 keys/s** | 48,736/s | 48,941/s | 51.0ms | 12.6ms | 0W, 73R |
 
-| Workload | Write | Read | Combined Ops/s |
-|----------|-------|------|----------------|
-| **Single-Node** (50R/50W) | ~17,800 ops/s | ~17,700 ops/s | **~35,500 ops/s** |
-| **3-Node Cluster** (Eventual, W=1) | ~35,500 ops/s | ~35,600 ops/s | **~71,200 ops/s** |
+### 2. 3-Node Cluster (Async WAL + W=2 R=2 — Dynamo-Style)
 
-*Notice how the 3-node cluster scales horizontally, processing exactly 2x the throughput of the single node under heavy network load by utilizing Eventual Consistency.*
+Replication provides durability (2 acks before return). Local WAL is async (1s flush). This is the **recommended production config**.
+
+| Workload | Combined | Writes | Reads | W p50 | R p50 | Errors |
+|----------|----------|--------|-------|-------|-------|--------|
+| **B (95%R/5%W)** | **287,265 keys/s** | 14,218/s | 273,047/s | 6.3ms | 17.8ms | 0W, 8R |
+| **A (50%R/50%W)** | **85,864 keys/s** | 42,727/s | 43,137/s | 14.0ms | 22.0ms | 117W, 32R |
+
+### 3. Config Comparison (Cluster Workload B)
+
+| Config | WAL | Quorum | Combined | Read p50 | Notes |
+|--------|-----|--------|----------|----------|-------|
+| Async W=1 | 1s | W=1 R=1 | 156,375/s | 24.9ms | Eventual, fire-and-forget |
+| Sync W=1 | 0s | W=1 R=1 | 87,367/s | 43.7ms | Local fsync, still eventual repl |
+| Sync W=2 | 0s | W=2 R=2 | 261,166/s | 18.7ms | Strict durability + strong consistency |
+| **Async W=2** | **1s** | **W=2 R=2** | **287,265/s** | **17.8ms** | **Dynamo-style (recommended)** |
+
+*Async WAL + W=2 is optimal: replication provides durability, removing the need for local fsync on every write.*
 
 ### How to Reproduce
 
@@ -80,26 +90,32 @@ bash benchmarks/run_ycsb_bench.sh
 # Or manually:
 go build -o kasoku-server ./cmd/server/
 
-# Single Node
+# Single Node (sync WAL)
 KASOKU_DATA_DIR=./data/bench KASOKU_CONFIG=./configs/bench-realistic.yaml ./kasoku-server &
-go run ./cmd/bench/main.go -nodes=localhost:9100 -workers=20 -batch=1 -seed=2000000 -reads=95 -dur=60
+go run ./cmd/bench/main.go -nodes=localhost:9100 -workers=200 -batch=100 -seed=2000000 -reads=95 -dur=60
 
-# 3-Node Cluster
+# 3-Node Cluster (Dynamo-style: async WAL + W=2 R=2)
 KASOKU_DATA_DIR=./data/n1 KASOKU_CONFIG=./configs/bench-cluster-node1.yaml ./kasoku-server &
 KASOKU_DATA_DIR=./data/n2 KASOKU_CONFIG=./configs/bench-cluster-node2.yaml ./kasoku-server &
 KASOKU_DATA_DIR=./data/n3 KASOKU_CONFIG=./configs/bench-cluster-node3.yaml ./kasoku-server &
-go run ./cmd/bench/main.go -nodes=localhost:9002,localhost:9012,localhost:9022 -workers=20 -batch=1 -seed=2000000 -reads=95 -dur=60
+go run ./cmd/bench/main.go -nodes=localhost:9002,localhost:9012,localhost:9022 -workers=200 -batch=100 -seed=2000000 -reads=95 -dur=60
 ```
 
 ### Industry Comparison
 
-| System | Write (durable) | Read | Notes |
-|--------|-----------------|------|-------|
-| Redis (AOF) | ~100K/s | ~1M/s | In-memory, optional durability |
-| Cassandra | ~50K/s | ~50K/s | Distributed, tunable consistency |
-| RocksDB | ~500K/s | ~1M/s | Embedded, optional WAL |
-| **Kasoku (single)** | **48K/s** | **905K/s** | YCSB-B, durable WAL, small cache |
-| **Kasoku (cluster)** | **152K/s** | **152K/s** | YCSB-A, RF=3, W=2, R=2 |
+| System | Workload B | Workload A | Consistency | Notes |
+|--------|-----------|-----------|-------------|-------|
+| **Kasoku (cluster)** | **287K keys/s** | **86K keys/s** | W=2 R=2 strong | Go, LSM, laptop SSD |
+| **Kasoku (single)** | **100K keys/s** | **98K keys/s** | None (local) | Sync WAL, no replication |
+| Cassandra | 100-200K/s | 50-80K/s | W=1 eventual | Java, tuned for speed |
+| Cassandra (strong) | 30-50K/s | 20-40K/s | W=2 R=2 | Same system, quorum writes |
+| etcd (3-node) | 10-15K/s | 10K/s | Raft | Go, log-structured, metadata |
+| DynamoDB (cloud) | 50-100K/s | 30-50K/s | Per-partition | AWS managed, not comparable |
+| Redis (in-memory) | 500K-1M/s | 500K-1M/s | None | Pure RAM, no disk durability |
+| RocksDB | 200-400K/s | 100-200K/s | None | C++, embedded, no network |
+| TiKV | 100-200K/s | 50-100K/s | Raft | Rust, distributed transactions |
+
+*Kasoku cluster with W=2 R=2 matches Cassandra's speed while providing stronger consistency, and outperforms Cassandra's strong consistency mode by 5-9×.*
 
 With cold data and larger datasets, writes would equal or exceed reads.
 

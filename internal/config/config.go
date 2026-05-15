@@ -158,6 +158,9 @@ type ClusterConfig struct {
 	// Peer nodes
 	Peers []string `yaml:"peers" env:"KASOKU_PEERS"`
 
+	// Peer gRPC addresses (parallel to Peers)
+	PeerGRPCAddrs []string `yaml:"peer_grpc" env:"KASOKU_PEER_GRPC"`
+
 	// Gossip port
 	GossipPort int `yaml:"gossip_port" env:"KASOKU_GOSSIP_PORT" default:"9002"`
 

@@ -23,6 +23,7 @@ import (
 	rpcgrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 	"flag"
 )
 
@@ -156,6 +157,7 @@ func main() {
 			RPCTimeout:        time.Duration(cfg.Cluster.RPCTimeoutMs) * time.Millisecond,
 			Logger:            logger,
 			Peers:             cfg.Cluster.Peers,
+			PeerGRPCAddrs:     cfg.Cluster.PeerGRPCAddrs,
 			Metrics:           m,
 		}
 
@@ -265,6 +267,10 @@ func main() {
 		grpc.MaxConcurrentStreams(1000),
 		grpc.ReadBufferSize(1024 * 1024),
 		grpc.WriteBufferSize(1024 * 1024),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
 	}
 	if cfg.TLS.Enabled {
 		cert, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile)

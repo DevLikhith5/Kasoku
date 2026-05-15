@@ -1,156 +1,197 @@
 #!/bin/bash
 # ============================================================================
-# Kasoku YCSB-Standard Benchmark Runner
-# Tests single-node and 3-node cluster with realistic configs
+# Kasoku YCSB-Standard Benchmark Suite
+# Runs YCSB workloads (A–F) against a 3-node cluster
+#
+# Usage:
+#   ./benchmarks/run_ycsb_bench.sh              # default (A,B,C,D,F cluster)
+#   ./benchmarks/run_ycsb_bench.sh --workload b  # single workload
+#   ./benchmarks/run_ycsb_bench.sh --single      # single-node only
+#   ./benchmarks/run_ycsb_bench.sh --all         # includes scan workload E
 # ============================================================================
-set -e
+set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
+
+# ── Colors ───────────────────────────────────────────────────────────────────
 BOLD='\033[1m'
 GREEN='\033[32m'
 CYAN='\033[36m'
 YELLOW='\033[33m'
 RED='\033[31m'
+DIM='\033[2m'
 RESET='\033[0m'
 
-SEED=2000000          # 2M keys (~200MB, exceeds 16MB cache)
-WORKERS=20
-DURATION=60           # 60 seconds per workload (YCSB minimum)
-BATCH=1               # Per-key operations for honest numbers
+# ── Configuration ────────────────────────────────────────────────────────────
+RECORD_COUNT=1000000
+FIELD_LENGTH=100
+WORKERS=50
+BATCH=1
+DURATION=30
+WORKLOADS="a,b,c,d,f"
+RUN_SINGLE=false
+RUN_CLUSTER=true
+RESULTS_DIR="$ROOT_DIR/benchmarks/results"
+
+# ── Parse Args ───────────────────────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --cluster)   RUN_SINGLE=false; RUN_CLUSTER=true; shift ;;
+        --single)    RUN_SINGLE=true; RUN_CLUSTER=false; shift ;;
+        --both)      RUN_SINGLE=true; RUN_CLUSTER=true; shift ;;
+        --workload)  WORKLOADS="$2"; shift 2 ;;
+        --workers)   WORKERS="$2"; shift 2 ;;
+        --records)   RECORD_COUNT="$2"; shift 2 ;;
+        --batch)     BATCH="$2"; shift 2 ;;
+        --dur)       DURATION="$2"; shift 2 ;;
+        --all)       WORKLOADS="a,b,c,d,e,f"; shift ;;
+        --help)
+            echo "Usage: $0 [--cluster|--single|--both] [--workload a,b,c] [--workers N] [--records N] [--batch N] [--dur N] [--all]"
+            exit 0 ;;
+        *) echo "Unknown flag: $1"; exit 1 ;;
+    esac
+done
+
+mkdir -p "$RESULTS_DIR"
 
 banner() {
     echo ""
-    echo -e "${BOLD}${YELLOW}╔══════════════════════════════════════════════════════════════╗${RESET}"
+    echo -e "${BOLD}${YELLOW}╔══════════════════════════════════════════════════════════════════╗${RESET}"
     echo -e "${BOLD}${YELLOW}║  $1${RESET}"
-    echo -e "${BOLD}${YELLOW}╚══════════════════════════════════════════════════════════════╝${RESET}"
+    echo -e "${BOLD}${YELLOW}╚══════════════════════════════════════════════════════════════════╝${RESET}"
     echo ""
 }
 
-cleanup() {
-    echo -e "${CYAN}Cleaning up...${RESET}"
-    pkill -f kasoku-server 2>/dev/null || true
-    sleep 2
-    rm -rf /tmp/kasoku-bench-*
+cleanup_all() {
+    echo -e "${DIM}Cleaning up processes...${RESET}"
+    pkill -f "kasoku-server" 2>/dev/null || true
+    sleep 1
 }
 
-# Build
-banner "BUILDING KASOKU"
+trap cleanup_all EXIT
+
+# ── Build ────────────────────────────────────────────────────────────────────
+banner "KASOKU YCSB BENCHMARK SUITE"
+
+echo -e "${CYAN}Building...${RESET}"
 go build -o kasoku-server ./cmd/server/
-echo -e "${GREEN}✓ Built kasoku-server${RESET}"
+go build -o ycsb-bench ./cmd/ycsb/
+echo -e "${GREEN}✓ Built kasoku-server + ycsb-bench${RESET}"
 
-# ============================================================================
-# PHASE 1: SINGLE NODE
-# ============================================================================
-banner "PHASE 1: SINGLE NODE BENCHMARK"
-echo -e "Config: key_cache=10K, block_cache=16MB, memtable=16MB, WAL=fsync"
-echo -e "Dataset: ${SEED} keys × 100B values = ~200MB (>> 16MB cache)"
 echo ""
+echo -e "  Record Count:  ${BOLD}${RECORD_COUNT}${RESET}"
+echo -e "  Field Length:   ${BOLD}${FIELD_LENGTH} bytes${RESET}"
+echo -e "  Workers:        ${BOLD}${WORKERS}${RESET}"
+echo -e "  Batch Size:     ${BOLD}${BATCH}${RESET}"
+echo -e "  Duration:       ${BOLD}${DURATION}s per workload${RESET}"
+echo -e "  Workloads:      ${BOLD}${WORKLOADS}${RESET}"
 
-cleanup
-mkdir -p /tmp/kasoku-bench-single
+# ── Helper: start & run one workload ─────────────────────────────────────────
+run_cluster_workload() {
+    local wl="$1"
+    
+    # Kill any leftover servers and clean data
+    pkill -f "kasoku-server" 2>/dev/null || true
+    sleep 1
+    rm -rf data/bench-node1 data/bench-node2 data/bench-node3
 
-echo -e "${CYAN}Starting single-node server...${RESET}"
-KASOKU_DATA_DIR=/tmp/kasoku-bench-single KASOKU_CONFIG=./configs/bench-realistic.yaml ./kasoku-server &
-SERVER_PID=$!
-sleep 3
+    # Start fresh 3-node cluster
+    ./kasoku-server --config configs/bench-cluster-node1.yaml &>/dev/null &
+    local PID1=$!
+    ./kasoku-server --config configs/bench-cluster-node2.yaml &>/dev/null &
+    local PID2=$!
+    ./kasoku-server --config configs/bench-cluster-node3.yaml &>/dev/null &
+    local PID3=$!
+    sleep 2
 
-# YCSB Workload B: 95% read / 5% write (most common production pattern)
-echo ""
-echo -e "${BOLD}━━━ YCSB Workload B (95% Read / 5% Write) ━━━${RESET}"
-go run ./cmd/bench/main.go \
-    -nodes=localhost:9100 \
-    -workers=$WORKERS \
-    -batch=$BATCH \
-    -seed=$SEED \
-    -reads=95 \
-    -dur=$DURATION 2>&1 | tee /tmp/kasoku-bench-single-B.log
+    # Quick health check
+    local ok=true
+    for port in 9001 9011 9021; do
+        if ! curl -s "http://localhost:$port/health" > /dev/null 2>&1; then
+            sleep 2
+            if ! curl -s "http://localhost:$port/health" > /dev/null 2>&1; then
+                echo -e "  ${RED}✗ Node :$port FAILED${RESET}"
+                ok=false
+            fi
+        fi
+    done
 
-# Kill and restart for fresh state
-kill $SERVER_PID 2>/dev/null || true
-sleep 2
-rm -rf /tmp/kasoku-bench-single
-mkdir -p /tmp/kasoku-bench-single
+    if [ "$ok" = false ]; then
+        echo -e "${RED}Cluster not healthy, skipping workload $wl${RESET}"
+        kill $PID1 $PID2 $PID3 2>/dev/null || true
+        return
+    fi
 
-KASOKU_DATA_DIR=/tmp/kasoku-bench-single KASOKU_CONFIG=./configs/bench-realistic.yaml ./kasoku-server &
-SERVER_PID=$!
-sleep 3
+    ./ycsb-bench \
+        -nodes "localhost:9100,localhost:9101,localhost:9102" \
+        -workers "$WORKERS" \
+        -batch "$BATCH" \
+        -recordcount "$RECORD_COUNT" \
+        -fieldlength "$FIELD_LENGTH" \
+        -dur "$DURATION" \
+        -workload "$wl"
 
-# YCSB Workload A: 50% read / 50% write
-echo ""
-echo -e "${BOLD}━━━ YCSB Workload A (50% Read / 50% Write) ━━━${RESET}"
-go run ./cmd/bench/main.go \
-    -nodes=localhost:9100 \
-    -workers=$WORKERS \
-    -batch=$BATCH \
-    -seed=$SEED \
-    -reads=50 \
-    -dur=$DURATION 2>&1 | tee /tmp/kasoku-bench-single-A.log
+    # Kill after workload
+    kill $PID1 $PID2 $PID3 2>/dev/null || true
+    wait $PID1 $PID2 $PID3 2>/dev/null || true
+}
 
-kill $SERVER_PID 2>/dev/null || true
-sleep 2
+run_single_workload() {
+    local wl="$1"
+    
+    pkill -f "kasoku-server" 2>/dev/null || true
+    sleep 1
+    rm -rf data/ycsb-single
+    mkdir -p data/ycsb-single
 
-# ============================================================================
-# PHASE 2: 3-NODE CLUSTER
-# ============================================================================
-banner "PHASE 2: 3-NODE CLUSTER BENCHMARK (RF=3, W=2, R=2)"
-echo -e "Config: 3 nodes × (key_cache=10K, block_cache=16MB), quorum W=2 R=2"
-echo -e "Dataset: ${SEED} keys × 100B values, replicated 3x"
-echo ""
+    KASOKU_DATA_DIR=./data/ycsb-single \
+    KASOKU_CONFIG=./configs/bench-realistic.yaml \
+    ./kasoku-server &>/dev/null &
+    local SPID=$!
+    sleep 2
 
-cleanup
-mkdir -p /tmp/kasoku-bench-node1 /tmp/kasoku-bench-node2 /tmp/kasoku-bench-node3
+    if ! curl -s "http://localhost:9001/health" > /dev/null 2>&1; then
+        sleep 2
+    fi
 
-echo -e "${CYAN}Starting 3-node cluster...${RESET}"
-KASOKU_DATA_DIR=/tmp/kasoku-bench-node1 KASOKU_CONFIG=./configs/bench-cluster-node1.yaml ./kasoku-server &
-PID1=$!
-KASOKU_DATA_DIR=/tmp/kasoku-bench-node2 KASOKU_CONFIG=./configs/bench-cluster-node2.yaml ./kasoku-server &
-PID2=$!
-KASOKU_DATA_DIR=/tmp/kasoku-bench-node3 KASOKU_CONFIG=./configs/bench-cluster-node3.yaml ./kasoku-server &
-PID3=$!
-sleep 5
-echo -e "${GREEN}✓ All 3 nodes running${RESET}"
+    ./ycsb-bench \
+        -nodes "localhost:9100" \
+        -workers "$WORKERS" \
+        -batch "$BATCH" \
+        -recordcount "$RECORD_COUNT" \
+        -fieldlength "$FIELD_LENGTH" \
+        -dur "$DURATION" \
+        -workload "$wl"
 
-# YCSB Workload B: 95/5
-echo ""
-echo -e "${BOLD}━━━ CLUSTER: YCSB Workload B (95% Read / 5% Write) ━━━${RESET}"
-go run ./cmd/bench/main.go \
-    -nodes=localhost:9002,localhost:9012,localhost:9022 \
-    -workers=$WORKERS \
-    -batch=$BATCH \
-    -seed=$SEED \
-    -reads=95 \
-    -dur=$DURATION 2>&1 | tee /tmp/kasoku-bench-cluster-B.log
+    kill $SPID 2>/dev/null || true
+    wait $SPID 2>/dev/null || true
+}
 
-# Kill and restart for fresh state
-kill $PID1 $PID2 $PID3 2>/dev/null || true
-sleep 2
-rm -rf /tmp/kasoku-bench-node1 /tmp/kasoku-bench-node2 /tmp/kasoku-bench-node3
-mkdir -p /tmp/kasoku-bench-node1 /tmp/kasoku-bench-node2 /tmp/kasoku-bench-node3
+# ── Run ──────────────────────────────────────────────────────────────────────
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+IFS=',' read -ra WL_ARRAY <<< "$WORKLOADS"
 
-KASOKU_DATA_DIR=/tmp/kasoku-bench-node1 KASOKU_CONFIG=./configs/bench-cluster-node1.yaml ./kasoku-server &
-PID1=$!
-KASOKU_DATA_DIR=/tmp/kasoku-bench-node2 KASOKU_CONFIG=./configs/bench-cluster-node2.yaml ./kasoku-server &
-PID2=$!
-KASOKU_DATA_DIR=/tmp/kasoku-bench-node3 KASOKU_CONFIG=./configs/bench-cluster-node3.yaml ./kasoku-server &
-PID3=$!
-sleep 5
+if [ "$RUN_SINGLE" = true ]; then
+    banner "SINGLE-NODE YCSB"
+    for wl in "${WL_ARRAY[@]}"; do
+        wl=$(echo "$wl" | tr -d ' ')
+        echo -e "\n${BOLD}━━━ Workload $wl ━━━${RESET}"
+        run_single_workload "$wl" 2>&1 | tee -a "$RESULTS_DIR/single_${TIMESTAMP}.txt"
+    done
+fi
 
-# YCSB Workload A: 50/50
-echo ""
-echo -e "${BOLD}━━━ CLUSTER: YCSB Workload A (50% Read / 50% Write) ━━━${RESET}"
-go run ./cmd/bench/main.go \
-    -nodes=localhost:9002,localhost:9012,localhost:9022 \
-    -workers=$WORKERS \
-    -batch=$BATCH \
-    -seed=$SEED \
-    -reads=50 \
-    -dur=$DURATION 2>&1 | tee /tmp/kasoku-bench-cluster-A.log
+if [ "$RUN_CLUSTER" = true ]; then
+    banner "3-NODE CLUSTER YCSB (RF=3, W=1, R=1)"
+    for wl in "${WL_ARRAY[@]}"; do
+        wl=$(echo "$wl" | tr -d ' ')
+        echo -e "\n${BOLD}━━━ Workload $wl ━━━${RESET}"
+        run_cluster_workload "$wl" 2>&1 | tee -a "$RESULTS_DIR/cluster_${TIMESTAMP}.txt"
+    done
+fi
 
-# Cleanup
-kill $PID1 $PID2 $PID3 2>/dev/null || true
-
+# ── Summary ──────────────────────────────────────────────────────────────────
 banner "BENCHMARK COMPLETE"
-echo -e "Results saved to /tmp/kasoku-bench-*.log"
-echo -e "Single-node Workload A: /tmp/kasoku-bench-single-A.log"
-echo -e "Single-node Workload B: /tmp/kasoku-bench-single-B.log"
-echo -e "Cluster Workload A:     /tmp/kasoku-bench-cluster-A.log"
-echo -e "Cluster Workload B:     /tmp/kasoku-bench-cluster-B.log"
+echo -e "Results saved to: ${BOLD}$RESULTS_DIR/${RESET}"
+ls -lh "$RESULTS_DIR"/*_${TIMESTAMP}* 2>/dev/null || echo "  (no files found)"

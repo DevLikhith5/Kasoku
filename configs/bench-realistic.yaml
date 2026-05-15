@@ -25,8 +25,8 @@ memory:
     block_cache_size: 16777216     # 16MB (was 128MB) — only ~8% of 200MB dataset cached
 
 wal:
-    sync: false
-    sync_interval: 1s
+    sync: true
+    sync_interval: 0s
     checkpoint_bytes: 67108864
     max_file_size: 67108864
 

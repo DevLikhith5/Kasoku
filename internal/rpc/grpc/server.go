@@ -7,12 +7,15 @@ import (
 	"net"
 	"sync"
 
+	"time"
+
 	"github.com/DevLikhith5/kasoku/api"
 	storage "github.com/DevLikhith5/kasoku/internal/store"
 	"github.com/DevLikhith5/kasoku/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
@@ -66,6 +69,17 @@ func (s *Server) Put(ctx context.Context, req *api.PutRequest) (*api.PutResponse
 		attribute.String("key", req.Key),
 		attribute.Int("value_size", len(req.Value)))
 	defer span.End()
+
+	// Check if this is an internal replication request.
+	// If so, write directly to local store to avoid cascading replication loops.
+	if isReplicationRequest(ctx) {
+		if err := s.store.Put(req.Key, req.Value); err != nil {
+			span.RecordError(err)
+			return &api.PutResponse{Success: false, Error: err.Error()}, nil
+		}
+		span.SetAttributes(attribute.Bool("success", true), attribute.Bool("replication", true))
+		return &api.PutResponse{Success: true}, nil
+	}
 
 	if s.cluster != nil && s.cluster.IsDistributed() {
 		replCtx, replSpan := tracing.StartSpan(ctx, "replication.put",
@@ -146,6 +160,21 @@ func (s *Server) BatchPut(ctx context.Context, req *api.BatchPutRequest) (*api.B
 	defer span.End()
 
 	count := len(req.Entries)
+
+	// Check if this is an internal replication request.
+	// If so, write directly to local store to avoid cascading replication loops.
+	if isReplicationRequest(ctx) {
+		entries := make([]storage.Entry, len(req.Entries))
+		for i, e := range req.Entries {
+			entries[i] = storage.Entry{Key: e.Key, Value: e.Value}
+		}
+		if err := s.store.BatchPut(entries); err != nil {
+			span.RecordError(err)
+			return &api.BatchPutResponse{Count: 0, Error: err.Error()}, nil
+		}
+		span.SetAttributes(attribute.Int("count", count), attribute.Bool("replication", true))
+		return &api.BatchPutResponse{Count: int32(count)}, nil
+	}
 
 	if s.cluster != nil && s.cluster.IsDistributed() {
 		replCtx, replSpan := tracing.StartSpan(ctx, "replication.batch",
@@ -332,7 +361,12 @@ func (s *Server) Start(port int) error {
 		return err
 	}
 
-	s.grpcServer = grpc.NewServer()
+	s.grpcServer = grpc.NewServer(
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             1 * time.Millisecond,
+			PermitWithoutStream: true,
+		}),
+	)
 	api.RegisterKasokuServiceServer(s.grpcServer, s)
 	grpc_health_v1.RegisterHealthServer(s.grpcServer, health.NewServer())
 
@@ -364,4 +398,16 @@ func GetPeerAddress(ctx context.Context) (string, bool) {
 	}
 
 	return values[0], true
+}
+
+// isReplicationRequest checks if the incoming gRPC call is an internal replication request.
+// This is used to prevent cascading replication loops: when Node A replicates to Node B,
+// Node B must NOT re-enter ReplicatedBatchPut and replicate back.
+func isReplicationRequest(ctx context.Context) bool {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return false
+	}
+	values := md.Get("x-replication")
+	return len(values) > 0 && values[0] == "true"
 }
