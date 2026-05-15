@@ -467,8 +467,15 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 		entriesSlice = append(entriesSlice, storage.Entry{Key: key, Value: value})
 	}
 
+	localStart := time.Now()
 	if err := c.store.BatchPut(entriesSlice); err != nil {
+		if c.metrics != nil {
+			c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
+		}
 		return fmt.Errorf("local batch write failed: %w", err)
+	}
+	if c.metrics != nil {
+		c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
 	}
 
 	// Async batch replication to peers using gRPC batch
@@ -661,7 +668,11 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 		isLocal := nodeAddr == c.nodeID || nodeAddr == c.nodeAddr
 		if isLocal {
 			// Local optimized path - direct store access, no RPC
+			localStart := time.Now()
 			localResults, err := c.store.MultiGet(batchKeys)
+			if c.metrics != nil {
+				c.metrics.RecordReplicationReadLatency("local", time.Since(localStart))
+			}
 			res := batchResult{}
 			if err != nil {
 				res.err = err
@@ -681,17 +692,25 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 
 		// Remote node - parallel fetch
 		go func(addr string, ks []string) {
+			networkStart := time.Now()
 			client, ok := c.getClient(addr)
 			if !ok {
+				if c.metrics != nil {
+					c.metrics.RecordReplicationReadLatency("network", time.Since(networkStart))
+				}
 				resChan <- batchResult{err: fmt.Errorf("no client for %s", addr)}
 				return
 			}
 			entries, err := client.BatchReplicatedGet(fetchCtx, ks)
+			if c.metrics != nil {
+				c.metrics.RecordReplicationReadLatency("network", time.Since(networkStart))
+			}
 			resChan <- batchResult{entries: entries, err: err}
 		}(nodeAddr, batchKeys)
 	}
 
 	// Collect results
+	quorumStart := time.Now()
 	for range nodeBatches {
 		res := <-resChan
 		if res.err != nil {
@@ -705,6 +724,9 @@ func (c *Cluster) ReplicatedBatchGet(ctx context.Context, keys []string) (map[st
 				}
 			}
 		}
+	}
+	if c.metrics != nil {
+		c.metrics.RecordReplicationReadLatency("quorum_wait", time.Since(quorumStart))
 	}
 
 	return results, nil
