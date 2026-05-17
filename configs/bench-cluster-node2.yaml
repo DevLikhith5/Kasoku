@@ -24,7 +24,7 @@ memory:
 
 wal:
     sync: false
-    sync_interval: 100ms
+    sync_interval: 1s
     checkpoint_bytes: 67108864
     max_file_size: 67108864
 

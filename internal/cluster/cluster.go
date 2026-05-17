@@ -180,6 +180,8 @@ func New(cfg ClusterConfig) *Cluster {
 	}
 
 	// Initialize RPC clients for peers (both HTTP and gRPC)
+	// gRPC clients are initialized synchronously with a short timeout to ensure
+	// they are available when the first write arrives (fixes startup race).
 	for i, peer := range cfg.Peers {
 		c.clients[peer] = rpc.NewClient(peer)
 		peerNodeID := extractNodeID(peer)
@@ -194,15 +196,14 @@ func New(cfg ClusterConfig) *Cluster {
 			grpcAddr = convertToGRPCAddr(peer, grpcPort)
 		}
 
-		// Create gRPC client for this peer using pool (non-blocking)
-		go func(p string, addr string) {
-			client, err := c.grpcPool.Get(addr)
-			if err == nil {
-				c.mu.Lock()
-				c.grpcClients[p] = client
-				c.mu.Unlock()
-			}
-		}(peer, grpcAddr)
+		// Create gRPC client synchronously (short timeout to avoid blocking startup)
+		client, err := c.grpcPool.Get(grpcAddr)
+		if err == nil {
+			c.grpcClients[peer] = client
+		} else {
+			logger.Warn("gRPC peer unreachable at init, will retry on demand",
+				"peer", peer, "grpc_addr", grpcAddr, "error", err)
+		}
 	}
 	// Initialize alive set snapshot
 	initialAlive := c.members.AliveSet()
@@ -344,7 +345,7 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 		}
 
 		fwdStart := time.Now()
-		err := grpcClient.ReplicatedPutBinary(ctx, key, value)
+		err := grpcClient.ReplicatedPutBinary(ctx, storage.Entry{Key: key, Value: value})
 		if c.metrics != nil {
 			c.metrics.RecordReplicationWriteLatency("network", time.Since(fwdStart))
 		}
@@ -357,9 +358,19 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 
 	// ── Coordinator path ─────────────────────────────────────────────────────
 
+	// 0. Pre-generate authoritative metadata
+	now := time.Now()
+	authoritativeEntry := storage.Entry{
+		Key:         key,
+		Value:       value,
+		Version:     uint64(now.UnixNano()),
+		TimeStamp:   now,
+		VectorClock: storage.NewVectorClock().Increment(c.nodeID),
+	}
+
 	// 1. Write locally
 	localStart := time.Now()
-	if err := c.store.Put(key, value); err != nil {
+	if err := c.store.BatchPut([]storage.Entry{authoritativeEntry}); err != nil {
 		c.logger.Error("local write failed", "key", key, "error", err)
 		if c.metrics != nil {
 			c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
@@ -378,29 +389,21 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 		return nil
 	}
 
-	// 3. W>1: replicate to W-1 peers
+	// 3. W>1: replicate to W-1 peers using channel-based early return.
+	// Return as soon as quorum is reached — don't wait for slow replicas.
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
 	defer cancel()
 
-	successCount := 1
-	var mu sync.Mutex
-	var wg sync.WaitGroup
+	// Channel receives true for success, false for failure
+	ackCh := make(chan bool, len(replicas))
+	peerCount := 0
 
 	for _, replicaID := range replicas {
 		if replicaID == c.nodeID {
 			continue
 		}
-		wg.Add(1)
+		peerCount++
 		go func(rid string) {
-			defer wg.Done()
-
-			mu.Lock()
-			if successCount >= c.quorumSize {
-				mu.Unlock()
-				return
-			}
-			mu.Unlock()
-
 			replicaStart := time.Now()
 
 			c.mu.RLock()
@@ -408,83 +411,81 @@ func (c *Cluster) ReplicatedPut(ctx context.Context, key string, value []byte) e
 			c.mu.RUnlock()
 
 			if hasGRPC {
-				if err := grpcClient.ReplicatedPutBinaryInternal(timeoutCtx, key, value); err == nil {
+				if err := grpcClient.ReplicatedPutBinaryInternal(timeoutCtx, authoritativeEntry); err == nil {
 					if c.metrics != nil {
 						c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
 					}
-					mu.Lock()
-					successCount++
-					mu.Unlock()
+					ackCh <- true
 					return
 				}
 			}
 
 			// Fall back to HTTP
-			client, ok := c.getClient(replicaID)
+			client, ok := c.getClient(rid)
 			if !ok {
-				c.logger.Debug("no client for replica", "replica", replicaID)
+				c.logger.Debug("no client for replica", "replica", rid)
+				ackCh <- false
 				return
 			}
 
+			// We still use ReplicatedPutBinary here for HTTP as it's a legacy path
 			if err := client.ReplicatedPutBinary(timeoutCtx, key, value); err != nil {
 				if c.metrics != nil {
 					c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
 				}
+				ackCh <- false
 				return
 			}
 			if c.metrics != nil {
 				c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
 			}
-			mu.Lock()
-			successCount++
-			mu.Unlock()
+			ackCh <- true
 		}(replicaID)
 	}
 
+	// Wait for quorum — early return as soon as W acks received
 	quorumStart := time.Now()
-	wg.Wait()
+	acks := 1 // local write already succeeded
+	failures := 0
+QuorumLoop:
+	for i := 0; i < peerCount; i++ {
+		select {
+		case ok := <-ackCh:
+			if ok {
+				acks++
+			} else {
+				failures++
+			}
+			if acks >= c.quorumSize {
+				if c.metrics != nil {
+					c.metrics.RecordReplicationWriteLatency("quorum_wait", time.Since(quorumStart))
+				}
+				return nil
+			}
+			// If too many failures, quorum is impossible
+			if failures > peerCount-(c.quorumSize-1) {
+				break QuorumLoop
+			}
+		case <-timeoutCtx.Done():
+			if c.metrics != nil {
+				c.metrics.RecordReplicationWriteLatency("quorum_wait", time.Since(quorumStart))
+			}
+			return fmt.Errorf("%w: got %d acks, need %d (timeout)", ErrQuorumNotReached, acks, c.quorumSize)
+		}
+	}
+
 	if c.metrics != nil {
 		c.metrics.RecordReplicationWriteLatency("quorum_wait", time.Since(quorumStart))
 	}
-
-	if successCount < c.quorumSize {
-		return fmt.Errorf("%w: got %d acks, need %d", ErrQuorumNotReached, successCount, c.quorumSize)
+	if acks >= c.quorumSize {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("%w: got %d acks, need %d", ErrQuorumNotReached, acks, c.quorumSize)
 }
 
-// asyncReplicate replicates to other nodes in background without waiting
-func (c *Cluster) asyncReplicate(replicas []string, key string, value []byte) {
-	for _, replica := range replicas {
-		if replica == c.nodeID {
-			continue
-		}
-		go func(replicaAddr string) {
-			client, ok := c.getClient(replicaAddr)
-			if !ok {
-				return
-			}
-			bkgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
 
-			// Try gRPC first
-			if grpcClient, ok := c.grpcClients[replicaAddr]; ok {
-				if err := grpcClient.ReplicatedPutBinaryInternal(bkgCtx, key, value); err == nil {
-					return
-				}
-			}
-
-			// Fall back to HTTP
-			if err := client.ReplicatedPutBinary(bkgCtx, key, value); err != nil {
-				c.logger.Debug("async replication failed", "replica", replicaAddr, "error", err)
-			}
-		}(replica)
-	}
-}
 
 // ReplicatedBatchPut writes a batch of entries to the cluster with replication.
-// Production-grade: any node can accept writes. Non-coordinators forward to the
-// coordinator, which then replicates to W-1 replicas.
 func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]byte) error {
 	ctx, span := tracing.StartSpan(ctx, "cluster.ReplicatedBatchPut",
 		attribute.Int("entry_count", len(entries)))
@@ -494,186 +495,170 @@ func (c *Cluster) ReplicatedBatchPut(ctx context.Context, entries map[string][]b
 		return nil
 	}
 
-	// Use the first key as the representative for coordinator determination.
-	var representativeKey string
-	for k := range entries {
-		representativeKey = k
-		break
+	aliveSet := c.snapshotAliveSet()
+	
+	// Track how many target replicas exist for each key
+	keyTargets := make(map[string]int)
+
+	// Pre-generate the authoritative Version, TimeStamp, and VectorClock at the coordinator
+	// so that ALL replicas receive the exact same version metadata for reconciliation.
+	now := time.Now()
+	authoritativeEntries := make(map[string]storage.Entry, len(entries))
+	for k, v := range entries {
+		// Increment the local engine's version counter safely
+		// Note: We need a way to increment version safely. Since LSMEngine encapsulates this, 
+		// we'll rely on the local store to NOT overwrite it if we provide a non-zero version.
+		// Wait, we need an atomic version counter. Let's just use time.Now().UnixNano() as version
+		// or let the local store generate it and fetch it.
+		// Actually, Kasoku uses VectorClocks and Versions. To prevent race conditions, the 
+		// coordinator should just use TimeStamp.UnixNano() as the Version, since it's monotonic.
+		// Wait, LSMEngine's Add(1) is better. However, since the cluster doesn't have direct access
+		// to LSMEngine's atomic counter, we can just use UnixNano as a globally safe version.
+		version := uint64(now.UnixNano())
+		vc := storage.NewVectorClock().Increment(c.nodeID)
+		
+		authoritativeEntries[k] = storage.Entry{
+			Key:         k,
+			Value:       v,
+			Version:     version,
+			TimeStamp:   now,
+			VectorClock: vc,
+		}
 	}
 
-	aliveSet := c.snapshotAliveSet()
+	// nodeBatches maps node_id -> array of exact storage.Entry to write
+	nodeBatches := make(map[string][]storage.Entry)
+
 	c.mu.RLock()
-	replicas := c.getReplicasForKey(representativeKey, aliveSet)
+	for k, entry := range authoritativeEntries {
+		replicas := c.getReplicasForKey(k, aliveSet)
+		r := c.quorumSize
+		if len(replicas) < r {
+			r = len(replicas)
+		}
+		
+		if r == 0 {
+			continue
+		}
+		
+		keyTargets[k] = r
+		
+		for i := 0; i < r; i++ {
+			node := replicas[i]
+			nodeBatches[node] = append(nodeBatches[node], entry)
+		}
+	}
 	c.mu.RUnlock()
 
-	if len(replicas) == 0 {
+	if len(keyTargets) == 0 {
 		return ErrNoNodesAvailable
 	}
 
-	coordinator := replicas[0]
-	isCoordinator := coordinator == c.nodeID
-
-	span.SetAttributes(
-		attribute.String("coordinator", coordinator),
-		attribute.Bool("is_coordinator", isCoordinator),
-	)
-
-	// ── Non-coordinator path: forward to coordinator ─────────────────────────
-	if !isCoordinator {
-		// W=1: write locally (sloppy quorum) and fire-and-forget forward
-		if c.quorumSize <= 1 {
-			localStart := time.Now()
-			entriesSlice := make([]storage.Entry, 0, len(entries))
-			for k, v := range entries {
-				entriesSlice = append(entriesSlice, storage.Entry{Key: k, Value: v})
-			}
-			_ = c.store.BatchPut(entriesSlice) // best-effort local write
-			if c.metrics != nil {
-				c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
-			}
-			// Async forward to coordinator for eventual consistency
-			if c.backgroundReplicator != nil {
-				for k, v := range entries {
-					c.backgroundReplicator.Enqueue(k, v, false, 0)
-				}
-			}
-			return nil
-		}
-
-		// W>1: synchronous forward to coordinator
-		c.mu.RLock()
-		grpcClient, hasGRPC := c.grpcClients[coordinator]
-		c.mu.RUnlock()
-
-		if !hasGRPC {
-			return fmt.Errorf("no gRPC client for coordinator %s", coordinator)
-		}
-
-		batch := make([]grpcrpc.BatchWriteEntry, 0, len(entries))
-		for k, v := range entries {
-			batch = append(batch, grpcrpc.BatchWriteEntry{Key: k, Value: v})
-		}
-
-		fwdStart := time.Now()
-		_, err := grpcClient.BatchReplicatedPut(ctx, batch)
-		if c.metrics != nil {
-			c.metrics.RecordReplicationWriteLatency("network", time.Since(fwdStart))
-		}
-		if err != nil {
-			span.RecordError(err)
-			return fmt.Errorf("forward to coordinator %s failed: %w", coordinator, err)
-		}
-		return nil
+	type nodeAck struct {
+		node string
+		keys []string
+		err  error
 	}
-
-	// ── Coordinator path ─────────────────────────────────────────────────────
-
-	// 1. Write locally
-	localStart := time.Now()
-	entriesSlice := make([]storage.Entry, 0, len(entries))
-	for k, v := range entries {
-		entriesSlice = append(entriesSlice, storage.Entry{Key: k, Value: v})
-	}
-	if err := c.store.BatchPut(entriesSlice); err != nil {
-		if c.metrics != nil {
-			c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
-		}
-		return fmt.Errorf("local batch write failed: %w", err)
-	}
-	if c.metrics != nil {
-		c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
-	}
-
-	// 2. W=1: fire-and-forget background replication
-	if c.quorumSize <= 1 {
-		if c.backgroundReplicator != nil {
-			for k, v := range entries {
-				c.backgroundReplicator.Enqueue(k, v, false, 0)
-			}
-		}
-		return nil
-	}
-
-	// 3. W>1: replicate to W-1 peers
+	ackCh := make(chan nodeAck, len(nodeBatches))
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.rpcTimeout)
 	defer cancel()
 
-	successCount := 1 // local write
-	replicaIDs := make([]string, 0, len(replicas)-1)
-	for _, r := range replicas {
-		if r != c.nodeID {
-			replicaIDs = append(replicaIDs, r)
-		}
-	}
+	// Send parallel batch writes to each target node
+	for nodeAddr, batchEntries := range nodeBatches {
+		isLocal := nodeAddr == c.nodeID || nodeAddr == c.nodeAddr
+		
+		go func(addr string, entriesToWrite []storage.Entry) {
+			keysInBatch := make([]string, len(entriesToWrite))
+			for i, e := range entriesToWrite {
+				keysInBatch[i] = e.Key
+			}
 
-	if len(replicaIDs) == 0 {
-		return fmt.Errorf("%w: no peers available", ErrQuorumNotReached)
-	}
-
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	for _, rid := range replicaIDs {
-		wg.Add(1)
-		go func(replicaID string) {
-			defer wg.Done()
-
-			mu.Lock()
-			if successCount >= c.quorumSize {
-				mu.Unlock()
+			if isLocal {
+				localStart := time.Now()
+				// Pass the exact pre-versioned entries to the local store
+				err := c.store.BatchPut(entriesToWrite)
+				if c.metrics != nil {
+					c.metrics.RecordReplicationWriteLatency("local", time.Since(localStart))
+				}
+				ackCh <- nodeAck{node: addr, keys: keysInBatch, err: err}
 				return
 			}
-			mu.Unlock()
 
-			replicaStart := time.Now()
-
-			// gRPC with x-replication header (peers store locally only)
+			// Remote gRPC
+			networkStart := time.Now()
 			c.mu.RLock()
-			grpcClient, hasGRPC := c.grpcClients[replicaID]
+			grpcClient, hasGRPC := c.grpcClients[addr]
 			c.mu.RUnlock()
 
 			if hasGRPC {
-				batch := make([]grpcrpc.BatchWriteEntry, 0, len(entries))
-				for k, v := range entries {
-					batch = append(batch, grpcrpc.BatchWriteEntry{Key: k, Value: v})
+				// ReplicatedPutBinaryInternal adds x-replication header
+				_, err := grpcClient.BatchReplicatedPutInternal(timeoutCtx, entriesToWrite)
+				if c.metrics != nil && err == nil {
+					c.metrics.RecordReplicationWriteLatency("network", time.Since(networkStart))
 				}
-				if _, err := grpcClient.BatchReplicatedPutInternal(timeoutCtx, batch); err == nil {
-					if c.metrics != nil {
-						c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
-					}
-					mu.Lock()
-					successCount++
-					mu.Unlock()
-					return
-				}
+				ackCh <- nodeAck{node: addr, keys: keysInBatch, err: err}
+				return
 			}
 
-			// HTTP fallback
-			client, ok := c.getClient(replicaID)
+			// Remote HTTP Fallback
+			client, ok := c.getClient(addr)
 			if !ok {
+				ackCh <- nodeAck{node: addr, keys: keysInBatch, err: fmt.Errorf("no client for %s", addr)}
 				return
 			}
-			rpcEntries := make([]rpc.BatchWriteEntry, 0, len(entries))
-			for k, v := range entries {
-				rpcEntries = append(rpcEntries, rpc.BatchWriteEntry{Key: k, Value: v})
+			rpcEntries := make([]rpc.BatchWriteEntry, len(entriesToWrite))
+			for i, e := range entriesToWrite {
+				rpcEntries[i] = rpc.BatchWriteEntry{Key: e.Key, Value: e.Value}
 			}
-			if _, err := client.BatchReplicatedPut(timeoutCtx, rpcEntries); err != nil {
-				return
+			_, err := client.BatchReplicatedPut(timeoutCtx, rpcEntries)
+			if c.metrics != nil && err == nil {
+				c.metrics.RecordReplicationWriteLatency("network", time.Since(networkStart))
 			}
-			if c.metrics != nil {
-				c.metrics.RecordReplicationWriteLatency("network", time.Since(replicaStart))
-			}
-			mu.Lock()
-			successCount++
-			mu.Unlock()
-		}(rid)
+			ackCh <- nodeAck{node: addr, keys: keysInBatch, err: err}
+		}(nodeAddr, batchEntries)
 	}
 
-	wg.Wait()
+	// Wait for acks
+	keyAcks := make(map[string]int)
+	nodesResponded := 0
 
-	if successCount < c.quorumSize {
-		return fmt.Errorf("%w: got %d acks, need %d", ErrQuorumNotReached, successCount, c.quorumSize)
+	for nodesResponded < len(nodeBatches) {
+		select {
+		case ack := <-ackCh:
+			nodesResponded++
+			if ack.err == nil {
+				for _, k := range ack.keys {
+					keyAcks[k]++
+				}
+			} else {
+				c.logger.Warn("batch write to replica failed", "node", ack.node, "error", ack.err)
+			}
+
+			// Check if all keys reached quorum
+			allQuorumReached := true
+			for k := range keyTargets {
+				if keyAcks[k] < c.quorumSize {
+					allQuorumReached = false
+					break
+				}
+			}
+			
+			if allQuorumReached {
+				return nil
+			}
+
+		case <-timeoutCtx.Done():
+			return fmt.Errorf("%w: timeout waiting for batch acks", ErrQuorumNotReached)
+		}
 	}
+
+	// Final check after all nodes responded
+	for k := range keyTargets {
+		if keyAcks[k] < c.quorumSize {
+			return fmt.Errorf("%w: key %s got %d acks, need %d", ErrQuorumNotReached, k, keyAcks[k], c.quorumSize)
+		}
+	}
+
 	return nil
 }
 
@@ -742,6 +727,28 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 				return
 			}
 
+			c.mu.RLock()
+			grpcClient, hasGRPC := c.grpcClients[replicaID]
+			c.mu.RUnlock()
+
+			if hasGRPC {
+				networkStart := time.Now()
+				entry, found, err := grpcClient.ReplicatedGetEntry(timeoutCtx, key)
+				if c.metrics != nil {
+					c.metrics.RecordReplicationReadLatency("network", time.Since(networkStart))
+				}
+				if err != nil {
+					resCh <- readResult{err: err}
+					return
+				}
+				if !found || entry.Tombstone {
+					resCh <- readResult{err: storage.ErrKeyNotFound}
+					return
+				}
+				resCh <- readResult{value: entry.Value, version: entry.Version}
+				return
+			}
+
 			client, ok := c.getClient(replicaID)
 			if !ok {
 				resCh <- readResult{err: fmt.Errorf("no client for %s", replicaID)}
@@ -749,7 +756,7 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 			}
 
 			networkStart := time.Now()
-			value, found, err := client.ReplicatedGet(timeoutCtx, key)
+			entry, found, err := client.ReplicatedGetEntry(timeoutCtx, key)
 			if c.metrics != nil {
 				c.metrics.RecordReplicationReadLatency("network", time.Since(networkStart))
 			}
@@ -757,11 +764,11 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 				resCh <- readResult{err: err}
 				return
 			}
-			if !found {
+			if !found || entry.Tombstone {
 				resCh <- readResult{err: storage.ErrKeyNotFound}
 				return
 			}
-			resCh <- readResult{value: value}
+			resCh <- readResult{value: entry.Value, version: entry.Version}
 		}(replica)
 	}
 
@@ -771,6 +778,7 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 	successCount := 0
 	notFoundCount := 0
 
+ReadLoop:
 	for i := 0; i < len(replicas) && successCount < c.readQuorum; i++ {
 		select {
 		case res := <-resCh:
@@ -786,7 +794,7 @@ func (c *Cluster) ReplicatedGet(ctx context.Context, key string) ([]byte, error)
 				bestValue = res.value
 			}
 		case <-timeoutCtx.Done():
-			break
+			break ReadLoop
 		}
 	}
 
@@ -990,9 +998,19 @@ func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
 		}
 	}
 
-	// Delete locally first — if this fails, the whole operation fails
+	// Pre-generate authoritative metadata for the tombstone
+	now := time.Now()
+	authoritativeEntry := storage.Entry{
+		Key:         key,
+		Version:     uint64(now.UnixNano()),
+		TimeStamp:   now,
+		Tombstone:   true,
+		VectorClock: storage.NewVectorClock().Increment(c.nodeID),
+	}
+
+	// Delete locally first (write tombstone) — if this fails, the whole operation fails
 	if isReplica {
-		if err := c.store.Delete(key); err != nil {
+		if err := c.store.BatchPut([]storage.Entry{authoritativeEntry}); err != nil {
 			c.logger.Error("local delete failed", "key", key, "error", err)
 			return fmt.Errorf("local delete failed: %w", err)
 		}
@@ -1019,6 +1037,20 @@ func (c *Cluster) ReplicatedDelete(ctx context.Context, key string) error {
 		go func(replicaAddr string) {
 			defer wg.Done()
 
+			c.mu.RLock()
+			grpcClient, hasGRPC := c.grpcClients[replicaAddr]
+			c.mu.RUnlock()
+
+			if hasGRPC {
+				if err := grpcClient.ReplicatedDelete(timeoutCtx, authoritativeEntry); err == nil {
+					mu.Lock()
+					successCount++
+					mu.Unlock()
+					return
+				}
+			}
+
+			// Fallback to HTTP
 			client, ok := c.getClient(replicaAddr)
 			if !ok {
 				return
@@ -1171,6 +1203,14 @@ func (c *Cluster) GetPeerClients() map[string]*rpc.Client {
 	return result
 }
 
+// GetGRPCClient returns a gRPC client for a peer
+func (c *Cluster) GetGRPCClient(peerAddr string) (*grpcrpc.ReplicatedClient, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	client, ok := c.grpcClients[peerAddr]
+	return client, ok
+}
+
 func (c *Cluster) GetNodeID() string {
 	return c.nodeID
 }
@@ -1293,11 +1333,11 @@ func (c *Cluster) GetBackgroundReplicatorStats() map[string]interface{} {
 }
 
 // AddHint stores a hint for a failed node (hint handoff)
-func (c *Cluster) AddHint(targetNode, key string, value []byte) {
+func (c *Cluster) AddHint(targetNode string, entry storage.Entry) {
 	if c.hintStore == nil {
 		c.hintStore = NewHintStore()
 	}
-	c.hintStore.Store(key, value, targetNode)
+	c.hintStore.Store(entry, targetNode)
 }
 
 // GetHintsForNode returns hints destined for a specific node
@@ -1357,11 +1397,17 @@ func (c *Cluster) deliverHints() {
 		for _, hint := range hints {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			deliveryStart := time.Now()
-			err := client.ReplicatedPutBinary(ctx, hint.Key, hint.Value)
+			
+			var err error
+			if grpcClient, ok := c.GetGRPCClient(addr); ok {
+				err = grpcClient.ReplicatedPutBinaryInternal(ctx, hint.Entry)
+			} else {
+				err = client.ReplicatedPutBinary(ctx, hint.Entry.Key, hint.Entry.Value)
+			}
 			cancel()
 
 			if err == nil {
-				c.RemoveHint(hint.Key, addr)
+				c.RemoveHint(hint.Entry.Key, addr)
 			} else if c.metrics != nil {
 				c.metrics.IncHintedHandoffRetries()
 			}

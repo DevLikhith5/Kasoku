@@ -15,6 +15,7 @@ import (
 	"time"
 
 	grpcrpc "github.com/DevLikhith5/kasoku/internal/rpc/grpc"
+	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -299,9 +300,9 @@ func runWorkload(id string, addrs []string, pool *grpcrpc.Pool) {
 					actual = batchSize - (start - N)
 				}
 
-				entries := make([]grpcrpc.BatchWriteEntry, actual)
+				entries := make([]storage.Entry, actual)
 				for j := 0; j < actual; j++ {
-					entries[j] = grpcrpc.BatchWriteEntry{
+					entries[j] = storage.Entry{
 						Key:   fmt.Sprintf("usertable:user%010d", base+j),
 						Value: value,
 					}
@@ -422,9 +423,9 @@ func runWorkload(id string, addrs []string, pool *grpcrpc.Pool) {
 
 				case roll < wl.ReadPct+wl.UpdatePct:
 					// UPDATE
-					entries := make([]grpcrpc.BatchWriteEntry, B)
+					entries := make([]storage.Entry, B)
 					for j := 0; j < B; j++ {
-						entries[j] = grpcrpc.BatchWriteEntry{
+						entries[j] = storage.Entry{
 							Key:   fmt.Sprintf("usertable:user%010d", keyGen()),
 							Value: value,
 						}
@@ -435,10 +436,10 @@ func runWorkload(id string, addrs []string, pool *grpcrpc.Pool) {
 
 				case roll < wl.ReadPct+wl.UpdatePct+wl.InsertPct:
 					// INSERT
-					entries := make([]grpcrpc.BatchWriteEntry, B)
+					entries := make([]storage.Entry, B)
 					for j := 0; j < B; j++ {
 						newID := atomic.AddInt64(&insertCounter, 1)
-						entries[j] = grpcrpc.BatchWriteEntry{
+						entries[j] = storage.Entry{
 							Key:   fmt.Sprintf("usertable:user%010d", newID),
 							Value: value,
 						}
@@ -470,15 +471,15 @@ func runWorkload(id string, addrs []string, pool *grpcrpc.Pool) {
 						rmwCol.Record(time.Since(start), false)
 						continue
 					}
-					entries := make([]grpcrpc.BatchWriteEntry, 0, len(results))
+					entries := make([]storage.Entry, 0, len(results))
 					for k, v := range results {
 						// modify: append marker to existing value
 						newVal := make([]byte, len(v))
 						copy(newVal, v)
-						entries = append(entries, grpcrpc.BatchWriteEntry{Key: k, Value: newVal})
+						entries = append(entries, storage.Entry{Key: k, Value: newVal})
 					}
 					if len(entries) == 0 {
-						entries = append(entries, grpcrpc.BatchWriteEntry{
+						entries = append(entries, storage.Entry{
 							Key: keys[0], Value: value,
 						})
 					}

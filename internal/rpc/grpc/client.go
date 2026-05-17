@@ -7,17 +7,13 @@ import (
 	"time"
 
 	"github.com/DevLikhith5/kasoku/api"
-	"go.opentelemetry.io/otel/propagation"
+	storage "github.com/DevLikhith5/kasoku/internal/store"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"google.golang.org/grpc/metadata"
 )
-
-type BatchWriteEntry struct {
-	Key   string
-	Value []byte
-}
 
 type ReplicatedClient struct {
 	addr   string
@@ -27,16 +23,14 @@ type ReplicatedClient struct {
 }
 
 func NewReplicatedClient(addr string) (*ReplicatedClient, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, addr,
+	// Use non-blocking dial so connections are established lazily.
+	// This prevents blocking for seconds when peers are unreachable at startup.
+	conn, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithReturnConnectionError(),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(1024*1024*32), grpc.MaxCallSendMsgSize(1024*1024*32)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to %s: %w", addr, err)
+		return nil, fmt.Errorf("failed to create client for %s: %w", addr, err)
 	}
 
 	return &ReplicatedClient{
@@ -50,19 +44,7 @@ func (c *ReplicatedClient) Close() error {
 	return c.conn.Close()
 }
 
-var propagator = propagation.NewCompositeTextMapPropagator(
-	propagation.TraceContext{},
-	propagation.Baggage{},
-)
 
-func injectTraceContext(ctx context.Context) context.Context {
-	md := propagation.MapCarrier{}
-	propagator.Inject(ctx, md)
-	if len(md) > 0 {
-		ctx = metadata.NewOutgoingContext(ctx, metadata.New(md))
-	}
-	return ctx
-}
 
 // replicationContext creates a context with the x-replication header set.
 // The receiving gRPC server checks this header to bypass the cluster layer
@@ -73,8 +55,6 @@ func replicationContext(ctx context.Context) context.Context {
 }
 
 func (c *ReplicatedClient) ReplicatedPut(ctx context.Context, key string, value []byte) error {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
 	_, err := c.client.Put(ctx, &api.PutRequest{
 		Key:   key,
 		Value: value,
@@ -82,33 +62,49 @@ func (c *ReplicatedClient) ReplicatedPut(ctx context.Context, key string, value 
 	return err
 }
 
-func (c *ReplicatedClient) ReplicatedPutBinary(ctx context.Context, key string, value []byte) error {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	_, err := c.client.Put(ctx, &api.PutRequest{
-		Key:   key,
-		Value: value,
-	})
+// ReplicatedPutBinary forwards a write to the coordinator.
+// It DOES NOT set x-replication metadata, because the receiving node
+// MUST act as the coordinator and replicate the write to its peers.
+func (c *ReplicatedClient) ReplicatedPutBinary(ctx context.Context, entry storage.Entry) error {
+	req := &api.PutRequest{
+		Key:       entry.Key,
+		Value:     entry.Value,
+		Version:   entry.Version,
+		Timestamp: entry.TimeStamp.UnixNano(),
+	}
+	if entry.VectorClock != nil {
+		req.VectorClock = make(map[string]uint32)
+		for k, v := range entry.VectorClock {
+			req.VectorClock[k] = uint32(v)
+		}
+	}
+	_, err := c.client.Put(ctx, req)
 	return err
 }
 
 // ReplicatedPutBinaryInternal is used for inter-node replication.
 // It sets x-replication metadata so the receiving node stores locally
 // without re-entering the cluster coordinator logic.
-func (c *ReplicatedClient) ReplicatedPutBinaryInternal(ctx context.Context, key string, value []byte) error {
+func (c *ReplicatedClient) ReplicatedPutBinaryInternal(ctx context.Context, entry storage.Entry) error {
 	ctx = replicationContext(ctx)
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	_, err := c.client.Put(ctx, &api.PutRequest{
-		Key:   key,
-		Value: value,
-	})
+	req := &api.PutRequest{
+		Key:       entry.Key,
+		Value:     entry.Value,
+		Version:   entry.Version,
+		Timestamp: entry.TimeStamp.UnixNano(),
+	}
+	if entry.VectorClock != nil {
+		req.VectorClock = make(map[string]uint32)
+		for k, v := range entry.VectorClock {
+			req.VectorClock[k] = uint32(v)
+		}
+	}
+	_, err := c.client.Put(ctx, req)
 	return err
 }
 
 func (c *ReplicatedClient) ReplicatedGet(ctx context.Context, key string) ([]byte, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
+	ctx = replicationContext(ctx)
 	resp, err := c.client.Get(ctx, &api.GetRequest{Key: key})
 	if err != nil {
 		return nil, false, err
@@ -125,24 +121,64 @@ func (c *ReplicatedClient) ReplicatedGet(ctx context.Context, key string) ([]byt
 	return resp.Entry.Value, true, nil
 }
 
-func (c *ReplicatedClient) ReplicatedDelete(ctx context.Context, key string) error {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	_, err := c.client.Delete(ctx, &api.DeleteRequest{Key: key})
+func (c *ReplicatedClient) ReplicatedGetEntry(ctx context.Context, key string) (storage.Entry, bool, error) {
+	ctx = replicationContext(ctx)
+	resp, err := c.client.Get(ctx, &api.GetRequest{Key: key})
+	if err != nil {
+		return storage.Entry{}, false, err
+	}
+
+	if resp.Entry == nil {
+		return storage.Entry{}, false, nil
+	}
+
+	entry := storage.Entry{
+		Key:       resp.Entry.Key,
+		Value:     resp.Entry.Value,
+		Version:   resp.Entry.Version,
+		Tombstone: resp.Entry.Tombstone,
+		TimeStamp: time.Unix(0, resp.Entry.Timestamp),
+	}
+	return entry, true, nil
+}
+
+func (c *ReplicatedClient) ReplicatedDelete(ctx context.Context, entry storage.Entry) error {
+	ctx = replicationContext(ctx)
+	req := &api.DeleteRequest{
+		Key:       entry.Key,
+		Version:   entry.Version,
+		Timestamp: entry.TimeStamp.UnixNano(),
+	}
+	if entry.VectorClock != nil {
+		req.VectorClock = make(map[string]uint32)
+		for k, v := range entry.VectorClock {
+			req.VectorClock[k] = uint32(v)
+		}
+	}
+	_, err := c.client.Delete(ctx, req)
 	return err
 }
 
-func (c *ReplicatedClient) BatchReplicatedPut(ctx context.Context, entries []BatchWriteEntry) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
+// BatchReplicatedPut forwards a batch write to the coordinator.
+// It DOES NOT set x-replication metadata.
+func (c *ReplicatedClient) BatchReplicatedPut(ctx context.Context, entries []storage.Entry) (int, error) {
 	req := &api.BatchPutRequest{
 		Entries: make([]*api.Entry, len(entries)),
 	}
 
 	for i, e := range entries {
 		req.Entries[i] = &api.Entry{
-			Key:   e.Key,
-			Value: e.Value,
+			Key:       e.Key,
+			Value:     e.Value,
+			Version:   e.Version,
+			Timestamp: e.TimeStamp.UnixNano(),
+			Tombstone: e.Tombstone,
+		}
+		if e.VectorClock != nil {
+			req.Entries[i].VectorClock = make(map[string]uint32)
+			for k, v := range e.VectorClock {
+				req.Entries[i].VectorClock[k] = uint32(v)
+			}
 		}
 	}
 
@@ -157,18 +193,25 @@ func (c *ReplicatedClient) BatchReplicatedPut(ctx context.Context, entries []Bat
 // BatchReplicatedPutInternal is used for inter-node batch replication.
 // It sets x-replication metadata so the receiving node stores locally
 // without re-entering the cluster coordinator logic.
-func (c *ReplicatedClient) BatchReplicatedPutInternal(ctx context.Context, entries []BatchWriteEntry) (int, error) {
+func (c *ReplicatedClient) BatchReplicatedPutInternal(ctx context.Context, entries []storage.Entry) (int, error) {
 	ctx = replicationContext(ctx)
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	req := &api.BatchPutRequest{
 		Entries: make([]*api.Entry, len(entries)),
 	}
 
 	for i, e := range entries {
 		req.Entries[i] = &api.Entry{
-			Key:   e.Key,
-			Value: e.Value,
+			Key:       e.Key,
+			Value:     e.Value,
+			Version:   e.Version,
+			Timestamp: e.TimeStamp.UnixNano(),
+			Tombstone: e.Tombstone,
+		}
+		if e.VectorClock != nil {
+			req.Entries[i].VectorClock = make(map[string]uint32)
+			for k, v := range e.VectorClock {
+				req.Entries[i].VectorClock[k] = uint32(v)
+			}
 		}
 	}
 
@@ -181,8 +224,6 @@ func (c *ReplicatedClient) BatchReplicatedPutInternal(ctx context.Context, entri
 }
 
 func (c *ReplicatedClient) BatchReplicatedGet(ctx context.Context, keys []string) (map[string][]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 	resp, err := c.client.MultiGet(ctx, &api.MultiGetRequest{Keys: keys})
 	if err != nil {
 		return nil, err
@@ -225,7 +266,7 @@ func NewPool() *Pool {
 	return &Pool{
 		clients:  make(map[string][]*ReplicatedClient),
 		idx:      make(map[string]int),
-		minConns: 32,
+		minConns: 4,
 		maxConns: 128,
 	}
 }

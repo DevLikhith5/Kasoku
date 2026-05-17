@@ -228,6 +228,20 @@ func (e *LSMEngine) BatchPut(pairs []storage.Entry) error {
 		}
 	}()
 
+	// Initialize entry metadata before writing
+	now := time.Now()
+	for i := range pairs {
+		if pairs[i].Version == 0 {
+			pairs[i].Version = e.version.Add(1)
+		}
+		if pairs[i].TimeStamp.IsZero() {
+			pairs[i].TimeStamp = now
+		}
+		if pairs[i].VectorClock == nil {
+			pairs[i].VectorClock = storage.NewVectorClock().Increment(e.nodeID)
+		}
+	}
+
 	// Single WAL write for the whole batch
 	if err := e.wal.BatchAppend(pairs); err != nil {
 		return err
@@ -368,6 +382,20 @@ func (e *LSMEngine) BatchPutAsync(pairs []storage.Entry) error {
 		return storage.ErrEngineClosed
 	}
 
+	// Initialize entry metadata
+	now := time.Now()
+	for i := range pairs {
+		if pairs[i].Version == 0 {
+			pairs[i].Version = e.version.Add(1)
+		}
+		if pairs[i].TimeStamp.IsZero() {
+			pairs[i].TimeStamp = now
+		}
+		if pairs[i].VectorClock == nil {
+			pairs[i].VectorClock = storage.NewVectorClock().Increment(e.nodeID)
+		}
+	}
+
 	e.mu.Lock()
 	for _, entry := range pairs {
 		if e.active.IsFull() {
@@ -465,9 +493,7 @@ func (e *LSMEngine) Get(key string) (storage.Entry, error) {
 	// 4. Take brief snapshot of levels for SSTable iteration
 	e.mu.RLock()
 	levelSnapshot := make([][]*SSTableReader, len(e.levels))
-	for i, level := range e.levels {
-		levelSnapshot[i] = level
-	}
+	copy(levelSnapshot, e.levels)
 	e.mu.RUnlock()
 
 	// 5. Check SSTables (lock-free iteration)
@@ -563,9 +589,7 @@ func (e *LSMEngine) MultiGet(keys []string) (map[string]storage.Entry, error) {
 	// 3. Take brief snapshot of levels for SSTable iteration
 	e.mu.RLock()
 	levelSnapshot := make([][]*SSTableReader, len(e.levels))
-	for i, level := range e.levels {
-		levelSnapshot[i] = level
-	}
+	copy(levelSnapshot, e.levels)
 	e.mu.RUnlock()
 
 	// 4. Check SSTables level by level (lock-free iteration)

@@ -4,11 +4,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	storage "github.com/DevLikhith5/kasoku/internal/store"
 )
 
 type Hint struct {
-	Key        string
-	Value      []byte
+	Entry      storage.Entry
 	TargetNode string
 	CreatedAt  time.Time
 	Attempts   atomic.Int32
@@ -38,7 +39,7 @@ func NewHintStoreWithMax(maxHints int) *HintStore {
 	}
 }
 
-func (hs *HintStore) Store(key string, value []byte, targetNode string) error {
+func (hs *HintStore) Store(entry storage.Entry, targetNode string) error {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
 
@@ -57,8 +58,7 @@ func (hs *HintStore) Store(key string, value []byte, targetNode string) error {
 	}
 
 	hs.hints = append(hs.hints, &Hint{
-		Key:        key,
-		Value:      value,
+		Entry:      entry,
 		TargetNode: targetNode,
 		CreatedAt:  time.Now(),
 	})
@@ -90,7 +90,7 @@ func (hs *HintStore) RemoveHint(key string, targetNode string) {
 
 	newHints := make([]*Hint, 0, len(hs.hints))
 	for _, h := range hs.hints {
-		if h.Key == key && h.TargetNode == targetNode {
+		if h.Entry.Key == key && h.TargetNode == targetNode {
 			continue
 		}
 		newHints = append(newHints, h)
@@ -98,7 +98,7 @@ func (hs *HintStore) RemoveHint(key string, targetNode string) {
 	hs.hints = newHints
 }
 
-func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, value []byte) error) {
+func (hs *HintStore) RetryFailed(deliver func(targetNode string, entry storage.Entry) error) {
 	hs.mu.Lock()
 	hints := make([]*Hint, len(hs.hints))
 	copy(hints, hs.hints)
@@ -131,7 +131,7 @@ func (hs *HintStore) RetryFailed(deliver func(targetNode string, key string, val
 			continue
 		}
 
-		err := deliver(h.TargetNode, h.Key, h.Value)
+		err := deliver(h.TargetNode, h.Entry)
 		if err == nil {
 			delivered[h] = true
 			toRemove = append(toRemove, h)

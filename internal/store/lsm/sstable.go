@@ -90,7 +90,7 @@ func encodeEntryBinary(entry storage.Entry) []byte {
 	// Calculate VectorClock size
 	vcLen := 0
 	var vcData []byte
-	if entry.VectorClock != nil && len(entry.VectorClock) > 0 {
+	if len(entry.VectorClock) > 0 {
 		vcData = encodeVectorClock(entry.VectorClock)
 		vcLen = len(vcData)
 	}
@@ -155,7 +155,7 @@ func encodeEntryBinary(entry storage.Entry) []byte {
 }
 
 func encodeVectorClock(vc storage.VectorClock) []byte {
-	if vc == nil || len(vc) == 0 {
+	if len(vc) == 0 {
 		return nil
 	}
 

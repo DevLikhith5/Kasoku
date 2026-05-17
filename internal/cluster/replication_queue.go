@@ -600,7 +600,11 @@ func (ae *MerkleAntiEntropy) exchangeDifferences(ctx context.Context, peerAddr s
 		}
 
 		putCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		client.ReplicatedPutBinary(putCtx, key, entry.Value)
+		if grpcClient, ok := ae.cluster.GetGRPCClient(peerAddr); ok {
+			grpcClient.ReplicatedPutBinaryInternal(putCtx, entry)
+		} else {
+			client.ReplicatedPutBinary(putCtx, key, entry.Value)
+		}
 		cancel()
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"sync"
 
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/DevLikhith5/kasoku/internal/tracing"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -44,9 +42,6 @@ type Server struct {
 	logger  Logger
 	cluster ClusterInterface
 
-	clients   map[string]api.KasokuServiceClient
-	clientsMu sync.RWMutex
-
 	grpcServer *grpc.Server
 }
 
@@ -56,7 +51,6 @@ func NewServer(store storage.StorageEngine, nodeID, addr string, logger Logger) 
 		nodeID:  nodeID,
 		addr:    addr,
 		logger:  logger,
-		clients: make(map[string]api.KasokuServiceClient),
 	}
 }
 
@@ -73,7 +67,26 @@ func (s *Server) Put(ctx context.Context, req *api.PutRequest) (*api.PutResponse
 	// Check if this is an internal replication request.
 	// If so, write directly to local store to avoid cascading replication loops.
 	if isReplicationRequest(ctx) {
-		if err := s.store.Put(req.Key, req.Value); err != nil {
+		var ts time.Time
+		if req.Timestamp > 0 {
+			ts = time.Unix(0, req.Timestamp)
+		}
+		var vc storage.VectorClock
+		if req.VectorClock != nil {
+			vc = make(storage.VectorClock)
+			for k, v := range req.VectorClock {
+				vc[k] = uint64(v)
+			}
+		}
+		entry := storage.Entry{
+			Key:         req.Key,
+			Value:       req.Value,
+			Version:     req.Version,
+			TimeStamp:   ts,
+			VectorClock: vc,
+		}
+		
+		if err := s.store.BatchPut([]storage.Entry{entry}); err != nil {
 			span.RecordError(err)
 			return &api.PutResponse{Success: false, Error: err.Error()}, nil
 		}
@@ -115,7 +128,17 @@ func (s *Server) Get(ctx context.Context, req *api.GetRequest) (*api.GetResponse
 	var entry storage.Entry
 	var err error
 
-	if s.cluster != nil && s.cluster.IsDistributed() {
+	if isReplicationRequest(ctx) {
+		entry, err = s.store.Get(req.Key)
+		if err != nil {
+			if errors.Is(err, storage.ErrKeyNotFound) {
+				span.SetAttributes(attribute.Bool("found", false))
+				return &api.GetResponse{}, nil
+			}
+			span.RecordError(err)
+			return &api.GetResponse{Error: err.Error()}, nil
+		}
+	} else if s.cluster != nil && s.cluster.IsDistributed() {
 		value, err := s.cluster.ReplicatedGet(ctx, req.Key)
 		if err != nil {
 			if errors.Is(err, storage.ErrKeyNotFound) {
@@ -166,7 +189,25 @@ func (s *Server) BatchPut(ctx context.Context, req *api.BatchPutRequest) (*api.B
 	if isReplicationRequest(ctx) {
 		entries := make([]storage.Entry, len(req.Entries))
 		for i, e := range req.Entries {
-			entries[i] = storage.Entry{Key: e.Key, Value: e.Value}
+			var ts time.Time
+			if e.Timestamp > 0 {
+				ts = time.Unix(0, e.Timestamp)
+			}
+			var vc storage.VectorClock
+			if e.VectorClock != nil {
+				vc = make(storage.VectorClock)
+				for k, v := range e.VectorClock {
+					vc[k] = uint64(v)
+				}
+			}
+			entries[i] = storage.Entry{
+				Key:         e.Key,
+				Value:       e.Value,
+				Version:     e.Version,
+				TimeStamp:   ts,
+				Tombstone:   e.Tombstone,
+				VectorClock: vc,
+			}
 		}
 		if err := s.store.BatchPut(entries); err != nil {
 			span.RecordError(err)
@@ -213,6 +254,32 @@ func (s *Server) BatchPut(ctx context.Context, req *api.BatchPutRequest) (*api.B
 }
 
 func (s *Server) Delete(ctx context.Context, req *api.DeleteRequest) (*api.DeleteResponse, error) {
+	if isReplicationRequest(ctx) {
+		var ts time.Time
+		if req.Timestamp > 0 {
+			ts = time.Unix(0, req.Timestamp)
+		}
+		var vc storage.VectorClock
+		if req.VectorClock != nil {
+			vc = make(storage.VectorClock)
+			for k, v := range req.VectorClock {
+				vc[k] = uint64(v)
+			}
+		}
+		entry := storage.Entry{
+			Key:         req.Key,
+			Version:     req.Version,
+			TimeStamp:   ts,
+			Tombstone:   true,
+			VectorClock: vc,
+		}
+		
+		if err := s.store.BatchPut([]storage.Entry{entry}); err != nil {
+			return &api.DeleteResponse{Success: false, Error: err.Error()}, nil
+		}
+		return &api.DeleteResponse{Success: true}, nil
+	}
+
 	if s.cluster != nil && s.cluster.IsDistributed() {
 		if err := s.cluster.ReplicatedDelete(ctx, req.Key); err != nil {
 			return &api.DeleteResponse{Success: false, Error: err.Error()}, nil
@@ -328,32 +395,7 @@ func (s *Server) Sync(ctx context.Context, req *api.SyncRequest) (*api.SyncRespo
 	return &api.SyncResponse{Entries: apiEntries, Version: uint64(s.store.Stats().KeyCount)}, nil
 }
 
-func (s *Server) getOrCreateClient(addr string) (api.KasokuServiceClient, error) {
-	s.clientsMu.RLock()
-	client, ok := s.clients[addr]
-	s.clientsMu.RUnlock()
 
-	if ok {
-		return client, nil
-	}
-
-	s.clientsMu.Lock()
-	defer s.clientsMu.Unlock()
-
-	if client, ok := s.clients[addr]; ok {
-		return client, nil
-	}
-
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, err
-	}
-
-	client = api.NewKasokuServiceClient(conn)
-	s.clients[addr] = client
-
-	return client, nil
-}
 
 func (s *Server) Start(port int) error {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))

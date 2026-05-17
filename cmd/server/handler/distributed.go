@@ -187,54 +187,31 @@ func (s *Server) handleDistributedGet(w http.ResponseWriter, r *http.Request, ke
 
 	start := s.metrics.RecordGetStart()
 
-	storeStart := time.Now()
-	entry, err := s.store.Get(key)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Use cluster.ReplicatedGet() for proper R-quorum consistency.
+	// This replaces the previous local-only read that bypassed the cluster layer.
+	value, err := s.cluster.ReplicatedGet(ctx, key)
 	storeEnd := time.Now()
-	s.metrics.RecordHandlerStage("get", "store", storeEnd.Sub(storeStart))
+	s.metrics.RecordHandlerStage("get", "store", storeEnd.Sub(totalStart))
 
 	if err != nil {
-		fmt.Printf("DEBUG: get err for key=%s: err=%v isKeyNotFound=%v\n", key, err, isKeyNotFound(err))
 		s.metrics.RecordGetEnd(start, false)
 		if isKeyNotFound(err) {
-			// Key not found locally - try remote replicas
-			remoteEntry, remoteErr := s.fetchFromReplicas(key)
-			if remoteErr == nil && remoteEntry.Value != nil {
-				// Found on remote - write to local and return
-				_ = s.store.Put(key, remoteEntry.Value)
-				s.metrics.RecordGetEnd(start, true)
-				s.writeJSON(w, http.StatusOK, APIResponse{
-					Success: true,
-					Data: GetResponse{
-						Key:       remoteEntry.Key,
-						Value:     remoteEntry.Value,
-						Version:   remoteEntry.Version,
-						Timestamp: remoteEntry.TimeStamp.UnixNano(),
-					},
-				})
-				go s.asyncReadRepair(key)
-				return
-			}
-			// Not found anywhere - read repair in background
-			go s.asyncReadRepair(key)
 			s.writeError(w, http.StatusNotFound, "key not found")
 		} else {
-			s.logger.Error("get error", "key", key, "error", err,
-				"timing.store_ms", storeEnd.Sub(storeStart).Milliseconds())
+			s.logger.Error("get error", "key", key, "error", err)
 			s.writeError(w, http.StatusInternalServerError, "internal error")
 		}
 		return
 	}
-
-	// Read repair: check other replicas for newer version
-	// Dynamo-style: repair in background, don't block read
-	go s.asyncReadRepairWithEntry(key, entry)
 
 	totalLatency := time.Since(totalStart)
 	if totalLatency > 10*time.Millisecond {
 		s.logger.Warn("slow GET detected",
 			"key", key,
 			"total_ms", totalLatency.Milliseconds(),
-			"store_ms", storeEnd.Sub(storeStart).Milliseconds(),
 		)
 	}
 
@@ -242,119 +219,14 @@ func (s *Server) handleDistributedGet(w http.ResponseWriter, r *http.Request, ke
 	s.writeJSON(w, http.StatusOK, APIResponse{
 		Success: true,
 		Data: GetResponse{
-			Key:       entry.Key,
-			Value:     entry.Value,
-			Version:   entry.Version,
-			Timestamp: entry.TimeStamp.UnixNano(),
+			Key:       key,
+			Value:     value,
+			Timestamp: time.Now().UnixNano(),
 		},
 	})
 }
 
-// fetchFromReplicas tries to get the key from other replicas in the replica set
-func (s *Server) fetchFromReplicas(key string) (storage.Entry, error) {
-	replicas := s.ring.GetNodes(key, 3)
-	s.logger.Debug("fetchFromReplicas", "key", key, "replicas", replicas, "nodeID", s.nodeID)
-	for _, replica := range replicas {
-		if replica == s.nodeID || replica == s.addr {
-			continue
-		}
-		s.logger.Debug("trying replica", "replica", replica)
-		// getClient handles both nodeID and addr
-		client, ok := s.cluster.GetClient(replica)
-		if !ok {
-			s.logger.Debug("no client for replica", "replica", replica)
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
-		remoteValue, found, err := client.ReplicatedGet(ctx, key)
-		if err != nil || !found {
-			s.logger.Debug("replica get failed", "replica", replica, "err", err, "found", found)
-			continue
-		}
-		return storage.Entry{
-			Key:       key,
-			Value:     remoteValue,
-			TimeStamp: time.Now(),
-		}, nil
-	}
-	return storage.Entry{}, storage.ErrKeyNotFound
-}
 
-// asyncReadRepair checks other replicas for key and repairs if needed
-func (s *Server) asyncReadRepair(key string) {
-	replicas := s.ring.GetNodes(key, 3)
-	if len(replicas) < 2 {
-		return
-	}
-
-	localVersion := uint64(0)
-	entry, err := s.store.Get(key)
-	if err == nil {
-		localVersion = entry.Version
-	}
-
-	// Check other replicas
-	for _, replica := range replicas {
-		if replica == s.nodeID || replica == s.addr {
-			continue
-		}
-
-		client, ok := s.cluster.GetClient(replica)
-		if !ok {
-			continue
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
-
-		remoteValue, found, err := client.ReplicatedGet(ctx, key)
-		if err != nil || !found {
-			continue
-		}
-
-		// If remote has data and local doesn't, pull it
-		if len(remoteValue) > 0 && localVersion == 0 {
-			s.store.Put(key, remoteValue)
-			return
-		}
-	}
-}
-
-// asyncReadRepairWithEntry uses local entry to repair stale replicas
-func (s *Server) asyncReadRepairWithEntry(key string, localEntry storage.Entry) {
-	replicas := s.ring.GetNodes(key, 3)
-	if len(replicas) < 2 {
-		return
-	}
-
-	for _, replica := range replicas {
-		if replica == s.nodeID || replica == s.addr {
-			continue
-		}
-
-		client, ok := s.cluster.GetClient(replica)
-		if !ok {
-			// Hint handoff: store locally for later delivery
-			s.cluster.AddHint(replica, key, localEntry.Value)
-			continue
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
-
-		remoteValue, found, err := client.ReplicatedGet(ctx, key)
-		if err != nil {
-			s.cluster.AddHint(replica, key, localEntry.Value)
-			continue
-		}
-
-		// If remote has older or no data, push our version
-		if !found || len(remoteValue) == 0 {
-			client.ReplicatedPut(ctx, key, localEntry.Value)
-		}
-	}
-}
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
@@ -396,25 +268,6 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDistributedDelete(w http.ResponseWriter, r *http.Request, key string) {
-	// Find the replica set for this key
-	replicas := s.ring.GetNodes(key, ReplicationFactor)
-	if len(replicas) == 0 {
-		s.writeError(w, http.StatusInternalServerError, "no replicas available")
-		return
-	}
-
-	isPrimary := replicas[0] == s.nodeID || replicas[0] == s.addr
-
-	if !isPrimary {
-		// This node is not the coordinator — forward the request to the primary
-		// Record metrics here so dashboard shows DELETE rate
-		start := s.metrics.RecordDeleteStart()
-		s.metrics.RecordDeleteEnd(start, true)
-		s.proxyRequest(w, r, replicas[0])
-		return
-	}
-
-	// This node IS the coordinator — handle the delete with replication
 	start := s.metrics.RecordDeleteStart()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -438,24 +291,7 @@ func (s *Server) handleDistributedDelete(w http.ResponseWriter, r *http.Request,
 	})
 }
 
-func (s *Server) proxyRequest(w http.ResponseWriter, r *http.Request, targetNodeID string) {
-	targetAddr := s.getNodeAddress(targetNodeID)
-	if targetAddr == "" {
-		s.writeError(w, http.StatusInternalServerError, "cannot find target node: "+targetNodeID)
-		return
-	}
 
-	targetURL, err := url.Parse(targetAddr)
-	if err != nil {
-		s.logger.Error("invalid target URL", "target", targetAddr, "error", err)
-		s.writeError(w, http.StatusInternalServerError, "invalid target node address")
-		return
-	}
-
-	proxy := s.getReverseProxy(targetURL)
-	s.logger.Debug("proxying request", "from", s.nodeID, "to", targetNodeID, "url", r.URL.Path)
-	proxy.ServeHTTP(w, r)
-}
 
 var proxyCache sync.Map
 

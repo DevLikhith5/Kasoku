@@ -126,7 +126,7 @@ func (n *Node) ReplicatedPut(ctx context.Context, key string, value []byte) erro
 			n.timeoutTracker.Record(nid, time.Since(start))
 
 			if err != nil && preferredInSet[nid] {
-				_ = n.hints.Store(key, value, nid)
+				_ = n.hints.Store(storage.Entry{Key: key, Value: value, VectorClock: vc}, nid)
 			}
 			results <- replicaResult{nodeID: nid, err: err}
 		}(nodeID)
@@ -266,7 +266,7 @@ func (n *Node) ReplicatedDelete(ctx context.Context, key string) error {
 
 			if err != nil {
 				// Bug 13 fix: store hint synchronously to avoid unbounded goroutine growth
-				_ = n.hints.Store(key, nil, nid)
+				_ = n.hints.Store(storage.Entry{Key: key, Tombstone: true}, nid)
 			}
 			results <- replicaResult{nodeID: nid, err: err}
 		}(nodeID)
@@ -368,7 +368,7 @@ func (n *Node) readRepair(ctx context.Context, key string,
 				if err := n.remoteReplicate(rCtx, r.nodeID, key, latest.entry.Value, false, latest.entry.Version); err != nil {
 					n.logger.Warn("read repair failed, storing hint",
 						"node", r.nodeID, "key", key, "error", err)
-					_ = n.hints.Store(key, latest.entry.Value, r.nodeID)
+					_ = n.hints.Store(storage.Entry{Key: key, Value: latest.entry.Value, Version: latest.entry.Version, TimeStamp: latest.entry.TimeStamp, VectorClock: latest.entry.VectorClock, Tombstone: latest.entry.Tombstone}, r.nodeID)
 				}
 			}(r)
 		}

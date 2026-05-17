@@ -255,32 +255,13 @@ func (n *Node) getOrCreateVectorClock(key string) storage.VectorClock {
 	return vc
 }
 
-func (n *Node) updateVectorClock(key string, vc storage.VectorClock) {
-	n.vcMu.Lock()
-	defer n.vcMu.Unlock()
 
-	if n.vectorClocks == nil {
-		n.vectorClocks = make(map[string]storage.VectorClock)
-	}
-	n.vectorClocks[key] = vc
-}
-
-func (n *Node) getVectorClock(key string) (storage.VectorClock, bool) {
-	n.vcMu.RLock()
-	defer n.vcMu.RUnlock()
-
-	if n.vectorClocks == nil {
-		return nil, false
-	}
-	vc, ok := n.vectorClocks[key]
-	return vc, ok
-}
 
 func (n *Node) HandleReplicate(ctx context.Context, key string, value []byte, targetNode string) error {
 	// If targetNode is set, this is a hinted write - store hint locally
 	// The fallback node stores the hint so it can deliver when target recovers
 	if targetNode != "" {
-		n.hints.Store(key, value, targetNode)
+		n.hints.Store(storage.Entry{Key: key, Value: value}, targetNode)
 	}
 	return n.engine.Put(key, value)
 }
@@ -322,7 +303,7 @@ func (n *Node) HandleGossip(remoteMembers []string) []string {
 }
 
 func (n *Node) HandleHint(key string, value []byte, targetNode string) error {
-	return n.hints.Store(key, value, targetNode)
+	return n.hints.Store(storage.Entry{Key: key, Value: value}, targetNode)
 }
 
 // HandleMerkle returns a serialized Merkle tree of all local keys
@@ -559,7 +540,7 @@ func (n *Node) hintDeliveryLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			n.hints.RetryFailed(func(targetNode string, key string, value []byte) error {
+			n.hints.RetryFailed(func(targetNode string, entry storage.Entry) error {
 				// Reuse client from cluster pool to avoid creating a new connection every retry
 				client, ok := n.cluster.getClient(targetNode)
 				if !ok {
@@ -567,7 +548,15 @@ func (n *Node) hintDeliveryLoop() {
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				return client.ReplicatedPut(ctx, key, value)
+				
+				// Try gRPC first to preserve full storage.Entry metadata
+				if grpcClient, ok := n.cluster.GetGRPCClient(targetNode); ok {
+					return grpcClient.ReplicatedPutBinaryInternal(ctx, entry)
+				}
+				
+				// We still use HTTP ReplicatedPutBinary as a fallback, but gRPC is preferred
+				// For the standalone Node implementation, we use HTTP since grpcClients isn't directly exposed
+				return client.ReplicatedPutBinary(ctx, entry.Key, entry.Value)
 			})
 		case <-n.done:
 			return

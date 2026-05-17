@@ -1,0 +1,147 @@
+╔══════════════════════════════════════════════════════════════════╗
+║  YCSB Workload A — Update Heavy — 50% Read / 50% Update
+╠══════════════════════════════════════════════════════════════════╣
+║  Nodes: 3   | Workers: 50   | Batch: 1    | Distribution: zipfian ║
+║  RecordCount: 1000000    | FieldLength: 100  bytes                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+[LOAD] Loading 1000000 records (100-byte values)...
+[LOAD] Loaded 1000000 records in 0.59s — 1689534 ops/sec
+
+[RUN]  Running for 30s (workload A)...
+[   5s] throughput: 17130 ops/sec | reads: 42698 (p99=24650µs) | writes: 42954 (p99=17879µs) | errs: 0
+[  10s] throughput: 19038 ops/sec | reads: 95137 (p99=22707µs) | writes: 95241 (p99=15865µs) | errs: 0
+[  15s] throughput: 19031 ops/sec | reads: 142535 (p99=22623µs) | writes: 142907 (p99=15621µs) | errs: 0
+[  20s] throughput: 19521 ops/sec | reads: 195291 (p99=21832µs) | writes: 195138 (p99=15210µs) | errs: 0
+[  25s] throughput: 19743 ops/sec | reads: 246989 (p99=21629µs) | writes: 246600 (p99=14946µs) | errs: 0
+[  30s] throughput: 20003 ops/sec | reads: 300172 (p99=21095µs) | writes: 299922 (p99=14991µs) | errs: 0
+
+══════════════════════════════════════════════════════════════════════
+  YCSB Workload A — Update Heavy — 50% Read / 50% Update
+══════════════════════════════════════════════════════════════════════
+  [OVERALL] RunTime(ms)=30020  Throughput(ops/sec)=19990
+  [OVERALL] Operations=600097  Errors=0
+  [READ] Operations=300175  Errors=0
+  [READ] AverageLatency(us)=2872.8
+  [READ] MinLatency(us)=47
+  [READ] MaxLatency(us)=547054
+  [READ] p50=1432us  p95=8699us  p99=21095us  p999=92267us
+  [READ] Throughput(ops/sec)=9999
+  [UPDATE] Operations=299922  Errors=0
+  [UPDATE] AverageLatency(us)=2026.9
+  [UPDATE] MinLatency(us)=49
+  [UPDATE] MaxLatency(us)=562350
+  [UPDATE] p50=845us  p95=5937us  p99=14991us  p999=84155us
+  [UPDATE] Throughput(ops/sec)=9991
+══════════════════════════════════════════════════════════════════════
+
+╔══════════════════════════════════════════════════════════════════╗
+║  YCSB Workload B — Read Mostly — 95% Read / 5% Update
+╠══════════════════════════════════════════════════════════════════╣
+║  Nodes: 3   | Workers: 50   | Batch: 1    | Distribution: zipfian ║
+║  RecordCount: 1000000    | FieldLength: 100  bytes                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+[LOAD] Loading 1000000 records (100-byte values)...
+[LOAD] Loaded 1000000 records in 0.68s — 1462578 ops/sec
+
+[RUN]  Running for 30s (workload B)...
+[   5s] throughput: 15175 ops/sec | reads: 72067 (p99=20413µs) | writes: 3763 (p99=16772µs) | errs: 0
+[  10s] throughput: 14634 ops/sec | reads: 138962 (p99=24120µs) | writes: 7332 (p99=22657µs) | errs: 0
+[  15s] throughput: 13964 ops/sec | reads: 198916 (p99=26833µs) | writes: 10505 (p99=22794µs) | errs: 0
+[  20s] throughput: 13996 ops/sec | reads: 265900 (p99=26197µs) | writes: 13963 (p99=25313µs) | errs: 0
+[  25s] throughput: 14145 ops/sec | reads: 336004 (p99=26143µs) | writes: 17578 (p99=23835µs) | errs: 0
+
+══════════════════════════════════════════════════════════════════════
+  YCSB Workload B — Read Mostly — 95% Read / 5% Update
+══════════════════════════════════════════════════════════════════════
+  [OVERALL] RunTime(ms)=30002  Throughput(ops/sec)=14357
+  [OVERALL] Operations=430749  Errors=0
+  [READ] Operations=409344  Errors=0
+  [READ] AverageLatency(us)=3427.5
+  [READ] MinLatency(us)=47
+  [READ] MaxLatency(us)=314670
+  [READ] p50=1795us  p95=10491us  p99=26332us  p999=110772us
+  [READ] Throughput(ops/sec)=13644
+  [UPDATE] Operations=21405  Errors=0
+  [UPDATE] AverageLatency(us)=2677.2
+  [UPDATE] MinLatency(us)=67
+  [UPDATE] MaxLatency(us)=366943
+  [UPDATE] p50=1087us  p95=7374us  p99=23346us  p999=186360us
+  [UPDATE] Throughput(ops/sec)=713
+══════════════════════════════════════════════════════════════════════
+
+╔══════════════════════════════════════════════════════════════════╗
+║  YCSB Workload C — Read Only — 100% Read
+╠══════════════════════════════════════════════════════════════════╣
+║  Nodes: 3   | Workers: 50   | Batch: 1    | Distribution: zipfian ║
+║  RecordCount: 1000000    | FieldLength: 100  bytes                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+[LOAD] Loading 1000000 records (100-byte values)...
+[LOAD] Loaded 1000000 records in 1.33s — 753401 ops/sec
+
+[RUN]  Running for 30s (workload C)...
+[   5s] throughput: 11234 ops/sec | reads: 56159 (p99=33502µs) | writes: 0 (p99=0µs) | errs: 0
+[  10s] throughput: 9809 ops/sec | reads: 98055 (p99=39007µs) | writes: 0 (p99=0µs) | errs: 0
+[  15s] throughput: 8151 ops/sec | reads: 122257 (p99=40625µs) | writes: 0 (p99=0µs) | errs: 0
+[  20s] throughput: 6913 ops/sec | reads: 138227 (p99=43663µs) | writes: 0 (p99=0µs) | errs: 0
+[  25s] throughput: 6194 ops/sec | reads: 154815 (p99=48225µs) | writes: 0 (p99=0µs) | errs: 0
+[  30s] throughput: 5535 ops/sec | reads: 166010 (p99=49787µs) | writes: 0 (p99=0µs) | errs: 0
+
+══════════════════════════════════════════════════════════════════════
+  YCSB Workload C — Read Only — 100% Read
+══════════════════════════════════════════════════════════════════════
+  [OVERALL] RunTime(ms)=32696  Throughput(ops/sec)=5079
+  [OVERALL] Operations=166060  Errors=0
+  [READ] Operations=166060  Errors=0
+  [READ] AverageLatency(us)=9081.0
+  [READ] MinLatency(us)=48
+  [READ] MaxLatency(us)=3562944
+  [READ] p50=2346us  p95=14773us  p99=50991us  p999=1021822us
+  [READ] Throughput(ops/sec)=5079
+══════════════════════════════════════════════════════════════════════
+
+╔══════════════════════════════════════════════════════════════════╗
+║  YCSB Workload F — Read-Modify-Write — 50% Read / 50% RMW
+╠══════════════════════════════════════════════════════════════════╣
+║  Nodes: 3   | Workers: 50   | Batch: 1    | Distribution: zipfian ║
+║  RecordCount: 1000000    | FieldLength: 100  bytes                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+[LOAD] Loading 1000000 records (100-byte values)...
+[LOAD] Loaded 1000000 records in 1.16s — 862766 ops/sec
+
+[RUN]  Running for 30s (workload F)...
+[   5s] throughput: 655 ops/sec | reads: 1616 (p99=1034667µs) | writes: 0 (p99=0µs) | errs: 0
+[  10s] throughput: 952 ops/sec | reads: 4731 (p99=1004617µs) | writes: 0 (p99=0µs) | errs: 0
+[  15s] throughput: 1037 ops/sec | reads: 7736 (p99=473759µs) | writes: 0 (p99=0µs) | errs: 0
+[  20s] throughput: 1025 ops/sec | reads: 10240 (p99=339676µs) | writes: 0 (p99=0µs) | errs: 0
+[  25s] throughput: 871 ops/sec | reads: 10867 (p99=508657µs) | writes: 0 (p99=0µs) | errs: 0
+[  30s] throughput: 764 ops/sec | reads: 11464 (p99=1002538µs) | writes: 0 (p99=0µs) | errs: 0
+[  35s] throughput: 655 ops/sec | reads: 11467 (p99=1002893µs) | writes: 0 (p99=0µs) | errs: 0
+[  40s] throughput: 573 ops/sec | reads: 11467 (p99=1002893µs) | writes: 0 (p99=0µs) | errs: 0
+[  45s] throughput: 509 ops/sec | reads: 11467 (p99=1002893µs) | writes: 0 (p99=0µs) | errs: 0
+[  50s] throughput: 458 ops/sec | reads: 11467 (p99=1002893µs) | writes: 0 (p99=0µs) | errs: 0
+[  55s] throughput: 417 ops/sec | reads: 11467 (p99=1002893µs) | writes: 0 (p99=0µs) | errs: 0
+[  60s] throughput: 382 ops/sec | reads: 11467 (p99=1002893µs) | writes: 0 (p99=0µs) | errs: 0
+
+══════════════════════════════════════════════════════════════════════
+  YCSB Workload F — Read-Modify-Write — 50% Read / 50% RMW
+══════════════════════════════════════════════════════════════════════
+  [OVERALL] RunTime(ms)=61169  Throughput(ops/sec)=374
+  [OVERALL] Operations=22898  Errors=12
+  [READ] Operations=11467  Errors=0
+  [READ] AverageLatency(us)=24124.2
+  [READ] MinLatency(us)=69
+  [READ] MaxLatency(us)=5964316
+  [READ] p50=3244us  p95=27050us  p99=1002893us  p999=2926090us
+  [READ] Throughput(ops/sec)=187
+  [READ-MODIFY-WRITE] Operations=11431  Errors=12
+  [READ-MODIFY-WRITE] AverageLatency(us)=169612.9
+  [READ-MODIFY-WRITE] MinLatency(us)=173
+  [READ-MODIFY-WRITE] MaxLatency(us)=34961720
+  [READ-MODIFY-WRITE] p50=6576us  p95=54872us  p99=3981580us  p999=30003058us
+  [READ-MODIFY-WRITE] Throughput(ops/sec)=187
+══════════════════════════════════════════════════════════════════════
+

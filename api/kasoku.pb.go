@@ -25,6 +25,9 @@ type PutRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
 	Value         []byte                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	Version       uint64                 `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	VectorClock   map[string]uint32      `protobuf:"bytes,5,rep,name=vector_clock,json=vectorClock,proto3" json:"vector_clock,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -69,6 +72,27 @@ func (x *PutRequest) GetKey() string {
 func (x *PutRequest) GetValue() []byte {
 	if x != nil {
 		return x.Value
+	}
+	return nil
+}
+
+func (x *PutRequest) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *PutRequest) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *PutRequest) GetVectorClock() map[string]uint32 {
+	if x != nil {
+		return x.VectorClock
 	}
 	return nil
 }
@@ -320,6 +344,9 @@ func (x *BatchPutResponse) GetError() string {
 type DeleteRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Version       uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	VectorClock   map[string]uint32      `protobuf:"bytes,4,rep,name=vector_clock,json=vectorClock,proto3" json:"vector_clock,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -359,6 +386,27 @@ func (x *DeleteRequest) GetKey() string {
 		return x.Key
 	}
 	return ""
+}
+
+func (x *DeleteRequest) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *DeleteRequest) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *DeleteRequest) GetVectorClock() map[string]uint32 {
+	if x != nil {
+		return x.VectorClock
+	}
+	return nil
 }
 
 type DeleteResponse struct {
@@ -693,6 +741,7 @@ type ReplicateRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Entry         *Entry                 `protobuf:"bytes,1,opt,name=entry,proto3" json:"entry,omitempty"`
 	OriginNode    uint64                 `protobuf:"varint,2,opt,name=origin_node,json=originNode,proto3" json:"origin_node,omitempty"`
+	TargetNode    string                 `protobuf:"bytes,3,opt,name=target_node,json=targetNode,proto3" json:"target_node,omitempty"` // hint: original intended replica for this write
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -739,6 +788,13 @@ func (x *ReplicateRequest) GetOriginNode() uint64 {
 		return x.OriginNode
 	}
 	return 0
+}
+
+func (x *ReplicateRequest) GetTargetNode() string {
+	if x != nil {
+		return x.TargetNode
+	}
+	return ""
 }
 
 type ReplicateResponse struct {
@@ -885,11 +941,17 @@ var File_api_kasoku_proto protoreflect.FileDescriptor
 
 const file_api_kasoku_proto_rawDesc = "" +
 	"\n" +
-	"\x10api/kasoku.proto\x12\x03api\"4\n" +
+	"\x10api/kasoku.proto\x12\x03api\"\xf1\x01\n" +
 	"\n" +
 	"PutRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value\"=\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\x04R\aversion\x12\x1c\n" +
+	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\x12C\n" +
+	"\fvector_clock\x18\x05 \x03(\v2 .api.PutRequest.VectorClockEntryR\vvectorClock\x1a>\n" +
+	"\x10VectorClockEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"=\n" +
 	"\vPutResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"\x1e\n" +
@@ -905,9 +967,15 @@ const file_api_kasoku_proto_rawDesc = "" +
 	".api.EntryR\aentries\">\n" +
 	"\x10BatchPutResponse\x12\x14\n" +
 	"\x05count\x18\x01 \x01(\x05R\x05count\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"!\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xe1\x01\n" +
 	"\rDeleteRequest\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\"@\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\x04R\aversion\x12\x1c\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12F\n" +
+	"\fvector_clock\x18\x04 \x03(\v2#.api.DeleteRequest.VectorClockEntryR\vvectorClock\x1a>\n" +
+	"\x10VectorClockEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"@\n" +
 	"\x0eDeleteResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\"%\n" +
@@ -935,12 +1003,14 @@ const file_api_kasoku_proto_rawDesc = "" +
 	"\fvector_clock\x18\x06 \x03(\v2\x1b.api.Entry.VectorClockEntryR\vvectorClock\x1a>\n" +
 	"\x10VectorClockEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"U\n" +
+	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"v\n" +
 	"\x10ReplicateRequest\x12 \n" +
 	"\x05entry\x18\x01 \x01(\v2\n" +
 	".api.EntryR\x05entry\x12\x1f\n" +
 	"\vorigin_node\x18\x02 \x01(\x04R\n" +
-	"originNode\"-\n" +
+	"originNode\x12\x1f\n" +
+	"\vtarget_node\x18\x03 \x01(\tR\n" +
+	"targetNode\"-\n" +
 	"\x11ReplicateResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\"2\n" +
 	"\vSyncRequest\x12#\n" +
@@ -971,7 +1041,7 @@ func file_api_kasoku_proto_rawDescGZIP() []byte {
 	return file_api_kasoku_proto_rawDescData
 }
 
-var file_api_kasoku_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_api_kasoku_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_api_kasoku_proto_goTypes = []any{
 	(*PutRequest)(nil),        // 0: api.PutRequest
 	(*PutResponse)(nil),       // 1: api.PutResponse
@@ -990,39 +1060,43 @@ var file_api_kasoku_proto_goTypes = []any{
 	(*ReplicateResponse)(nil), // 14: api.ReplicateResponse
 	(*SyncRequest)(nil),       // 15: api.SyncRequest
 	(*SyncResponse)(nil),      // 16: api.SyncResponse
-	nil,                       // 17: api.MultiGetResponse.EntriesEntry
-	nil,                       // 18: api.Entry.VectorClockEntry
+	nil,                       // 17: api.PutRequest.VectorClockEntry
+	nil,                       // 18: api.DeleteRequest.VectorClockEntry
+	nil,                       // 19: api.MultiGetResponse.EntriesEntry
+	nil,                       // 20: api.Entry.VectorClockEntry
 }
 var file_api_kasoku_proto_depIdxs = []int32{
-	12, // 0: api.GetResponse.entry:type_name -> api.Entry
-	12, // 1: api.BatchPutRequest.entries:type_name -> api.Entry
-	12, // 2: api.ScanResponse.entries:type_name -> api.Entry
-	17, // 3: api.MultiGetResponse.entries:type_name -> api.MultiGetResponse.EntriesEntry
-	18, // 4: api.Entry.vector_clock:type_name -> api.Entry.VectorClockEntry
-	12, // 5: api.ReplicateRequest.entry:type_name -> api.Entry
-	12, // 6: api.SyncResponse.entries:type_name -> api.Entry
-	12, // 7: api.MultiGetResponse.EntriesEntry.value:type_name -> api.Entry
-	0,  // 8: api.KasokuService.Put:input_type -> api.PutRequest
-	2,  // 9: api.KasokuService.Get:input_type -> api.GetRequest
-	4,  // 10: api.KasokuService.BatchPut:input_type -> api.BatchPutRequest
-	6,  // 11: api.KasokuService.Delete:input_type -> api.DeleteRequest
-	8,  // 12: api.KasokuService.Scan:input_type -> api.ScanRequest
-	10, // 13: api.KasokuService.MultiGet:input_type -> api.MultiGetRequest
-	13, // 14: api.KasokuService.Replicate:input_type -> api.ReplicateRequest
-	15, // 15: api.KasokuService.Sync:input_type -> api.SyncRequest
-	1,  // 16: api.KasokuService.Put:output_type -> api.PutResponse
-	3,  // 17: api.KasokuService.Get:output_type -> api.GetResponse
-	5,  // 18: api.KasokuService.BatchPut:output_type -> api.BatchPutResponse
-	7,  // 19: api.KasokuService.Delete:output_type -> api.DeleteResponse
-	9,  // 20: api.KasokuService.Scan:output_type -> api.ScanResponse
-	11, // 21: api.KasokuService.MultiGet:output_type -> api.MultiGetResponse
-	14, // 22: api.KasokuService.Replicate:output_type -> api.ReplicateResponse
-	16, // 23: api.KasokuService.Sync:output_type -> api.SyncResponse
-	16, // [16:24] is the sub-list for method output_type
-	8,  // [8:16] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	17, // 0: api.PutRequest.vector_clock:type_name -> api.PutRequest.VectorClockEntry
+	12, // 1: api.GetResponse.entry:type_name -> api.Entry
+	12, // 2: api.BatchPutRequest.entries:type_name -> api.Entry
+	18, // 3: api.DeleteRequest.vector_clock:type_name -> api.DeleteRequest.VectorClockEntry
+	12, // 4: api.ScanResponse.entries:type_name -> api.Entry
+	19, // 5: api.MultiGetResponse.entries:type_name -> api.MultiGetResponse.EntriesEntry
+	20, // 6: api.Entry.vector_clock:type_name -> api.Entry.VectorClockEntry
+	12, // 7: api.ReplicateRequest.entry:type_name -> api.Entry
+	12, // 8: api.SyncResponse.entries:type_name -> api.Entry
+	12, // 9: api.MultiGetResponse.EntriesEntry.value:type_name -> api.Entry
+	0,  // 10: api.KasokuService.Put:input_type -> api.PutRequest
+	2,  // 11: api.KasokuService.Get:input_type -> api.GetRequest
+	4,  // 12: api.KasokuService.BatchPut:input_type -> api.BatchPutRequest
+	6,  // 13: api.KasokuService.Delete:input_type -> api.DeleteRequest
+	8,  // 14: api.KasokuService.Scan:input_type -> api.ScanRequest
+	10, // 15: api.KasokuService.MultiGet:input_type -> api.MultiGetRequest
+	13, // 16: api.KasokuService.Replicate:input_type -> api.ReplicateRequest
+	15, // 17: api.KasokuService.Sync:input_type -> api.SyncRequest
+	1,  // 18: api.KasokuService.Put:output_type -> api.PutResponse
+	3,  // 19: api.KasokuService.Get:output_type -> api.GetResponse
+	5,  // 20: api.KasokuService.BatchPut:output_type -> api.BatchPutResponse
+	7,  // 21: api.KasokuService.Delete:output_type -> api.DeleteResponse
+	9,  // 22: api.KasokuService.Scan:output_type -> api.ScanResponse
+	11, // 23: api.KasokuService.MultiGet:output_type -> api.MultiGetResponse
+	14, // 24: api.KasokuService.Replicate:output_type -> api.ReplicateResponse
+	16, // 25: api.KasokuService.Sync:output_type -> api.SyncResponse
+	18, // [18:26] is the sub-list for method output_type
+	10, // [10:18] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_api_kasoku_proto_init() }
@@ -1036,7 +1110,7 @@ func file_api_kasoku_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_kasoku_proto_rawDesc), len(file_api_kasoku_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

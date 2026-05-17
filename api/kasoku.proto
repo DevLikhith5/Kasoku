@@ -20,6 +20,9 @@ service KasokuService {
 message PutRequest {
   string key = 1;
   bytes value = 2;
+  uint64 version = 3;
+  int64 timestamp = 4;
+  map<string, uint32> vector_clock = 5;
 }
 
 message PutResponse {
@@ -47,6 +50,9 @@ message BatchPutResponse {
 
 message DeleteRequest {
   string key = 1;
+  uint64 version = 2;
+  int64 timestamp = 3;
+  map<string, uint32> vector_clock = 4;
 }
 
 message DeleteResponse {
